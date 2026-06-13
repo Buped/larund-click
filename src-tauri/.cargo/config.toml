@@ -1,0 +1,17 @@
+[build]
+target-dir = "D:\\cargo-targets\\larund-click"
+target = "x86_64-pc-windows-msvc"
+
+[env]
+CC_x86_64_pc_windows_msvc = "C:\\Program Files\\LLVM\\bin\\clang-cl.exe"
+CFLAGS_x86_64_pc_windows_msvc = "-imsvc D:\\xwin-cache\\splat\\crt\\include -imsvc D:\\xwin-cache\\splat\\sdk\\include\\um -imsvc D:\\xwin-cache\\splat\\sdk\\include\\shared -imsvc D:\\xwin-cache\\splat\\sdk\\include\\ucrt"
+AR_x86_64_pc_windows_msvc = "D:\\cargo-shims\\lib.exe"
+
+[target.x86_64-pc-windows-msvc]
+linker = "C:\\Users\\KomPhone\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\lib\\rustlib\\x86_64-pc-windows-msvc\\bin\\rust-lld.exe"
+rustflags = [
+  "-C", "linker-flavor=lld-link",
+  "-C", "link-arg=/LIBPATH:D:\\xwin-cache\\splat\\crt\\lib\\x86_64",
+  "-C", "link-arg=/LIBPATH:D:\\xwin-cache\\splat\\sdk\\lib\\um\\x86_64",
+  "-C", "link-arg=/LIBPATH:D:\\xwin-cache\\splat\\sdk\\lib\\ucrt\\x86_64",
+]
