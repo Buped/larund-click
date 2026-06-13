@@ -64,6 +64,7 @@ pub fn run() {
             commands::browser::browser_key,
             commands::browser::browser_screenshot,
             commands::browser::browser_wait,
+            commands::browser::browser_probe,
             commands::browser::browser_close,
             commands::agent::create_virtual_desktop,
             commands::agent::switch_to_desktop,

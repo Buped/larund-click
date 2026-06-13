@@ -1,6 +1,8 @@
 import { supabase } from './supabase';
 import { callOpenRouterWithTools, type MessageContent } from './openrouter';
 import { executeTool, parseToolCall, AGENT_TOOLS_PROMPT_V2 } from './agent-tools';
+import { isVisionV2Enabled } from './vision-v2/config';
+import { runVisionV2Turn, newV2Memory } from './vision-v2/run-v2';
 
 export type AgentStatus =
   | 'idle'
@@ -399,6 +401,15 @@ export async function runAgentLoop(
   let lastErrorSignature = '';
   let sameErrorRetries = 0;
 
+  // ── Vision Mouse V2 wiring ──────────────────────────────────────────────────
+  // Resolve the flag once. When ON, each iteration runs the element-first V2
+  // pipeline (ScreenState → ActionPlan → executor → verify); on a V2 fallback the
+  // iteration drops through to the unchanged legacy path. When OFF, behaviour is
+  // byte-identical to before.
+  const visionV2Enabled = isVisionV2Enabled();
+  const v2Mem = newV2Memory();
+  const webHint = /https?:|www\.|\.com|\.io|\.org|browser|böngész|chrome|claude\.ai|weboldal|website|\boldal\b/.test(taskLower);
+
   while (iterations < MAX_ITERATIONS) {
     if (await isAborted()) {
       onError('Task stopped by user.');
@@ -407,6 +418,48 @@ export async function runAgentLoop(
     }
 
     iterations++;
+
+    // ── V2 branch: one element-first turn, or fall through to legacy ──
+    if (visionV2Enabled) {
+      onStatus('executing');
+      await updateOverlay({ active: true, status: 'executing', task, steps });
+      let turn: Awaited<ReturnType<typeof runVisionV2Turn>>;
+      try {
+        turn = await runVisionV2Turn({
+          task, modelId, userId, webHint, autonomyMode, mem: v2Mem,
+          addCost: (usd) => { totalCostUsd += usd; },
+          emitStep, ensureScreenClear, restoreForUser, guardSetBlock, isAborted, onAskUser,
+        });
+      } catch (err) {
+        turn = { kind: 'fallback_legacy', reason: String(err) };
+      }
+      if (turn.kind === 'aborted') {
+        onError('Task stopped by user.');
+        await cleanup();
+        return;
+      }
+      if (turn.kind === 'complete') {
+        onStatus('complete');
+        await _finalDeduct(userId, totalCostUsd);
+        emitStep({
+          id: `step-${Date.now()}-v2done`, type: 'complete',
+          output: turn.summary, timestamp: new Date().toISOString(), details: { branch: 'v2' },
+        });
+        await updateOverlay({ active: false, status: 'complete', task, steps });
+        await cleanup();
+        onComplete(turn.summary);
+        return;
+      }
+      if (turn.kind === 'continue') {
+        continue;
+      }
+      // fallback_legacy → mark it and let this iteration run the legacy path.
+      emitStep({
+        id: `step-${Date.now()}-v2fb`, type: 'thinking',
+        output: `Vision V2 fell back to legacy this step: ${turn.reason}`,
+        timestamp: new Date().toISOString(), details: { branch: 'legacy', fallbackFrom: 'v2' },
+      });
+    }
 
     let aiResponse = '';
     // Bug 1: track whether the streaming call itself reported an error

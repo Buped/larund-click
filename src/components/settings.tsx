@@ -8,6 +8,7 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import type { AuthUser } from '../lib/auth';
 import type { UserCredits } from '../lib/supabase';
+import { isVisionV2Enabled, setVisionV2Enabled } from '../lib/vision-v2/config';
 
 function emailInitials(email: string): string {
   const local = email.split('@')[0];
@@ -50,6 +51,13 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
     <button onClick={() => onChange(!checked)} style={{ width: 38, height: 22, borderRadius: 11, background: checked ? "var(--accent)" : "rgba(255,255,255,.12)", border: "none", cursor: "pointer", position: "relative", transition: "background .2s", flex: "none" }}>
       <span style={{ position: "absolute", top: 3, left: checked ? 19 : 3, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left .2s", display: "block" }} />
     </button>
+  );
+}
+
+function VisionV2Toggle() {
+  const [on, setOn] = useState(isVisionV2Enabled());
+  return (
+    <Toggle checked={on} onChange={(v) => { setOn(v); void setVisionV2Enabled(v); }} />
   );
 }
 
@@ -348,6 +356,7 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
 
             {section === "automation" && (
               <>
+                <SettingRow label="Vision Mouse V2" sub="Element-first targeting (UIA/DOM/hotkey) with verification; falls back to legacy"><VisionV2Toggle /></SettingRow>
                 <SettingRow label="Require confirmation" sub="Ask before submitting forms or clicking irreversible actions"><Toggle checked={true} onChange={() => {}} /></SettingRow>
                 <SettingRow label="Screenshot interval" sub="How often Click captures the screen during tasks"><Select value="500ms" options={["250ms","500ms","1s","2s"]} onChange={() => {}} /></SettingRow>
                 <SettingRow label="Max task duration" sub="Abort task if it runs longer than this"><Select value="15 minutes" options={["5 minutes","10 minutes","15 minutes","30 minutes","No limit"]} onChange={() => {}} /></SettingRow>

@@ -451,6 +451,14 @@ pub async fn browser_wait(text: Option<String>, seconds: Option<u64>) -> Result<
     }
 }
 
+/// Non-launching probe: true when the agent Chrome is already reachable on the
+/// debug port. Used by Vision Mouse V2 to decide whether to include the DOM
+/// provider WITHOUT side-effect-launching Chrome (browser_read would launch it).
+#[tauri::command]
+pub async fn browser_probe() -> Result<bool, String> {
+    Ok(http_get("/json/version").is_ok())
+}
+
 #[tauri::command]
 pub async fn browser_close() -> Result<(), String> {
     let mut guard = store().lock().map_err(|_| "browser lock poisoned".to_string())?;
