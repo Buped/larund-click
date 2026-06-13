@@ -133,6 +133,7 @@ export type UsedMethod =
   | 'keyboard'
   | 'hotkey'
   | 'mouse_safe_point'
+  | 'mouse_refined_point'  // Precision V3 — clicked a crop/region-refined point
   | 'mouse_raw'
   | 'fallback'
   | 'none';

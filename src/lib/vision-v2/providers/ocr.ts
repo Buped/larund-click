@@ -1,17 +1,13 @@
 // Vision Mouse V2 — OCR provider (adapter).
 //
-// OCR helps only with canvas / custom-drawn UIs that expose no UIA tree and are
-// not in a browser. UIA (native apps) and DOM (web) already give us text for the
-// benchmark tasks, so this pass ships a WIRED adapter that returns [] — the
-// pipeline runs it, counts it, and is ready to use real results the moment a
-// backend is plugged in.
-//
-// Drop-in path for a real provider (no new crate needed): Windows.Media.Ocr is
-// available offline via WinRT and can be driven from PowerShell exactly like
-// desktop_read. Implement a Rust command `ocr_read(region?)` returning
-// [{ text, bbox:{x,y,width,height}, confidence }], then map it here just like
-// uiaTargetsToElements does.
+// OCR helps with canvas / custom-drawn UIs that expose no UIA tree and are not in
+// a browser (e.g. the Roblox launcher's game cards). UIA (native apps) and DOM
+// (web) already give us text for most tasks, so OCR is used selectively: the
+// `ocr_read` Rust command (Windows.Media.Ocr, offline WinRT, driven from
+// PowerShell like desktop_read) is called with a REGION during crop/refine so we
+// don't pay full-screen OCR every frame.
 
+import { invoke } from '@tauri-apps/api/core';
 import type { ScreenElement } from '../types';
 import { boundsToBBox } from '../coordinates';
 import { bboxCenter, safeClickPoint, isUsableBBox } from '../geometry';
@@ -46,10 +42,23 @@ export function ocrBoxesToElements(boxes: OcrBox[]): ScreenElement[] {
   return out;
 }
 
+export interface OcrRegion { x: number; y: number; width: number; height: number; }
+
 /**
- * Read OCR elements. No backend wired this pass → returns []. When a real
- * `ocr_read` command is added, call it here and pass through ocrBoxesToElements.
+ * Read OCR text boxes via the `ocr_read` Rust command (Windows.Media.Ocr). Returns
+ * absolute-screen ScreenElements. Best-effort: any failure (no backend, no
+ * Windows, region off-screen) yields []. A full-screen call (no region) is allowed
+ * but discouraged — prefer a region during crop/refine.
  */
-export async function readOcrElements(): Promise<ScreenElement[]> {
-  return [];
+export async function readOcrElements(region?: OcrRegion | null): Promise<ScreenElement[]> {
+  // Full-screen OCR every frame is too slow; OCR is a targeted refine tool. Only
+  // run it when a region is supplied (crop/refine, region precision read).
+  if (!region) return [];
+  try {
+    const raw = await invoke<string>('ocr_read', { region });
+    const boxes = JSON.parse(raw) as OcrBox[];
+    return ocrBoxesToElements(Array.isArray(boxes) ? boxes : []);
+  } catch {
+    return [];
+  }
 }

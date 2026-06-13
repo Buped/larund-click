@@ -13,6 +13,7 @@ import type { ActionPlan, ScreenState, ScreenElement, ActionResult, UsedMethod, 
 import { validateScreenPoint } from './coordinates';
 import { bestTextMatch } from './text-match';
 import { suggestShortcut } from './shortcuts';
+import { isLargeContainer } from './precision';
 
 export interface ExecutorContext {
   /** Freeze/release the user's physical input around a real injection. */
@@ -65,7 +66,12 @@ async function clickElement(
   if (isUia(el)) {
     const token = String(el.metadata!.snapshot_token ?? '');
     const uiaId = String(el.metadata!.uiaId);
-    if (el.metadata!.can_invoke) {
+    const largeContainer = el.metadata!.is_large_container === true || isLargeContainer(el);
+    const wantsRefine = el.metadata!.requires_refine === true;
+    // Native invoke is reliable for a SPECIFIC element, but invoking a large
+    // container (or one flagged requires_refine) can fire the wrong child — refine
+    // first instead of trusting it (Precision V3 #4).
+    if (el.metadata!.can_invoke && !largeContainer && !wantsRefine) {
       try {
         const out = await invoke<string>('desktop_invoke_target', { id: uiaId, snapshotToken: token });
         log.push(`uia invoke ${uiaId} → ${out}`);
@@ -73,6 +79,10 @@ async function clickElement(
       } catch (e) {
         log.push(`uia invoke failed: ${String(e)}`);
       }
+    } else if (largeContainer || wantsRefine) {
+      // No blind safe-inset/invoke on coarse targets — escalate to crop/refine.
+      log.push(`uia ${uiaId} is large/low-precision (strategy=${el.metadata!.click_strategy ?? '?'}) → needs refine`);
+      return { success: false, used_method: 'uia_invoke', error: 'requires_refine', log, element: el, needsRefine: true };
     }
     // Tier 2b — UIA precise click via clickable point.
     try {

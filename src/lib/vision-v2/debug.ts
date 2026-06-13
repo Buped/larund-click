@@ -44,6 +44,8 @@ export interface StepArtifacts {
   result?: ActionResult & { log?: string[]; chosenElementId?: string };
   coordinateLog?: string[];
   verification?: unknown;
+  /** Precision V3 refine record (what/where/why/refined?/verified?). */
+  refine?: unknown;
   branch?: string;
 }
 
@@ -63,6 +65,7 @@ export async function saveArtifacts(runId: string, step: number, a: StepArtifact
     rawPlan: a.rawPlan,
     result: a.result,
     verification: a.verification,
+    refine: a.refine,
     providerStats: a.providerStats,
     coordinateLog: a.coordinateLog,
     screenStateBefore: stripShot(a.screenStateBefore),

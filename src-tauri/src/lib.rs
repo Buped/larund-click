@@ -46,6 +46,7 @@ pub fn run() {
             commands::agent::desktop_capture_region,
             commands::agent::desktop_zoom_target_region,
             commands::agent::desktop_visual_locate,
+            commands::agent::ocr_read,
             commands::agent::send_notification,
             commands::agent::minimize_main_window,
             commands::agent::restore_main_window,

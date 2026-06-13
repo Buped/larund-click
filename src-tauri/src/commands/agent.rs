@@ -767,6 +767,11 @@ pub async fn desktop_visual_locate(
 }
 
 #[tauri::command]
+pub async fn ocr_read(region: Option<desktop::DesktopReadRegion>) -> Result<String, String> {
+    desktop::ocr_read(region)
+}
+
+#[tauri::command]
 pub async fn send_notification(
     title: String,
     message: String,

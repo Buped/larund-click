@@ -6,8 +6,12 @@
 // existing Rust desktop_visual_locate / desktop_zoom_target_region — no new CV.
 
 import { invoke } from '@tauri-apps/api/core';
-import type { ScreenElement, Point } from './types';
-import { clamp } from './geometry';
+import type { ScreenElement, Point, ScreenState } from './types';
+import { clamp, bboxArea, isUsableBBox } from './geometry';
+import { readRegionElements } from './screen-state';
+import { specificityScore, isLargeContainer } from './precision';
+import { validateScreenPoint } from './coordinates';
+import { bestTextMatch } from './text-match';
 
 /**
  * Transform a point measured INSIDE a zoomed crop back to absolute screen
@@ -74,6 +78,99 @@ export async function cropRefine(
     return { point: el.center, confidence: el.confidence * 0.8, method: 'refine_center', log };
   }
   return { confidence: 0, method: 'refine_none', log };
+}
+
+export interface PrecisionRefineResult {
+  point?: Point;
+  confidence: number;
+  /** 'region_child' (found a smaller specific child), or a refine_* fallback. */
+  method: string;
+  /** Id of the smaller child element chosen by the region read, if any. */
+  chosenChildId?: string;
+  chosenChildBBox?: [number, number, number, number];
+  /** Number of elements the region precision read returned. */
+  candidates: number;
+  log: string[];
+}
+
+/** Padded screen region around an element's bbox, for region reads / OCR. */
+export function paddedRegion(
+  el: ScreenElement, state: Pick<ScreenState, 'screen_width' | 'screen_height'>, pad = 16,
+): { x: number; y: number; width: number; height: number } {
+  const [x1, y1, x2, y2] = el.bbox;
+  const x = Math.max(0, x1 - pad);
+  const y = Math.max(0, y1 - pad);
+  const right = Math.min(state.screen_width || x2 + pad, x2 + pad);
+  const bottom = Math.min(state.screen_height || y2 + pad, y2 + pad);
+  return { x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y) };
+}
+
+/**
+ * Precision V3 refine. This is the fix for the "clicks 20–30px off in Roblox"
+ * miss: a large container's own geometry (center / safe-inset) is always wrong, so
+ * instead of re-picking a point inside the SAME bbox we re-read the UIA+OCR tree
+ * restricted to the target's region and pick a SMALLER, more specific child.
+ * Falls back to the visual_locate candidate points, then the element center.
+ */
+export async function precisionRefine(
+  el: ScreenElement | undefined,
+  state: ScreenState,
+  opts: { query?: string } = {},
+): Promise<PrecisionRefineResult> {
+  const log: string[] = [];
+  if (!el) {
+    const r = await cropRefine(undefined);
+    return { ...r, candidates: 0 };
+  }
+
+  const region = paddedRegion(el, state);
+  let children: ScreenElement[] = [];
+  try {
+    children = await readRegionElements(region);
+    log.push(`region read @[${region.x},${region.y},${region.width}x${region.height}] → ${children.length} elements`);
+  } catch (e) {
+    log.push(`region read failed: ${String(e)}`);
+  }
+
+  const parentArea = bboxArea(el.bbox) || 1;
+  // Keep clickable children that are meaningfully SMALLER than the parent and not
+  // themselves large containers — these are the precise targets we want.
+  let candidates = children.filter((c) =>
+    c.id !== el.id &&
+    c.clickable &&
+    isUsableBBox(c.bbox) &&
+    bboxArea(c.bbox) < parentArea * 0.85 &&
+    !isLargeContainer(c) &&
+    !validateScreenPoint(c.clickable_point, state),
+  );
+
+  if (opts.query && candidates.length) {
+    const m = bestTextMatch(opts.query, candidates, (c) => c.name || c.text, 0.45);
+    if (m) {
+      log.push(`region child matched "${opts.query}" → ${m.item.id}`);
+      return {
+        point: m.item.clickable_point, confidence: Math.max(m.item.confidence, 0.7),
+        method: 'region_child', chosenChildId: m.item.id, chosenChildBBox: m.item.bbox,
+        candidates: children.length, log,
+      };
+    }
+  }
+
+  if (candidates.length) {
+    candidates = candidates.sort((a, b) => specificityScore(b) - specificityScore(a));
+    const best = candidates[0];
+    log.push(`region child by specificity → ${best.id} (${best.role} "${best.name}")`);
+    return {
+      point: best.clickable_point, confidence: Math.max(best.confidence, 0.65),
+      method: 'region_child', chosenChildId: best.id, chosenChildBBox: best.bbox,
+      candidates: children.length, log,
+    };
+  }
+
+  // No better child found → fall back to visual_locate candidate points.
+  log.push('no smaller child found; falling back to visual_locate');
+  const fallback = await cropRefine(el, region);
+  return { ...fallback, log: [...log, ...fallback.log], candidates: children.length };
 }
 
 /** Capture a zoomed image of a region/target for the planner to re-examine. */

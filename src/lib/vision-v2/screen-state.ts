@@ -13,6 +13,7 @@ import { readDomElements, isBrowserOpen } from './providers/dom';
 import { readOcrElements } from './providers/ocr';
 import { readOmniElements } from './providers/omniparser';
 import { mergeElements, type MergeStats } from './merge';
+import { precisionMeta, isLargeContainer } from './precision';
 
 export interface BuildScreenStateOptions {
   /** Task looks web-oriented → include the DOM provider even before Chrome is up. */
@@ -125,11 +126,57 @@ export async function buildScreenState(
   return { state, stats, log };
 }
 
-/** Compact, token-cheap element list for the planner prompt. */
+/**
+ * Compact, token-cheap element list for the planner prompt. Includes the
+ * precision metadata the planner needs to AVOID clicking large containers:
+ * bbox, size, confidence, precision level, click strategy, and a large-container
+ * flag. Example line:
+ *   uia_42 [uia/ListItem] "Game name" bbox=[420,240,610,350] size=190x110 conf=0.72 precision=medium strategy=visual_refine large=false clickable=true
+ */
 export function summarizeElements(elements: ScreenElement[], limit = 60): string {
   return elements.slice(0, limit).map((e) => {
+    const m = precisionMeta(e);
     const name = (e.name || e.text || '').replace(/\s+/g, ' ').slice(0, 50);
-    const where = e.source === 'dom' ? 'web' : `${e.center[0]},${e.center[1]}`;
-    return `${e.id} [${e.source}/${e.role}] "${name}"${e.clickable ? '' : ' (non-clickable)'} @${where}`;
+    const [x1, y1, x2, y2] = e.bbox;
+    const pixelless = x1 === 0 && y1 === 0 && x2 === 0 && y2 === 0;
+    const conf = typeof m.target_confidence === 'number' ? m.target_confidence : e.confidence;
+    const parts = [`${e.id} [${e.source}/${e.role}] "${name}"`];
+    if (e.source === 'dom' || pixelless) {
+      parts.push('@web');
+    } else {
+      parts.push(`bbox=[${x1},${y1},${x2},${y2}]`);
+      parts.push(`size=${x2 - x1}x${y2 - y1}`);
+    }
+    parts.push(`conf=${conf.toFixed(2)}`);
+    if (m.precision_level) parts.push(`precision=${m.precision_level}`);
+    if (m.click_strategy) parts.push(`strategy=${m.click_strategy}`);
+    if (isLargeContainer(e)) parts.push('large=true');
+    parts.push(`clickable=${e.clickable}`);
+    return parts.join(' ');
   }).join('\n');
+}
+
+/**
+ * Region-based precision read (Precision V3 #7). When the planner has chosen a big
+ * container, or a click missed, re-read the UIA tree restricted to a padded region
+ * around the target so smaller, more specific child elements surface. Best-effort:
+ * returns [] on any failure so callers can fall back to the coarse target.
+ */
+export async function readRegionElements(
+  region: { x: number; y: number; width: number; height: number },
+): Promise<ScreenElement[]> {
+  const out: ScreenElement[] = [];
+  try {
+    const uia = await readUiaElements('precision', region);
+    out.push(...uia.elements);
+  } catch {
+    /* best-effort */
+  }
+  // Region-scoped OCR helps custom/canvas UIs (Roblox cards) that expose no UIA.
+  try {
+    out.push(...(await readOcrElements(region)));
+  } catch {
+    /* best-effort */
+  }
+  return out;
 }

@@ -55,8 +55,11 @@ export function clampPointToBounds(p: Point, bounds: BBox): Point {
 
 export type ClickStrategy =
   | 'center'
-  | 'left_glyph'   // checkbox / radio — aim at the box, not the label
-  | 'safe_inset';  // generic control — center, but inset from the edges
+  | 'invoke'              // programmatic invoke — point only matters as a fallback
+  | 'left_glyph'         // checkbox / radio — aim at the box, not the label
+  | 'toolbar_multi_anchor' // toolbar/splitbutton — center, clamped away from edges
+  | 'visual_refine'      // large/custom container — point is a coarse guess, REFINE
+  | 'safe_inset';        // generic control — center, but inset from the edges
 
 /**
  * Pick a robust click point inside a bbox. Mirrors the Rust `current_safe_point`
@@ -74,7 +77,17 @@ export function safeClickPoint(b: BBox, strategy: ClickStrategy = 'safe_inset'):
     return [b[0] + dx, cy];
   }
 
-  if (strategy === 'safe_inset') {
+  if (strategy === 'toolbar_multi_anchor') {
+    // Mirror Rust resolve_visual_anchor: center clamped a few px off each edge.
+    const maxX = Math.max(8, w - 8);
+    const maxY = Math.max(6, h - 6);
+    return [b[0] + clamp(Math.round(w / 2), 8, maxX), b[1] + clamp(Math.round(h / 2), 6, maxY)];
+  }
+
+  // 'safe_inset' and 'visual_refine' share the conservative inset geometry. For
+  // visual_refine the point is only a coarse fallback — callers MUST crop/refine
+  // before trusting it (see precision.ts requiresPreClickRefine).
+  if (strategy === 'safe_inset' || strategy === 'visual_refine') {
     const insetX = clamp(Math.round(w / 6), 4, 18);
     const insetY = clamp(Math.round(h / 6), 4, 18);
     const minX = b[0] + insetX;

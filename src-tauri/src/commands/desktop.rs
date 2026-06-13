@@ -2610,6 +2610,86 @@ if ($hit) {{ $hit }}"#
         };
         serde_json::to_string(&result).map_err(|e| e.to_string())
     }
+
+    /// Offline OCR via Windows.Media.Ocr (WinRT), driven from PowerShell exactly
+    /// like desktop_read. Captures `region` (REQUIRED — full-screen OCR is too slow
+    /// to run per frame; callers pass a padded target region during crop/refine),
+    /// runs the OCR engine, and returns word-level boxes in ABSOLUTE screen pixels:
+    ///   [{ "text": "...", "bbox": { "x","y","width","height" }, "confidence": 0.6 }]
+    /// Best-effort: the script is wrapped so any WinRT/imaging failure yields "[]"
+    /// rather than an error, so the V2 pipeline degrades gracefully.
+    pub fn ocr_read(region: Option<DesktopReadRegion>) -> Result<String, String> {
+        let region = region.ok_or_else(|| {
+            "ocr_read requires a region (full-screen OCR is intentionally disabled).".to_string()
+        })?;
+        if region.width <= 0 || region.height <= 0 {
+            return Ok("[]".to_string());
+        }
+        let script = ocr_read_script(&region);
+        // Any failure (no WinRT, no language pack) → empty result, not a hard error.
+        match powershell_run(&script) {
+            Ok((stdout, _)) if !stdout.trim().is_empty() => Ok(stdout),
+            _ => Ok("[]".to_string()),
+        }
+    }
+
+    fn ocr_read_script(region: &DesktopReadRegion) -> String {
+        format!(
+            r#"
+try {{
+  Add-Type -AssemblyName System.Drawing
+  $rx = {x}; $ry = {y}; $rw = {w}; $rh = {h}
+  $bmp = New-Object System.Drawing.Bitmap $rw, $rh
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  $g.CopyFromScreen($rx, $ry, 0, 0, (New-Object System.Drawing.Size($rw, $rh)))
+  $tmp = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), ([System.Guid]::NewGuid().ToString() + '.png'))
+  $bmp.Save($tmp, [System.Drawing.Imaging.ImageFormat]::Png)
+  $g.Dispose(); $bmp.Dispose()
+
+  [Windows.Media.Ocr.OcrEngine,Windows.Foundation,ContentType=WindowsRuntime] | Out-Null
+  [Windows.Storage.StorageFile,Windows.Storage,ContentType=WindowsRuntime] | Out-Null
+  [Windows.Graphics.Imaging.BitmapDecoder,Windows.Graphics.Imaging,ContentType=WindowsRuntime] | Out-Null
+
+  function Await($op, $resultType) {{
+    $m = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {{
+      $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and
+      $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1'
+    }})[0]
+    $gm = $m.MakeGenericMethod($resultType)
+    $task = $gm.Invoke($null, @($op))
+    $task.Wait(-1) | Out-Null
+    $task.Result
+  }}
+
+  $file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($tmp)) ([Windows.Storage.StorageFile])
+  $stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+  $decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+  $bitmap = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+
+  $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+  if ($null -eq $engine) {{ Write-Output '[]'; Remove-Item $tmp -ErrorAction SilentlyContinue; return }}
+  $ocr = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+
+  $items = @()
+  foreach ($line in $ocr.Lines) {{
+    foreach ($word in $line.Words) {{
+      $r = $word.BoundingRect
+      $obj = @{{ text = $word.Text; bbox = @{{ x = [int]($r.X) + $rx; y = [int]($r.Y) + $ry; width = [int]($r.Width); height = [int]($r.Height) }}; confidence = 0.6 }}
+      $items += ($obj | ConvertTo-Json -Compress -Depth 5)
+    }}
+  }}
+  Remove-Item $tmp -ErrorAction SilentlyContinue
+  Write-Output ('[' + ($items -join ',') + ']')
+}} catch {{
+  Write-Output '[]'
+}}
+"#,
+            x = region.x,
+            y = region.y,
+            w = region.width,
+            h = region.height,
+        )
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -2759,6 +2839,11 @@ mod windows_impl {
         _: Option<DesktopReadRegion>,
     ) -> Result<String, String> {
         Err("Desktop targeting is only supported on Windows".to_string())
+    }
+
+    pub fn ocr_read(_: Option<DesktopReadRegion>) -> Result<String, String> {
+        // OCR backend (Windows.Media.Ocr) is Windows-only; degrade to no boxes.
+        Ok("[]".to_string())
     }
 }
 

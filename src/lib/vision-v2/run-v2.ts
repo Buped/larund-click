@@ -10,15 +10,69 @@
 // `fallback_legacy` so the agent loop never crashes.
 
 import type { AgentStep } from '../agent-loop';
-import type { ActionResult, ScreenState, CliObservation } from './types';
+import type { ActionResult, ScreenState, ScreenElement, ActionPlan, Point, CliObservation } from './types';
 import { buildScreenState } from './screen-state';
 import { planV2 } from './planner';
-import { executeV2 } from './executor';
+import { executeV2, resolveTextTarget } from './executor';
 import { verifyV2 } from './verify';
-import { cropRefine } from './crop-refine';
+import { precisionRefine, type PrecisionRefineResult } from './crop-refine';
+import { evaluatePreClickRefine, isLargeContainer, precisionMeta } from './precision';
+import { bboxCenter } from './geometry';
 import { classifyRisk } from './safety';
 import { saveArtifacts, newRunId, type StepArtifacts } from './debug';
 import { invoke } from '@tauri-apps/api/core';
+
+type ExecResult = Awaited<ReturnType<typeof executeV2>>;
+
+/** Click actions whose miss can be corrected by re-grounding (excludes raw_click). */
+const REFINABLE_CLICKS = ['click_element', 'click_text', 'click_label'];
+/** Minimum refine confidence before we trust a refined point enough to click it. */
+const PRE_CLICK_CONF = 0.6;
+
+/** Precision V3 debug record — answers "what/where/why/refined?/verified?". */
+interface RefineDebug {
+  pre_click_refine: boolean;
+  post_click_miss_correction: boolean;
+  refine_reasons: string[];
+  candidate_count: number;
+  target_id?: string;
+  target_bbox?: [number, number, number, number];
+  target_large?: boolean;
+  target_precision?: string;
+  refined_point?: Point;
+  refined_child_id?: string;
+  clicked_point?: Point;
+  click_to_target_center_px?: number;
+}
+
+/** Resolve the element a click plan will act on, the same way the executor does. */
+function resolvePlanTarget(plan: ActionPlan, state: ScreenState): ScreenElement | undefined {
+  if (plan.action === 'click_element') {
+    return state.elements.find((e) => e.id === plan.target?.element_id);
+  }
+  if (plan.action === 'click_text' || plan.action === 'click_label') {
+    const q = plan.target?.text ?? plan.text ?? '';
+    return resolveTextTarget(state, q, plan.action === 'click_label') ?? undefined;
+  }
+  return undefined;
+}
+
+/** Perform a real click at a refined screen point, guarded; returns an ExecResult. */
+async function clickRefinedPoint(
+  ctx: V2TurnContext, point: Point, plan: ActionPlan, log: string[], refine: PrecisionRefineResult,
+): Promise<ExecResult> {
+  try {
+    await ctx.guardSetBlock(true);
+    await invoke('mouse_click', { x: point[0], y: point[1], button: 'left' });
+    log.push(`refined click @${point[0]},${point[1]} (${refine.method}, conf ${refine.confidence.toFixed(2)})`);
+    return { success: true, action_executed: plan.action, used_method: 'mouse_refined_point', log: [] };
+  } catch (e) {
+    log.push(`refined click failed: ${String(e)}`);
+    return { success: false, action_executed: plan.action, used_method: 'mouse_refined_point', error: String(e), log: [] };
+  } finally {
+    await ctx.guardSetBlock(false);
+  }
+}
 
 export interface V2Memory {
   runId: string;
@@ -173,35 +227,117 @@ export async function runVisionV2Turn(ctx: V2TurnContext): Promise<V2TurnResult>
     return { kind: 'continue' };
   }
 
-  // 5. Execute (with crop/refine before any raw fallback).
-  let result = await executeV2(plan, before, { guardSetBlock: ctx.guardSetBlock });
-  const coordinateLog = [...result.log];
+  // 5. Execute — Precision V3 wraps the deterministic executor with a PRE-click
+  //    refine (for coarse targets) and a POST-click miss correction.
+  const coordinateLog: string[] = [];
+  const refineDebug: RefineDebug = {
+    pre_click_refine: false, post_click_miss_correction: false, refine_reasons: [], candidate_count: 0,
+  };
 
+  const planTargetEl = resolvePlanTarget(plan, before);
+  if (planTargetEl) {
+    refineDebug.target_id = planTargetEl.id;
+    refineDebug.target_bbox = planTargetEl.bbox;
+    refineDebug.target_large = isLargeContainer(planTargetEl);
+    refineDebug.target_precision = precisionMeta(planTargetEl).precision_level as string | undefined;
+  }
+
+  let result: ExecResult;
+  let clickedPoint: Point | undefined;
+  const refineQuery = plan.target?.text ?? plan.text;
+
+  // 5a. PRE-CLICK REFINE — don't wait for a wrong click on a coarse target.
+  const preDecision = planTargetEl && REFINABLE_CLICKS.includes(plan.action)
+    ? evaluatePreClickRefine(planTargetEl, before)
+    : { refine: false, reasons: [] as string[] };
+
+  if (planTargetEl && preDecision.refine) {
+    refineDebug.refine_reasons = preDecision.reasons;
+    coordinateLog.push(`pre-click refine triggered: ${preDecision.reasons.join('; ')}`);
+    const refine = await precisionRefine(planTargetEl, before, { query: refineQuery });
+    coordinateLog.push(...refine.log);
+    refineDebug.candidate_count = refine.candidates;
+    if (refine.point && refine.confidence >= PRE_CLICK_CONF) {
+      result = await clickRefinedPoint(ctx, refine.point, plan, coordinateLog, refine);
+      clickedPoint = refine.point;
+      refineDebug.pre_click_refine = true;
+      refineDebug.refined_point = refine.point;
+      refineDebug.refined_child_id = refine.chosenChildId;
+      result.chosenElementId = refine.chosenChildId ?? planTargetEl.id;
+      console.log('[V2] pre_click_refine', { target: planTargetEl.id, method: refine.method, point: refine.point, reasons: preDecision.reasons });
+    } else {
+      coordinateLog.push('pre-click refine produced no confident point → normal execute');
+      result = await executeV2(plan, before, { guardSetBlock: ctx.guardSetBlock });
+      coordinateLog.push(...result.log);
+      clickedPoint = planTargetEl.clickable_point;
+    }
+  } else {
+    result = await executeV2(plan, before, { guardSetBlock: ctx.guardSetBlock });
+    coordinateLog.push(...result.log);
+    if (planTargetEl) clickedPoint = planTargetEl.clickable_point;
+  }
+
+  // 5b. Post-execute structured refine (executor exhausted structured tiers).
   if (!result.success && result.needsRefine) {
     const el = result.chosenElementId
       ? before.elements.find((e) => e.id === result.chosenElementId)
-      : undefined;
-    const refine = await cropRefine(el);
-    coordinateLog.push(...refine.log);
+      : planTargetEl;
+    const refine = await precisionRefine(el, before, { query: refineQuery });
+    coordinateLog.push('post-execute refine', ...refine.log);
+    refineDebug.candidate_count = Math.max(refineDebug.candidate_count, refine.candidates);
     if (refine.point) {
-      try {
-        await ctx.guardSetBlock(true);
-        await invoke('mouse_click', { x: refine.point[0], y: refine.point[1], button: 'left' });
-        coordinateLog.push(`crop/refine click @${refine.point[0]},${refine.point[1]} (${refine.method})`);
-        result = { ...result, success: true, used_method: 'mouse_safe_point', error: undefined };
-      } catch (e) {
-        result = { ...result, error: `refine click failed: ${String(e)}` };
-      } finally {
-        await ctx.guardSetBlock(false);
-      }
+      const r = await clickRefinedPoint(ctx, refine.point, plan, coordinateLog, refine);
+      result = { ...result, ...r, log: result.log };
+      clickedPoint = refine.point;
+      refineDebug.refined_point = refine.point;
+      if (refine.chosenChildId) result.chosenElementId = refine.chosenChildId;
     }
   }
 
   // 6. Verify against a fresh ScreenState.
   await sleep(plan.expect?.timeout_ms ? Math.min(plan.expect.timeout_ms, 2500) : 500);
   const afterBuilt = await buildScreenState({ webHint: ctx.webHint });
-  const after = afterBuilt.state;
-  const verification = verifyV2(plan.expect, before, after);
+  let after = afterBuilt.state;
+  let verification = verifyV2(plan.expect, before, after);
+
+  // 6b. POST-CLICK MISS CORRECTION — the OS click "succeeded" but the screen did
+  //     NOT change as expected for a click action → treat it as a miss, re-ground,
+  //     re-click a DIFFERENT point, and re-verify (Precision V3 #1).
+  if (
+    result.success && !refineDebug.pre_click_refine &&
+    plan.expect && plan.expect.type !== 'none' && !verification.verified &&
+    REFINABLE_CLICKS.includes(plan.action)
+  ) {
+    const el = result.chosenElementId ? before.elements.find((e) => e.id === result.chosenElementId) : planTargetEl;
+    coordinateLog.push('post_verify_refine: click reported success but verification FAILED → miss correction');
+    const refine = await precisionRefine(el, before, { query: refineQuery });
+    coordinateLog.push(...refine.log);
+    refineDebug.candidate_count = Math.max(refineDebug.candidate_count, refine.candidates);
+    const samePoint = !!clickedPoint && !!refine.point &&
+      Math.abs(refine.point[0] - clickedPoint[0]) < 3 && Math.abs(refine.point[1] - clickedPoint[1]) < 3;
+    if (refine.point && !samePoint && refine.confidence >= PRE_CLICK_CONF) {
+      await clickRefinedPoint(ctx, refine.point, plan, coordinateLog, refine);
+      clickedPoint = refine.point;
+      refineDebug.post_click_miss_correction = true;
+      refineDebug.refined_point = refine.point;
+      if (refine.chosenChildId) result.chosenElementId = refine.chosenChildId;
+      result = { ...result, used_method: 'mouse_refined_point' };
+      await sleep(plan.expect?.timeout_ms ? Math.min(plan.expect.timeout_ms, 2500) : 500);
+      after = (await buildScreenState({ webHint: ctx.webHint })).state;
+      verification = verifyV2(plan.expect, before, after);
+      console.log('[V2] miss_corrected', { refined_point: refine.point, verified: verification.verified });
+    } else {
+      coordinateLog.push('miss correction skipped (no better/different point found)');
+    }
+  }
+
+  // Distance from where we clicked to the chosen target's center — a big number
+  // here is the signature of the 20–30px miss the refine pass fixes.
+  if (clickedPoint && refineDebug.target_bbox) {
+    const c = bboxCenter(refineDebug.target_bbox);
+    refineDebug.click_to_target_center_px = Math.round(Math.hypot(clickedPoint[0] - c[0], clickedPoint[1] - c[1]));
+  }
+  refineDebug.clicked_point = clickedPoint;
 
   const finalResult: ActionResult = {
     success: result.success,
@@ -253,12 +389,13 @@ export async function runVisionV2Turn(ctx: V2TurnContext): Promise<V2TurnResult>
       planner_saw_screen: true,
       cli_exit: result.cli?.exitCode,
       coordinate_log: coordinateLog,
+      refine: refineDebug,
     },
   });
 
   const artifacts: StepArtifacts = {
     branch: 'v2', plan, rawPlan: planRes.raw, result: { ...finalResult, log: coordinateLog, chosenElementId: result.chosenElementId },
-    verification, providerStats: built.stats, coordinateLog,
+    verification, providerStats: built.stats, coordinateLog, refine: refineDebug,
     screenStateBefore: before, screenStateAfter: after,
   };
   await saveArtifacts(mem.runId, mem.step, artifacts);

@@ -15,6 +15,7 @@ import type { ScreenElement, ElementSource } from './types';
 import { SOURCE_PRIORITY } from './types';
 import { iou, isUsableBBox, bboxArea } from './geometry';
 import { normalizeText } from './text-match';
+import { specificityScore } from './precision';
 
 const IOU_DUP_THRESHOLD = 0.6;
 
@@ -119,12 +120,20 @@ export function mergeElements(lists: ScreenElement[][], opts: MergeOptions = {})
     }
   }
 
-  // 4. Final ranking: clickable first, then priority, then confidence.
+  // 4. Final ranking: clickable first, then source priority, then SPECIFICITY,
+  //    then confidence. Specificity (precision.ts) is what lifts a small, precise
+  //    child (game card / list item / button) above the big Pane/List container it
+  //    lives in — the V2 ranking would otherwise float a large clickable container
+  //    to the top and the planner would click its dead-space center.
+  const SPECIFICITY_EPS = 0.12;
   kept.sort((a, b) => {
     if (a.clickable !== b.clickable) return a.clickable ? -1 : 1;
     const pa = priorityIndex(a.source);
     const pb = priorityIndex(b.source);
     if (pa !== pb) return pa - pb;
+    const sa = specificityScore(a);
+    const sb = specificityScore(b);
+    if (Math.abs(sa - sb) > SPECIFICITY_EPS) return sb - sa;
     return b.confidence - a.confidence;
   });
 

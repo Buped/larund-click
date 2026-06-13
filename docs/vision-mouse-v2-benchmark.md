@@ -125,6 +125,68 @@ Tauri/model backends and asserts:
 
 Run: `npm test`.
 
+## Precision Click V3 — accuracy in complex / custom UIs
+
+V3 targets the "clicks 20–30px off in Roblox-like apps" miss. It does NOT change
+the architecture — it adds a **pre-click refine**, a **post-click miss
+correction**, container-aware ranking, and richer planner metadata on top of V2.
+
+### What changed (where to look)
+- `src/lib/vision-v2/precision.ts` — `requiresPreClickRefine()` / `specificityScore()`.
+- `providers/uia.ts` — preserves `visual_refine` / `toolbar_multi_anchor` strategies
+  and carries `precision_level` / `target_confidence` / `children_count` /
+  `is_large_container` / `requires_refine` to TS.
+- `crop-refine.ts` — `precisionRefine()` re-reads UIA **+ OCR** restricted to the
+  target's region and picks a smaller, more specific child instead of re-guessing a
+  point inside the same big bbox.
+- `run-v2.ts` — pre-click refine (before a coarse click) and post-click miss
+  correction (after a click that "succeeded" but failed verification).
+- `src-tauri/.../desktop.rs` — `ocr_read(region)` (Windows.Media.Ocr, offline).
+
+### B1. Roblox — open and click the most recently played game
+- **Goal:** "Nyisd meg a Robloxot és kattints a legutóbb játszott játékra."
+- **Expected logs (with `..._debug = "true"`):**
+  1. `[V2] observe … window: 'Roblox'` and a built ScreenState.
+  2. The chosen target's element-list line shows precision metadata, e.g.
+     `… role List/Pane … size=560x420 … precision=low strategy=visual_refine large=true`.
+  3. `[V2] pre_click_refine { target: …, method: 'region_child', point: [x,y], reasons: [...] }`
+     — i.e. the orchestrator refined BEFORE clicking instead of hitting the
+     container center.
+  4. The result step `details.used_method` is **`mouse_refined_point`** (not a bare
+     `mouse_safe_point` on the container), and `details.refine.pre_click_refine = true`
+     with a `refined_child_id`.
+  5. If a click still misses: `[V2] miss_corrected { refined_point, verified }` and
+     `details.refine.post_click_miss_correction = true`. The retry must use a
+     **different** point (it never repeats the same wrong pixel).
+- **Pass if:** the game card (not the surrounding panel) is clicked; the debug
+  record shows what was chosen, where it clicked, why (reasons), whether refine
+  ran, and the verification result; `details.refine.click_to_target_center_px`
+  reflects the corrected point.
+
+### What the V3 debug artifact answers
+Each step's `details.refine` (and the saved `step-NNN.json`) records:
+`target_id` / `target_bbox` / `target_large` / `target_precision` (what was
+chosen), `clicked_point` + `click_to_target_center_px` (where it clicked and how
+far off the bbox center), `refine_reasons` (why refine ran), `pre_click_refine` /
+`post_click_miss_correction` / `refined_point` / `refined_child_id` (whether/how it
+was corrected), and the `coordinate_log` lines (`pre-click refine triggered: …`,
+`region read … → N elements`, `post_verify_refine: …`, `refined click @x,y …`).
+
+### Sanity: simple desktop icon still works
+Re-run **Task 2 (Chrome icon)**. A small, high-confidence, invokable icon must
+**not** trigger pre-click refine (`requiresPreClickRefine` returns false for tiny
+specific leaves) — `used_method` stays `uia_invoke` / `mouse_safe_point`, and
+`details.refine.pre_click_refine = false`.
+
+### Automated coverage
+`__tests__/run-v2.precision.test.ts` mocks a Roblox-like UIA tree (a large
+`visual_refine` container + a region-only game card) and asserts the orchestrator
+clicks the **child point**, not the container center, and reports
+`mouse_refined_point`; a second test forces a verification failure on a small
+button and asserts the **post-click miss correction** re-clicks a different,
+refined point. `precision.test.ts`, `uia-precision.test.ts`, `merge.test.ts`, and
+`summarize.test.ts` cover the pure decision/ranking/metadata logic.
+
 ## Local build blocker note
 
 A full end-to-end run requires building the Tauri app. This repo builds via

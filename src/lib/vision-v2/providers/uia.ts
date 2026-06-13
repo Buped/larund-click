@@ -37,12 +37,22 @@ export interface UiaReadResult {
   snapshot_token: string;
 }
 
-/** Map the Rust click_strategy hint to a geometry ClickStrategy. */
-function clickStrategyFor(t: UiaTarget): ClickStrategy {
-  const s = (t.click_strategy ?? '').toLowerCase();
-  if (s === 'left_glyph') return 'left_glyph';
-  if (s === 'invoke') return 'center';
-  return 'safe_inset';
+/**
+ * Map the Rust click_strategy hint to a geometry ClickStrategy, PRESERVING the
+ * precision-relevant strategies (`visual_refine`, `toolbar_multi_anchor`) instead
+ * of collapsing everything unknown to `safe_inset`. Losing `visual_refine` here was
+ * the core V2 bug: a large container then got a plain safe-inset center click
+ * (the 20–30px miss) instead of triggering a crop/refine.
+ */
+export function clickStrategyFor(t: UiaTarget): ClickStrategy {
+  switch ((t.click_strategy ?? '').toLowerCase()) {
+    case 'left_glyph': return 'left_glyph';
+    case 'invoke': return 'invoke';
+    case 'toolbar_multi_anchor': return 'toolbar_multi_anchor';
+    case 'visual_refine': return 'visual_refine';
+    case 'safe_inset': return 'safe_inset';
+    default: return 'safe_inset';
+  }
 }
 
 /** Normalize one raw desktop_read JSON result into ScreenElements. */
@@ -58,6 +68,13 @@ export function uiaTargetsToElements(raw: UiaReadResult): ScreenElement[] {
       t.can_invoke || t.is_keyboard_focusable ||
       /button|menuitem|tabitem|listitem|checkbox|radiobutton|hyperlink|splitbutton|edit|combobox/i
         .test(t.role);
+    // An element needs re-grounding before a pixel click when Rust flagged it
+    // visual_refine, marked it low-precision, or it's a big container AND has no
+    // reliable programmatic invoke to fall back on.
+    const requires_refine =
+      t.click_strategy === 'visual_refine' ||
+      t.precision_level === 'low' ||
+      (!!t.is_large_container && !t.can_invoke);
     out.push({
       id: `uia_${t.id}`,
       source: 'uia',
@@ -79,8 +96,13 @@ export function uiaTargetsToElements(raw: UiaReadResult): ScreenElement[] {
         is_keyboard_focusable: t.is_keyboard_focusable,
         focused: t.focused,
         enabled: t.enabled,
+        // ── Precision V3 metadata (preserved end-to-end for planner + executor) ──
         precision_level: t.precision_level,
         click_strategy: t.click_strategy,
+        target_confidence: t.target_confidence,
+        children_count: t.children_count,
+        is_large_container: t.is_large_container,
+        requires_refine,
         window_title: t.window_title,
       },
     });
@@ -95,8 +117,9 @@ export function uiaTargetsToElements(raw: UiaReadResult): ScreenElement[] {
  */
 export async function readUiaElements(
   mode: 'semantic' | 'precision' = 'semantic',
+  region?: { x: number; y: number; width: number; height: number } | null,
 ): Promise<{ elements: ScreenElement[]; window: UiaReadResult['window']; snapshot_token: string }> {
-  const rawStr = await invoke<string>('desktop_read', { mode, region: null });
+  const rawStr = await invoke<string>('desktop_read', { mode, region: region ?? null });
   const raw = JSON.parse(rawStr) as UiaReadResult;
   return {
     elements: uiaTargetsToElements(raw),

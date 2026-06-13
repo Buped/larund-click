@@ -50,4 +50,21 @@ describe('mergeElements', () => {
     const { elements } = mergeElements([[], [noclick, click], [], []]);
     expect(elements[0].id).toBe('uia_b');
   });
+
+  it('ranks a small specific child ABOVE a large Pane/List container (Precision V3)', () => {
+    // Both clickable, same source — V2 would float the big container up; V3
+    // specificity ranking must put the precise child first.
+    const container = el({
+      id: 'uia_pane', source: 'uia', role: 'List', name: 'Recently Played',
+      clickable: true, confidence: 0.6, bbox: [400, 200, 980, 620],
+      metadata: { is_large_container: true, children_count: 10, precision_level: 'low' },
+    });
+    const child = el({
+      id: 'uia_card', source: 'uia', role: 'ListItem', name: 'My Game',
+      clickable: true, confidence: 0.72, bbox: [420, 240, 610, 350],
+      metadata: { can_invoke: true, precision_level: 'high' },
+    });
+    const { elements } = mergeElements([[], [container, child], [], []]);
+    expect(elements[0].id).toBe('uia_card');
+  });
 });
