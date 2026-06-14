@@ -33,9 +33,8 @@ const ALLOWED = new Set([
   // Layer 6: keyboard
   'keyboard.press',
   'keyboard.combo',
-  // Layer 7: cursor + vision (last resort)
-  'visual.clickIntent',
-  'visual.typeIntent',
+  // Layer 7: SOC visual cursor control
+  'soc.visual',
   // Control flow
   'task.complete',
   'ask_user',
@@ -64,5 +63,5 @@ export function parseControlAction(text: string): ControlAction | null {
 }
 
 export function isRawMouseActionName(name: string): boolean {
-  return /^(mouse_click|mouse_double_click|mouse_move|mouse_drag|desktop_click_point|click_visual_target|ground_visual_target|desktop_visual_locate)$/.test(name);
+  return /^(mouse_click|mouse_double_click|mouse_move|mouse_drag|desktop_click_point|click_visual_target|ground_visual_target|desktop_visual_locate|visual\.clickIntent|visual\.typeIntent)$/.test(name);
 }

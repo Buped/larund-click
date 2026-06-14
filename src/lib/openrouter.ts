@@ -30,6 +30,13 @@ export interface UsageResult {
   model: string;
 }
 
+function estimateInputChars(messages: ChatMessage[]): number {
+  return messages.reduce((sum, m) => {
+    if (typeof m.content === 'string') return sum + m.content.length;
+    return sum + m.content.reduce((s, c) => s + (c.type === 'text' ? c.text.length : 500), 0);
+  }, 0);
+}
+
 export async function callOpenRouter(
   messages: ChatMessage[],
   openrouterId: string,
@@ -332,4 +339,70 @@ export async function callOpenRouterWithTools(
     costUsd,
     model: modelId,
   });
+}
+
+export async function callOpenRouterJson(
+  messages: ChatMessage[],
+  modelId: string,
+  userId: string,
+  deductCredits: boolean = true,
+): Promise<{ content: string; usage: UsageResult }> {
+  if (!OPENROUTER_KEY || OPENROUTER_KEY === 'your_openrouter_key_here') {
+    throw new Error('OpenRouter API key not configured');
+  }
+
+  const preCredits = await getUserCredits(userId);
+  if (preCredits !== null && preCredits.uc_balance <= 0) {
+    throw new Error('Nincs elég kredit - tölts fel kreditet a folytatáshoz.');
+  }
+
+  const body: Record<string, unknown> = {
+    model: modelId,
+    messages,
+    stream: false,
+    temperature: 0,
+  };
+
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${OPENROUTER_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://larund.io',
+      'X-Title': 'Larund Click',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => res.statusText);
+    throw new Error(`OpenRouter error ${res.status}: ${err}`);
+  }
+
+  const parsed = await res.json();
+  const content = String(parsed.choices?.[0]?.message?.content ?? '');
+  if (!content.trim()) throw new Error('OpenRouter returned empty content');
+
+  const pricing = MODEL_PRICING[modelId] ?? { input: 0, output: 0 };
+  const inputTokens = Number(parsed.usage?.prompt_tokens) || Math.ceil(estimateInputChars(messages) / CHARS_PER_TOKEN);
+  const outputTokens = Number(parsed.usage?.completion_tokens) || Math.ceil(content.length / CHARS_PER_TOKEN);
+  const costUsd = ((inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000) * MARKUP;
+
+  if (deductCredits && costUsd > 0) {
+    const { error } = await supabase.rpc('deduct_uc_credits', {
+      p_user_id: userId,
+      p_cost_usd: costUsd,
+    });
+    if (error) console.warn('Credit deduction failed after JSON call:', error.message);
+  }
+
+  return {
+    content,
+    usage: {
+      inputTokens,
+      outputTokens,
+      costUsd,
+      model: modelId,
+    },
+  };
 }

@@ -6,6 +6,7 @@ import { CONTROL_SYSTEM_PROMPT } from './prompt';
 import { executeControlAction } from './executor';
 import { isRawMouseActionName, parseControlAction } from './parser';
 import type { ControlAction } from './types';
+import { routeHighLevel } from '../soc-mode/router';
 
 export type AgentStatus = 'idle' | 'planning' | 'executing' | 'waiting_user' | 'complete' | 'error';
 export type AutonomyMode = 'full' | 'semi' | 'manual';
@@ -98,8 +99,7 @@ function actionTouchesScreen(action: ControlAction): boolean {
     || action.action === 'ui.scroll'
     || action.action === 'ui.focusNext'
     || action.action === 'ui.activate'
-    || action.action === 'visual.clickIntent'
-    || action.action === 'visual.typeIntent'
+    || action.action === 'soc.visual'
     || action.action === 'keyboard.press'
     || action.action === 'keyboard.combo';
 }
@@ -111,8 +111,7 @@ function actionInjectsInput(action: ControlAction): boolean {
     || action.action === 'ui.type'
     || action.action === 'ui.scroll'
     || action.action === 'ui.activate'
-    || action.action === 'visual.clickIntent'
-    || action.action === 'visual.typeIntent'
+    || action.action === 'soc.visual'
     || action.action === 'keyboard.press'
     || action.action === 'keyboard.combo';
 }
@@ -155,7 +154,7 @@ export async function runControlLoop(
   emitStep({
     id: nowStepId('mode'),
     type: 'thinking',
-    output: 'Feladat modja: CLI-first vezerles. Minden reszfeladat a legmagasabb determinisztikus retegen (CLI / fajl / bongeszo-CDP / UIA); a kurzoros vizio csak vegso tartalek.',
+    output: 'Feladat modja: hybrid CLI + SOC. Determinisztikus reszek CLI/browser/file/app toolokkal; vizualis kurzorvezerles csak SOC screenshot -> OCR/label -> action loopon keresztul.',
     timestamp: new Date().toISOString(),
   });
   await updateOverlay({ active: true, status: 'planning', task, steps });
@@ -196,7 +195,7 @@ export async function runControlLoop(
     const rawToolAttempt = aiResponse.match(/"tool"\s*:\s*"([^"]+)"/)?.[1] ?? '';
     if (rawToolAttempt && isRawMouseActionName(rawToolAttempt)) {
       messages.push({ role: 'assistant', content: aiResponse });
-      messages.push({ role: 'user', content: `Rejected raw mouse tool "${rawToolAttempt}". Use visual.clickIntent or visual.typeIntent only.` });
+      messages.push({ role: 'user', content: `Rejected raw/legacy mouse tool "${rawToolAttempt}". Use soc.visual for visual cursor control.` });
       emitStep({
         id: nowStepId('raw-blocked'),
         type: 'error',
@@ -261,6 +260,8 @@ export async function runControlLoop(
         userId,
         task,
         addCost: (usd) => { totalCostUsd += usd; },
+        onAskUser,
+        onSocStep: (step) => emitStep({ id: nowStepId('soc-inner'), timestamp: new Date().toISOString(), ...step }),
       });
     } finally {
       if (inputAction) await guardSetBlock(false);
@@ -285,8 +286,72 @@ export async function runControlLoop(
       role: 'user',
       content: result.success
         ? `Action result: ${result.output}\nComplete only when this result proves the requested outcome.`
-        : `Action error: ${result.error ?? result.output}\nSwitch to a different layer on the escalation ladder rather than repeating. Raw mouse tools are unavailable.`,
+        : `Action error: ${result.error ?? result.output}\nSwitch to a different layer on the escalation ladder rather than repeating. Raw mouse and legacy visual tools are unavailable.`,
     });
+
+    if (action.action === 'soc.visual' && result.success) {
+      await finalDeduct(userId, totalCostUsd);
+      emitStep({
+        id: nowStepId('complete'),
+        type: 'complete',
+        output: result.output,
+        timestamp: new Date().toISOString(),
+      });
+      await cleanup();
+      onStatus('complete');
+      onComplete(result.output);
+      return;
+    }
+
+    if (action.action === 'app.open' && result.success && routeHighLevel(task, action, result.output) === 'soc_visual') {
+      const socAction: ControlAction = { action: 'soc.visual', objective: task };
+      const socStepId = nowStepId('soc-after-launch');
+      emitStep({
+        id: socStepId,
+        type: 'tool_call',
+        tool: socAction.action,
+        input: JSON.stringify(socAction, null, 2),
+        timestamp: new Date().toISOString(),
+        details: { mode: 'soc_visual', reason: 'mandatory_after_gui_app_launch' },
+      });
+      await guardSetBlock(true);
+      let socResult;
+      try {
+        socResult = await executeControlAction(socAction, {
+          userId,
+          task,
+          addCost: (usd) => { totalCostUsd += usd; },
+          onAskUser,
+          onSocStep: (step) => emitStep({ id: nowStepId('soc-inner'), timestamp: new Date().toISOString(), ...step }),
+        });
+      } finally {
+        await guardSetBlock(false);
+      }
+      emitStep({
+        id: `${socStepId}-result`,
+        type: socResult.success ? 'tool_result' : 'error',
+        tool: socAction.action,
+        output: socResult.output,
+        error: socResult.error,
+        screenshotBase64: socResult.screenshot?.base64,
+        timestamp: new Date().toISOString(),
+        details: socResult.details,
+      });
+      if (socResult.success) {
+        await finalDeduct(userId, totalCostUsd);
+        emitStep({
+          id: nowStepId('complete'),
+          type: 'complete',
+          output: socResult.output,
+          timestamp: new Date().toISOString(),
+        });
+        await cleanup();
+        onStatus('complete');
+        onComplete(socResult.output);
+        return;
+      }
+      messages.push({ role: 'user', content: `Mandatory SOC visual result after app launch: ${socResult.error ?? socResult.output}` });
+    }
   }
 
   await finalDeduct(userId, totalCostUsd);

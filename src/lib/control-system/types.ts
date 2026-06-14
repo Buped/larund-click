@@ -164,9 +164,8 @@ export type ControlAction =
   // ── Layer 6: keyboard (focus-based) ───────────────────────────────────
   | { action: 'keyboard.press'; key: string }
   | { action: 'keyboard.combo'; keys: string[] }
-  // ── Layer 7: cursor + vision (LAST RESORT ONLY) ───────────────────────
-  | { action: 'visual.clickIntent'; target: string; expected: string; app?: string }
-  | { action: 'visual.typeIntent'; target: string; text: string; expected: string; app?: string }
+  // ── Layer 7: SOC visual cursor control ────────────────────────────────
+  | { action: 'soc.visual'; objective?: string }
   // ── Control flow ──────────────────────────────────────────────────────
   | { action: 'task.complete'; summary: string }
   | { action: 'ask_user'; question: string };

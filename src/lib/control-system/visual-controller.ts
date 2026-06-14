@@ -9,6 +9,10 @@ import { makeVerifiedMouseTarget, executeVerifiedClick } from './mouse-kernel';
 import { verifyVisualAction } from './verifier';
 import { makeRunId, stepDir, writeDebug, writeJson } from './debug';
 
+// Deprecated: this was the pre-SOC Larund visual cursor controller. It is kept
+// for historical reference/tests, but the active runtime path is
+// src/lib/soc-mode via the `soc.visual` control action.
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 async function writeObservation(dir: string, name: string, obs: ScreenObservation): Promise<void> {

@@ -1,10 +1,24 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ControlAction, ControlToolResult } from './types';
-import { clickIntent, typeIntent } from './visual-controller';
+import { runSocLoop } from '../soc-mode/run-soc-turn';
 
 export async function executeControlAction(
   action: ControlAction,
-  ctx: { userId: string; addCost: (usd: number) => void; task: string },
+  ctx: {
+    userId: string;
+    addCost: (usd: number) => void;
+    task: string;
+    onSocStep?: (step: {
+      type: 'tool_call' | 'tool_result' | 'thinking' | 'complete' | 'error';
+      tool?: string;
+      input?: string;
+      output?: string;
+      error?: string;
+      screenshotBase64?: string;
+      details?: Record<string, unknown>;
+    }) => void;
+    onAskUser?: (question: string) => Promise<string>;
+  },
 ): Promise<ControlToolResult> {
   switch (action.action) {
     case 'cli.run': {
@@ -159,43 +173,20 @@ export async function executeControlAction(
       const output = await invoke<string>('desktop_activate_focused');
       return { success: true, output };
     }
-    case 'visual.clickIntent': {
-      const result = await clickIntent({
-        target: action.target,
-        expected: action.expected,
-        app: action.app,
-        task: ctx.task,
-        userId: ctx.userId,
+    case 'soc.visual': {
+      const result = await runSocLoop(action.objective || ctx.task, ctx.userId, {
         addCost: ctx.addCost,
+        onStep: ctx.onSocStep,
+        onAskUser: ctx.onAskUser,
       });
       return {
         success: result.success,
         output: result.success
-          ? `visual_click_verified: ${result.target?.label}; ${result.verification?.reason}; debug=${result.debugDir}`
-          : `visual_click_failed: ${result.error}; debug=${result.debugDir}`,
+          ? `soc_visual_complete: ${result.summary}; debug=${result.debugDir}`
+          : `soc_visual_failed: ${result.error}; debug=${result.debugDir}`,
         error: result.success ? undefined : result.error,
-        screenshot: result.after ? { base64: result.after.capture.base64, width: result.after.capture.width, height: result.after.capture.height } : undefined,
-        details: { verification: result.verification, target: result.target, attempts: result.attempts, debugDir: result.debugDir },
-      };
-    }
-    case 'visual.typeIntent': {
-      const result = await typeIntent({
-        target: action.target,
-        text: action.text,
-        expected: action.expected,
-        app: action.app,
-        task: ctx.task,
-        userId: ctx.userId,
-        addCost: ctx.addCost,
-      });
-      return {
-        success: result.success,
-        output: result.success
-          ? `visual_type_verified: ${action.text}; ${result.verification?.reason}; debug=${result.debugDir}`
-          : `visual_type_failed: ${result.error}; debug=${result.debugDir}`,
-        error: result.success ? undefined : result.error,
-        screenshot: result.after ? { base64: result.after.capture.base64, width: result.after.capture.width, height: result.after.capture.height } : undefined,
-        details: { verification: result.verification, target: result.target, attempts: result.attempts, debugDir: result.debugDir },
+        screenshot: result.screenshot,
+        details: { mode: 'soc_visual', history: result.history, debugDir: result.debugDir },
       };
     }
     case 'keyboard.press': {
