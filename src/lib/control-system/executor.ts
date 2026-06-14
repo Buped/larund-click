@@ -1,8 +1,39 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ControlAction, ControlToolResult } from './types';
 import type { ToolContext } from '../tools/types';
+import type { DocumentReference } from '../references/types';
+import { readDocument, readManyDocuments, summarizeReadResults, scanFolder, readRelevantFromFolder, formatFolderScan } from '../document-reader';
 
 const ERR = (error: string): ControlToolResult => ({ success: false, output: '', error });
+
+function refFromAction(
+  ctx: ToolContext,
+  input: { ref_id?: string; path?: string; url?: string; label?: string; kind?: string },
+  fallbackKind: DocumentReference['kind'] = 'file',
+): DocumentReference {
+  const found = input.ref_id ? ctx.references?.find((ref) => ref.id === input.ref_id) : undefined;
+  if (found) return found;
+  const target = input.path ?? input.url ?? '';
+  return {
+    id: input.ref_id ?? `inline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    kind: (input.kind as DocumentReference['kind'] | undefined) ?? (input.url ? 'url' : fallbackKind),
+    label: input.label ?? target.split(/[\\/]/).filter(Boolean).pop() ?? target,
+    path: input.path,
+    url: input.url,
+    source: 'user_reference',
+  };
+}
+
+function docxPlaceholder(content: string): string {
+  return [
+    'DOCX generation scaffold',
+    '',
+    'This file was requested as .docx, but native OOXML packaging is not enabled in this build yet.',
+    'The verified document content follows:',
+    '',
+    content,
+  ].join('\n');
+}
 
 async function tryInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
   try {
@@ -104,6 +135,61 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
       return r.ok ? { success: true, output: r.value } : ERR(r.error);
     }
 
+    case 'document.read': {
+      const ref = refFromAction(ctx, action);
+      const result = await readDocument(ref);
+      return {
+        success: result.ok,
+        output: JSON.stringify(result, null, 2),
+        error: result.ok ? undefined : result.error,
+        details: { documentRead: result },
+      };
+    }
+    case 'document.read_many': {
+      const refs = (action.refs ?? []).map((ref) => refFromAction(ctx, ref));
+      const results = await readManyDocuments(refs.length ? refs : (ctx.references ?? []).filter((ref) => ref.kind !== 'folder'));
+      const ok = results.every((result) => result.ok);
+      return {
+        success: ok,
+        output: summarizeReadResults(results),
+        error: ok ? undefined : 'one_or_more_documents_failed',
+        details: { documentReads: results },
+      };
+    }
+    case 'folder.scan': {
+      const ref = refFromAction(ctx, action, 'folder');
+      const scan = await scanFolder(ref, { limits: { maxFolderEntries: action.max_entries, maxDepth: action.max_depth } });
+      return {
+        success: scan.ok,
+        output: formatFolderScan(scan),
+        error: scan.ok ? undefined : scan.error,
+        details: { folderScan: scan },
+      };
+    }
+    case 'folder.read_relevant': {
+      const ref = refFromAction(ctx, action, 'folder');
+      const result = await readRelevantFromFolder(ref, action.query ?? ctx.task, {
+        limits: { maxFolderEntries: action.max_entries, maxDepth: action.max_depth },
+      });
+      const ok = result.scan.ok && result.documents.every((doc) => doc.ok);
+      return {
+        success: ok,
+        output: `${formatFolderScan(result.scan)}\n\nRead documents:\n${summarizeReadResults(result.documents)}`,
+        error: ok ? undefined : 'folder_relevant_read_failed',
+        details: { folderScan: result.scan, documentReads: result.documents },
+      };
+    }
+    case 'document.summarize': {
+      const ref = refFromAction(ctx, action);
+      const result = await readDocument(ref);
+      return {
+        success: result.ok,
+        output: result.summary ?? result.contentText ?? '',
+        error: result.ok ? undefined : result.error,
+        details: { documentRead: result },
+      };
+    }
+
     // ── data ─────────────────────────────────────────────────────────────
     case 'sheet.read': {
       const r = await tryInvoke<string>('sheet_read', { path: action.path, sheet: action.sheet ?? null, maxRows: action.max_rows ?? null });
@@ -115,6 +201,47 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
         cells: null, startCell: action.start_cell ?? null, mode: action.mode ?? null,
       });
       return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'sheet.append': {
+      const r = await tryInvoke<string>('sheet_write', {
+        path: action.path, sheet: action.sheet ?? null, rows: action.rows,
+        cells: null, startCell: null, mode: 'append',
+      });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'sheet.export_csv': {
+      const read = await tryInvoke<string>('sheet_read', { path: action.path, sheet: action.sheet ?? null, maxRows: null });
+      if (!read.ok) return ERR(read.error);
+      let rows: string[][] = [];
+      try {
+        const parsed = JSON.parse(read.value) as { rows?: string[][] };
+        rows = parsed.rows ?? [];
+      } catch {
+        return ERR('sheet_export_csv_parse_failed');
+      }
+      const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
+      const write = await tryInvoke<void>('file_write', { path: action.target_path, content: csv });
+      return write.ok ? { success: true, output: `Exported ${rows.length} rows to ${action.target_path}` } : ERR(write.error);
+    }
+    case 'sheet.to_json': {
+      const r = await tryInvoke<string>('sheet_read', { path: action.path, sheet: action.sheet ?? null, maxRows: action.max_rows ?? null });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+
+    case 'doc.read': {
+      const ref = refFromAction(ctx, { path: action.path, label: action.path }, 'file');
+      const result = await readDocument(ref);
+      return { success: result.ok, output: JSON.stringify(result, null, 2), error: result.ok ? undefined : result.error, details: { documentRead: result } };
+    }
+    case 'doc.write_txt': {
+      const r = await tryInvoke<void>('file_write', { path: action.path, content: action.content });
+      return r.ok ? { success: true, output: `Wrote text document ${action.path}` } : ERR(r.error);
+    }
+    case 'doc.write_docx': {
+      const r = await tryInvoke<void>('file_write', { path: action.path, content: docxPlaceholder(action.content) });
+      return r.ok
+        ? { success: true, output: `Wrote DOCX scaffold ${action.path}. Native OOXML packaging is not enabled; content is preserved as text.` }
+        : ERR(r.error);
     }
 
     // ── clipboard ──────────────────────────────────────────────────────────
@@ -158,6 +285,10 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
       const r = await tryInvoke<string>('browser_read', { selector: action.selector ?? null });
       return r.ok ? { success: true, output: r.value } : ERR(r.error);
     }
+    case 'browser.get_state': {
+      const r = await tryInvoke<string>('browser_read', { selector: null });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
     case 'browser.click': {
       const r = await tryInvoke<string>('browser_click', { target: action.target });
       return r.ok ? { success: true, output: r.value } : ERR(r.error);
@@ -169,6 +300,37 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
     case 'browser.key': {
       const r = await tryInvoke<string>('browser_key', { key: action.key });
       return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'browser.shortcut': {
+      const r = await tryInvoke<string>('browser_shortcut', { keys: action.keys });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'browser.paste': {
+      // Optionally set the clipboard, then dispatch Ctrl+V into the focused field.
+      if (typeof action.text === 'string') {
+        const set = await tryInvoke<void>('clipboard_set', { text: action.text });
+        if (!set.ok) return ERR(set.error);
+      }
+      const r = await tryInvoke<string>('browser_shortcut', { keys: ['ctrl', 'v'] });
+      return r.ok ? { success: true, output: `Pasted${typeof action.text === 'string' ? ' clipboard TSV' : ''}: ${r.value}` } : ERR(r.error);
+    }
+    case 'browser.assert_text': {
+      const r = await tryInvoke<string>('browser_read', { selector: null });
+      if (!r.ok) return ERR(r.error);
+      const present = r.value.toLowerCase().includes(action.text.toLowerCase());
+      return present
+        ? { success: true, output: `assert_text ok: "${action.text}" present` }
+        : { success: false, output: r.value.slice(0, 400), error: `assert_text failed: "${action.text}" not found on page` };
+    }
+    case 'browser.assert_url': {
+      const r = await tryInvoke<string>('browser_read', { selector: null });
+      if (!r.ok) return ERR(r.error);
+      const m = r.value.match(/^URL:\s*(.+)$/im);
+      const url = m?.[1]?.trim() ?? '';
+      const ok = url.toLowerCase().includes(action.url.toLowerCase());
+      return ok
+        ? { success: true, output: `assert_url ok: ${url}` }
+        : { success: false, output: url, error: `assert_url failed: current "${url}" does not match "${action.url}"` };
     }
     case 'browser.wait': {
       const r = await tryInvoke<string>('browser_wait', { text: action.text ?? null, selector: action.selector ?? null, seconds: action.seconds ?? null });

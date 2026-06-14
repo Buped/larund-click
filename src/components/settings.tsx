@@ -219,6 +219,7 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
   const [theme,      setTheme     ] = useState("Dark");
   const [fontSize,   setFontSize  ] = useState("Medium");
   const [startupApp, setStartupApp] = useState("Last chat");
+  const [autonomyMode, setAutonomyMode] = useState("Semi-automatic");
   const [pauseHrs,   setPauseHrs  ] = useState("8 hours");
   const [notifSound, setNotifSound] = useState(true);
   const [autoStart,  setAutoStart ] = useState(false);
@@ -234,6 +235,9 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
       setAutoStart(s.launch_at_login === 1);
       setMemEnabled(s.memory_enabled === 1);
       if (s.theme) setTheme(s.theme === 'dark' ? 'Dark' : s.theme === 'light' ? 'Light' : 'System');
+      if (s.autonomy_mode) {
+        setAutonomyMode(s.autonomy_mode === 'manual' ? 'Manual' : s.autonomy_mode === 'full' ? 'Full autonomous' : 'Semi-automatic');
+      }
     });
     getApps().then(setApps);
     getMemoryEntries().then(setMemories);
@@ -289,6 +293,12 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
   async function handleThemeChange(v: string) {
     setTheme(v);
     await updateSettings({ theme: v.toLowerCase() });
+  }
+
+  async function handleAutonomyChange(v: string) {
+    setAutonomyMode(v);
+    const mode = v === 'Manual' ? 'manual' : v === 'Full autonomous' ? 'full' : 'semi';
+    await updateSettings({ autonomy_mode: mode });
   }
 
   async function handleClearMemories() {
@@ -350,9 +360,9 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
 
             {section === "automation" && (
               <>
-                <SettingRow label="Control System" sub="CLI-first: shell, browser (CDP) and UIA element control; cursor only as last resort"><span style={{ fontSize: 12.5, color: "var(--text-hint)" }}>Always on</span></SettingRow>
-                <SettingRow label="Require confirmation" sub="Ask before submitting forms or clicking irreversible actions"><Toggle checked={true} onChange={() => {}} /></SettingRow>
-                <SettingRow label="Screenshot interval" sub="How often Click captures the screen during tasks"><Select value="500ms" options={["250ms","500ms","1s","2s"]} onChange={() => {}} /></SettingRow>
+                <SettingRow label="Control system" sub="No-mouse operator: CLI, files, browser DOM, connections and skills"><span style={{ fontSize: 12.5, color: "var(--text-hint)" }}>Always on</span></SettingRow>
+                <SettingRow label="Autonomy mode" sub="Controls when the operator asks before tool calls"><Select value={autonomyMode} options={["Semi-automatic","Manual","Full autonomous"]} onChange={handleAutonomyChange} /></SettingRow>
+                <SettingRow label="External writes" sub="Semi mode asks before Google/remote writes; full mode proceeds unless high impact"><span style={{ fontSize: 12.5, color: "var(--text-hint)" }}>Policy enforced</span></SettingRow>
                 <SettingRow label="Max task duration" sub="Abort task if it runs longer than this"><Select value="15 minutes" options={["5 minutes","10 minutes","15 minutes","30 minutes","No limit"]} onChange={() => {}} /></SettingRow>
               </>
             )}

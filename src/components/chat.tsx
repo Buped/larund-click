@@ -4,11 +4,16 @@ import { Icon, ClickMark } from './icons';
 import { RichMessage } from './rich-message';
 import { Sidebar } from './sidebar';
 import { MODELS } from '../constants/models';
-import { getMessages, addMessage, createSession, updateMessage, touchSession } from '../lib/database';
+import { getMessages, addMessage, createSession, updateMessage, touchSession, getSettings } from '../lib/database';
 import { callOpenRouter } from '../lib/openrouter';
 import { runAgentLoop, AgentStatus, AgentStep, AgentAbortSignal } from '../lib/agent-loop';
 import { v4 as uuidv4 } from 'uuid';
 import type { UserCredits } from '../lib/supabase';
+import { ReferenceChip } from './chat/ReferenceChip';
+import { ReferencePicker } from './chat/ReferencePicker';
+import type { DocumentReference } from '../lib/references/types';
+import { appendReferenceSummary } from '../lib/references/serialize';
+import { policyForAutonomyMode, type AutonomyMode as PolicyAutonomyMode } from '../lib/tools/policy';
 
 // ─── Model picker ─────────────────────────────────────────────────────────────
 
@@ -281,8 +286,19 @@ const TOOL_ICONS: Record<string, string> = {
   'file.copy':         'folder',
   'file.move':         'folder',
   'file.delete':       'folder',
+  'document.read':     'fileText',
+  'document.read_many':'fileText',
+  'document.summarize':'fileText',
+  'folder.scan':       'folder',
+  'folder.read_relevant': 'folder',
   'sheet.read':        'fileText',
   'sheet.write':       'upload',
+  'sheet.append':      'upload',
+  'sheet.export_csv':  'upload',
+  'sheet.to_json':     'fileText',
+  'doc.read':          'fileText',
+  'doc.write_txt':     'upload',
+  'doc.write_docx':    'upload',
   'clipboard.get':     'fileText',
   'clipboard.set':     'upload',
   'app.open':          'externalLink',
@@ -301,16 +317,21 @@ const TOOL_ICONS: Record<string, string> = {
 function AgentStepItem({ step }: { step: AgentStep }) {
   const [open, setOpen] = useState(false);
 
-  if (step.type === 'thinking') {
+  if (['thinking', 'plan', 'checklist', 'verification', 'handoff', 'blocked'].includes(step.type)) {
+    const tone = step.type === 'verification'
+      ? 'var(--success)'
+      : step.type === 'blocked' || step.type === 'handoff'
+        ? 'var(--danger)'
+        : 'var(--accent)';
     return (
       <div className="agent-step-item" style={{ display: 'flex', alignItems: 'flex-start', gap: 6, padding: '3px 0 3px 0' }}>
         <span style={{
           width: 18, height: 18, borderRadius: 4, flex: 'none',
           display: 'grid', placeItems: 'center',
           background: 'rgba(74,158,255,0.12)',
-          color: 'var(--accent)',
+          color: tone,
         }}>
-          <Icon name="sparkle" size={9} stroke={1.8} />
+          <Icon name={step.type === 'verification' ? 'check' : step.type === 'checklist' ? 'fileText' : 'sparkle'} size={9} stroke={1.8} />
         </span>
         <span style={{ fontSize: 11.5, color: 'var(--text-hint)', lineHeight: 1.5 }}>
           {step.output || 'Thinking...'}
@@ -703,6 +724,8 @@ export function ChatScreen({
   const [agentMode,         setAgentMode        ] = useState(false);
   const [agentAskAnswer,    setAgentAskAnswer   ] = useState('');
   const [runningTask,       setRunningTask      ] = useState<RunningTask | null>(null);
+  const [references,        setReferences       ] = useState<DocumentReference[]>([]);
+  const [referencePickerOpen, setReferencePickerOpen] = useState(false);
 
   const taRef         = useRef<HTMLTextAreaElement>(null);
   const fileRef       = useRef<HTMLInputElement>(null);
@@ -734,6 +757,7 @@ export function ChatScreen({
   function onInputChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     setInput(e.target.value);
     growTextarea();
+    if (e.target.value.endsWith('@')) setReferencePickerOpen(true);
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
@@ -819,6 +843,8 @@ export function ChatScreen({
     sessionId: string,
     openrouterId: string,
     asstMsgId: string,
+    history: { role: 'user' | 'assistant'; content: string }[],
+    taskReferences: DocumentReference[],
   ) {
     type AgentPersistState = {
       content: string;
@@ -885,6 +911,9 @@ export function ChatScreen({
     abortRef.current = { aborted: false };
     persistAgentState(agentState);
 
+    const settings = await getSettings().catch(() => null);
+    const autonomyMode = ((settings?.autonomy_mode as PolicyAutonomyMode | undefined) ?? 'semi');
+
     await runAgentLoop(
       task,
       openrouterId,
@@ -922,6 +951,7 @@ export function ChatScreen({
         },
       },
       abortRef.current,
+      { sessionId, history, references: taskReferences, policy: policyForAutonomyMode(autonomyMode) },
     );
 
     await persistQueue;
@@ -929,20 +959,23 @@ export function ChatScreen({
 
   async function handleSend() {
     const text = input.trim();
-    if (!text || sending || runningTask || !userId) return;
+    const taskReferences = [...references];
+    if ((!text && taskReferences.length === 0) || sending || runningTask || !userId) return;
+    const messageText = appendReferenceSummary(text || 'Use the referenced input(s).', taskReferences);
 
     let currentTaskId: string | null = null;
     setSending(true);
     setInput('');
     if (taRef.current) taRef.current.style.height = 'auto';
     setAttachments([]);
+    setReferences([]);
     try {
 
     // ── Create / get session ──
     let sessionId = activeChat;
     if (!sessionId) {
       sessionId = uuidv4();
-      await createSession(sessionId, text.slice(0, 40));
+      await createSession(sessionId, (text || taskReferences[0]?.label || 'Referenced task').slice(0, 40));
       skipNextFetch.current = true;
       setActiveChat(sessionId);
       setSidebarRefreshKey(k => k + 1);
@@ -952,9 +985,9 @@ export function ChatScreen({
     const userMsgId = uuidv4();
     setMessages(prev => [...prev, {
       id: userMsgId, session_id: sessionId!,
-      role: 'user', content: text, created_at: new Date().toISOString(),
+      role: 'user', content: messageText, created_at: new Date().toISOString(),
     }]);
-    addMessage(userMsgId, sessionId, 'user', text).catch(err =>
+    addMessage(userMsgId, sessionId, 'user', messageText).catch(err =>
       console.warn('Failed to save user message:', err),
     );
 
@@ -962,6 +995,13 @@ export function ChatScreen({
 
     // ── Agent mode path ──
     if (agentMode) {
+      // Prior conversation for the agent loop: user messages and any agent/AI
+      // final summaries, oldest first. Gives the operator real context so a
+      // correction continues the previous task instead of restarting it.
+      const agentHistory = messages
+        .filter(m => !m._loading && !m.streaming && m.content)
+        .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+
       const asstMsgId = uuidv4();
       currentTaskId = asstMsgId;
       setMessages(prev => [...prev, {
@@ -976,7 +1016,7 @@ export function ChatScreen({
         agent_steps_json: '[]',
         agent_ask_question: null,
       }).catch(err => console.warn('Failed to save agent message shell:', err));
-      await handleAgentRun(text, sessionId, modelDef.openrouter_id, asstMsgId);
+      await handleAgentRun(text || messageText, sessionId, modelDef.openrouter_id, asstMsgId, agentHistory, taskReferences);
       return;
     }
 
@@ -992,7 +1032,7 @@ export function ChatScreen({
     const history = messages
       .filter(m => !m._loading && !m.streaming && !m._agent && m.content)
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
-    history.push({ role: 'user', content: text });
+    history.push({ role: 'user', content: messageText });
 
     const serviceTier = 'service_tier' in modelDef ? (modelDef as any).service_tier : undefined;
     let fullContent = '';
@@ -1208,6 +1248,22 @@ export function ChatScreen({
                 rows={1}
                 className="chat-textarea"
               />
+              {references.length > 0 && (
+                <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 8, marginBottom: 2 }}>
+                  {references.map((ref) => (
+                    <ReferenceChip
+                      key={ref.id}
+                      refItem={ref}
+                      onRemove={() => setReferences((current) => current.filter((item) => item.id !== ref.id))}
+                    />
+                  ))}
+                </div>
+              )}
+              <ReferencePicker
+                open={referencePickerOpen}
+                onPicked={(picked) => setReferences((current) => [...current, ...picked])}
+                onClose={() => setReferencePickerOpen(false)}
+              />
 
               {/* Toolbar */}
               <div className="chat-toolbar">
@@ -1228,15 +1284,13 @@ export function ChatScreen({
                   <Icon name="zap" size={15} stroke={1.5} />
                 </button>
 
-                {!agentMode && (
-                  <button
-                    className="toolbar-btn"
-                    onClick={() => fileRef.current?.click()}
-                    title="Attach image"
-                  >
-                    <Icon name="paperclip" size={15} stroke={1.5} />
-                  </button>
-                )}
+                <button
+                  className="toolbar-btn"
+                  onClick={() => setReferencePickerOpen((open) => !open)}
+                  title="Attach file, folder, or URL reference"
+                >
+                  <Icon name="paperclip" size={15} stroke={1.5} />
+                </button>
                 <input
                   ref={fileRef} type="file" accept="image/*" multiple
                   onChange={handleFiles} style={{ display: 'none' }}
@@ -1251,7 +1305,7 @@ export function ChatScreen({
                 <button
                   className={`send-btn${runningTask ? ' send-btn--stop send-stop-swap' : ''}`}
                   onClick={runningTask ? handleStop : handleSend}
-                  disabled={!runningTask && (sending || !input.trim() || !userId)}
+                  disabled={!runningTask && (sending || (!input.trim() && references.length === 0) || !userId)}
                   title={runningTask ? 'Stop' : 'Send (Enter)'}
                 >
                   {runningTask

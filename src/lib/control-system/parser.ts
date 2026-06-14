@@ -8,14 +8,18 @@ export const ALLOWED_ACTIONS: ReadonlySet<ControlActionName> = new Set<ControlAc
   'file.read', 'file.write', 'file.edit', 'file.list', 'file.mkdir',
   'file.copy', 'file.move', 'file.delete', 'file.search', 'file.tree',
   'file.exists', 'file.metadata',
+  'document.read', 'document.read_many', 'document.summarize',
+  'folder.scan', 'folder.read_relevant',
   // data
-  'sheet.read', 'sheet.write',
+  'sheet.read', 'sheet.write', 'sheet.append', 'sheet.export_csv', 'sheet.to_json',
+  'doc.read', 'doc.write_txt', 'doc.write_docx',
   // clipboard
   'clipboard.get', 'clipboard.set',
   // apps / windows / keyboard
   'app.open', 'window.list', 'window.focus', 'keyboard.press', 'keyboard.combo',
   // browser
-  'browser.open', 'browser.read', 'browser.click', 'browser.type', 'browser.key',
+  'browser.open', 'browser.read', 'browser.get_state', 'browser.click', 'browser.type',
+  'browser.key', 'browser.shortcut', 'browser.paste', 'browser.assert_text', 'browser.assert_url',
   'browser.wait', 'browser.extract_table', 'browser.download', 'browser.upload',
   // connections / skills / workflows
   'connection.call', 'skill.run', 'workflow.start', 'workflow.status', 'workflow.cancel',

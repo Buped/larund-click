@@ -14,6 +14,8 @@ export interface RiskPolicy {
   process_exec: PolicyDecision;
 }
 
+export type AutonomyMode = 'manual' | 'semi' | 'full';
+
 export const DEFAULT_POLICY: RiskPolicy = {
   read_only: 'auto',
   external_read: 'auto',
@@ -25,18 +27,51 @@ export const DEFAULT_POLICY: RiskPolicy = {
   process_exec: 'ask',
 };
 
+export const MANUAL_POLICY: RiskPolicy = {
+  read_only: 'ask',
+  external_read: 'ask',
+  local_write: 'ask',
+  external_write: 'ask',
+  external_send: 'ask',
+  destructive: 'ask',
+  credential_access: 'ask',
+  process_exec: 'ask',
+};
+
+export const FULL_AUTONOMY_POLICY: RiskPolicy = {
+  read_only: 'auto',
+  external_read: 'auto',
+  local_write: 'auto',
+  external_write: 'auto',
+  external_send: 'ask',
+  destructive: 'ask',
+  credential_access: 'ask',
+  process_exec: 'auto',
+};
+
+export function policyForAutonomyMode(mode: AutonomyMode): RiskPolicy {
+  if (mode === 'manual') return MANUAL_POLICY;
+  if (mode === 'full') return FULL_AUTONOMY_POLICY;
+  return DEFAULT_POLICY;
+}
+
 /** Static category per action name. */
 export const ACTION_CATEGORY: Record<string, ToolCategory> = {
   'cli.run': 'runtime', 'process.start': 'runtime', 'process.status': 'runtime', 'process.kill': 'runtime',
   'file.read': 'files', 'file.write': 'files', 'file.edit': 'files', 'file.list': 'files',
   'file.mkdir': 'files', 'file.copy': 'files', 'file.move': 'files', 'file.delete': 'files',
   'file.search': 'files', 'file.tree': 'files', 'file.exists': 'files', 'file.metadata': 'files',
-  'sheet.read': 'data', 'sheet.write': 'data',
+  'document.read': 'documents', 'document.read_many': 'documents', 'document.summarize': 'documents',
+  'folder.scan': 'documents', 'folder.read_relevant': 'documents',
+  'sheet.read': 'data', 'sheet.write': 'data', 'sheet.append': 'data', 'sheet.export_csv': 'data', 'sheet.to_json': 'data',
+  'doc.read': 'documents', 'doc.write_txt': 'documents', 'doc.write_docx': 'documents',
   'clipboard.get': 'clipboard', 'clipboard.set': 'clipboard',
   'app.open': 'apps', 'window.list': 'apps', 'window.focus': 'apps',
   'keyboard.press': 'apps', 'keyboard.combo': 'apps',
-  'browser.open': 'browser', 'browser.read': 'browser', 'browser.click': 'browser',
-  'browser.type': 'browser', 'browser.key': 'browser', 'browser.wait': 'browser',
+  'browser.open': 'browser', 'browser.read': 'browser', 'browser.get_state': 'browser',
+  'browser.click': 'browser', 'browser.type': 'browser', 'browser.key': 'browser',
+  'browser.shortcut': 'browser', 'browser.paste': 'browser',
+  'browser.assert_text': 'browser', 'browser.assert_url': 'browser', 'browser.wait': 'browser',
   'browser.extract_table': 'browser', 'browser.download': 'browser', 'browser.upload': 'browser',
   'connection.call': 'connections', 'skill.run': 'skills',
   'workflow.start': 'workflows', 'workflow.status': 'workflows', 'workflow.cancel': 'workflows',
@@ -100,9 +135,13 @@ export function assessRisk(action: ControlAction): ToolRisk {
 
     case 'file.read': case 'file.list': case 'file.search': case 'file.tree':
     case 'file.exists': case 'file.metadata': case 'sheet.read':
+    case 'document.read': case 'document.read_many': case 'document.summarize':
+    case 'folder.scan': case 'folder.read_relevant': case 'sheet.to_json':
+    case 'doc.read':
       return 'read_only';
     case 'file.write': case 'file.edit': case 'file.mkdir': case 'file.copy':
-    case 'sheet.write': case 'clipboard.set':
+    case 'sheet.write': case 'sheet.append': case 'sheet.export_csv':
+    case 'doc.write_txt': case 'doc.write_docx': case 'clipboard.set':
       return 'local_write';
     case 'file.move':
       return 'local_write';
@@ -116,10 +155,12 @@ export function assessRisk(action: ControlAction): ToolRisk {
     case 'keyboard.press': case 'keyboard.combo':
       return 'local_write';
 
-    case 'browser.open': case 'browser.read': case 'browser.wait':
-    case 'browser.extract_table':
+    case 'browser.open': case 'browser.read': case 'browser.get_state':
+    case 'browser.wait': case 'browser.extract_table':
+    case 'browser.assert_text': case 'browser.assert_url':
       return 'external_read';
     case 'browser.click': case 'browser.type': case 'browser.key':
+    case 'browser.shortcut': case 'browser.paste':
     case 'browser.download': case 'browser.upload':
       return 'external_write';
 

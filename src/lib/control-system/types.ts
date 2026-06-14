@@ -35,9 +35,25 @@ export type ControlAction =
   | { action: 'file.exists'; path: string }
   | { action: 'file.metadata'; path: string }
 
+  // Structured document ingestion. These tools read referenced files/folders
+  // as first-class inputs instead of forcing the model to infer contents.
+  | { action: 'document.read'; ref_id?: string; path?: string; url?: string; label?: string; kind?: 'file' | 'url' | 'google_doc' | 'google_sheet' | 'google_drive_file' }
+  | { action: 'document.read_many'; refs?: Array<{ id?: string; path?: string; url?: string; label?: string; kind?: 'file' | 'url' | 'google_doc' | 'google_sheet' | 'google_drive_file' }> }
+  | { action: 'folder.scan'; ref_id?: string; path?: string; label?: string; max_entries?: number; max_depth?: number }
+  | { action: 'folder.read_relevant'; ref_id?: string; path?: string; label?: string; query?: string; max_entries?: number; max_depth?: number }
+  | { action: 'document.summarize'; ref_id?: string; path?: string; url?: string; label?: string }
+
   // ── Data: spreadsheets ────────────────────────────────────────────────
   | { action: 'sheet.read'; path: string; sheet?: string; max_rows?: number }
   | { action: 'sheet.write'; path: string; sheet?: string; rows?: string[][]; start_cell?: string; mode?: 'overwrite' | 'append' }
+  | { action: 'sheet.append'; path: string; sheet?: string; rows: string[][] }
+  | { action: 'sheet.export_csv'; path: string; target_path: string; sheet?: string }
+  | { action: 'sheet.to_json'; path: string; sheet?: string; max_rows?: number }
+
+  // Local documents. GUI Office automation is optional; file output is primary.
+  | { action: 'doc.read'; path: string }
+  | { action: 'doc.write_txt'; path: string; content: string }
+  | { action: 'doc.write_docx'; path: string; content: string }
 
   // ── Clipboard ─────────────────────────────────────────────────────────
   | { action: 'clipboard.get' }
@@ -53,9 +69,14 @@ export type ControlAction =
   // ── Browser (CDP / DOM — element-based, never pixels) ──────────────────
   | { action: 'browser.open'; url: string; profile?: string }
   | { action: 'browser.read'; selector?: string }
+  | { action: 'browser.get_state' }
   | { action: 'browser.click'; target: string }
   | { action: 'browser.type'; target: string; text: string }
   | { action: 'browser.key'; key: string }
+  | { action: 'browser.shortcut'; keys: string[] }
+  | { action: 'browser.paste'; text?: string }
+  | { action: 'browser.assert_text'; text: string }
+  | { action: 'browser.assert_url'; url: string }
   | { action: 'browser.wait'; text?: string; selector?: string; seconds?: number }
   | { action: 'browser.extract_table'; selector?: string }
   | { action: 'browser.download'; url?: string; target?: string; save_as?: string }

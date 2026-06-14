@@ -13,13 +13,22 @@ import type { AuditEntry, ConnectionRegistry, SkillRunner, WorkflowRunner } from
 import { createConnectionRegistry } from '../connections/registry';
 import { createSkillRunner } from '../skills/runner';
 import { createWorkflowRunner } from '../workflows/runner';
+import { resolveActiveTask, setActiveTask } from '../agent-state/session-memory';
+import { renderTaskStatePrompt, recordFailedAttempt } from '../agent-state/task-state';
+import type { RecentAction } from '../agent-state/types';
+import { verifyBeforeComplete, rejectionMessage } from './completion-guard';
+import { detectPageState } from '../browser-workflows/detect-page-state';
+import { manualHandoffMessage } from '../browser-workflows/manual-blockers';
+import { sanitizeArgs } from '../tools/audit';
+import type { DocumentReference } from '../references/types';
+import { readDocument, summarizeReadResults, scanFolder, formatFolderScan } from '../document-reader';
 
 export type AgentStatus = 'idle' | 'planning' | 'executing' | 'waiting_user' | 'complete' | 'error';
 export type AutonomyMode = 'full' | 'semi' | 'manual';
 
 export interface AgentStep {
   id: string;
-  type: 'tool_call' | 'tool_result' | 'thinking' | 'complete' | 'error' | 'approval';
+  type: 'tool_call' | 'tool_result' | 'thinking' | 'complete' | 'error' | 'approval' | 'plan' | 'checklist' | 'verification' | 'handoff' | 'blocked';
   tool?: string;
   input?: string;
   output?: string;
@@ -51,7 +60,13 @@ export interface RunOptions {
   connections?: ConnectionRegistry;
   skills?: SkillRunner;
   workflows?: WorkflowRunner;
+  /** Prior conversation turns, oldest first. Gives the loop real context. */
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  references?: DocumentReference[];
 }
+
+/** How many prior turns to feed into the prompt window. */
+const HISTORY_WINDOW = 8;
 
 const MAX_ITERATIONS = 40;
 
@@ -97,6 +112,7 @@ export async function runControlLoop(
   const policy = opts.policy ?? DEFAULT_POLICY;
   const sessionId = opts.sessionId ?? `sess-${Date.now()}`;
   const workspaceRoot = opts.workspaceRoot ?? '~';
+  const references = opts.references ?? [];
 
   const audit = new MemoryAuditLogger((entry) => callbacks.onAudit?.(entry));
   const approvals = new PromptApprovalService(async (req) => {
@@ -112,23 +128,97 @@ export async function runControlLoop(
   const skills = opts.skills ?? createSkillRunner();
   const workflows = opts.workflows ?? createWorkflowRunner();
 
-  const ctx = { userId, sessionId, workspaceRoot, task, audit, approvals, connections, skills, workflows, onAskUser, addCost: (usd: number) => { totalCostUsd += usd; } };
+  const ctx = { userId, sessionId, workspaceRoot, task, references, audit, approvals, connections, skills, workflows, onAskUser, addCost: (usd: number) => { totalCostUsd += usd; } };
 
   onStatus('planning');
   emitStep({
     id: nowStepId('mode'),
-    type: 'thinking',
+    type: 'plan',
     output: 'No-mouse operator. Working via CLI, files, browser DOM, apps, connections and skills. No mouse/cursor/visual control.',
     timestamp: new Date().toISOString(),
   });
   await updateOverlay({ active: true, status: 'planning', task, steps });
 
-  const systemPrompt = `${CONTROL_SYSTEM_PROMPT}\n\n## Tool catalog\n${toolCatalogSummary()}\n\n## Workspace\n${workspaceRoot}\n\n## Task\n${task}`;
+  // ── Persistent task / context memory ──────────────────────────────────────
+  // Resolve the active task for this session: a correction/continuation folds
+  // into the prior task; otherwise a fresh task is classified by preflight.
+  const resolved = resolveActiveTask(sessionId, task);
+  const taskState = resolved.state;
+  taskState.status = 'running';
+  taskState.referencedInputs = references;
+  if (resolved.isCorrection) {
+    emitStep({
+      id: nowStepId('correction'),
+      type: 'thinking',
+      output: `Correction detected — continuing the active task: ${taskState.currentGoal}`,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  const recentActions: RecentAction[] = [];
+  const MAX_RECENT = 40;
+  const recordAction = (rec: RecentAction) => {
+    recentActions.push(rec);
+    if (recentActions.length > MAX_RECENT) recentActions.shift();
+  };
+
+  if (references.length > 0) {
+    emitStep({
+      id: nowStepId('refs-plan'),
+      type: 'checklist',
+      output: `Referenced inputs: ${references.map((ref) => ref.label).join(', ')}. I will inspect them before using their contents.`,
+      timestamp: new Date().toISOString(),
+    });
+    for (const ref of references) {
+      if (ref.kind === 'folder') {
+        const scan = await scanFolder(ref);
+        const output = formatFolderScan(scan);
+        emitStep({
+          id: nowStepId('folder-scan'),
+          type: scan.ok ? 'verification' : 'error',
+          tool: 'folder.scan',
+          input: JSON.stringify(ref),
+          output,
+          error: scan.ok ? undefined : scan.error,
+          timestamp: new Date().toISOString(),
+          details: { folderScan: scan },
+        });
+        recordAction({ action: 'folder.scan', argsSummary: JSON.stringify(ref), success: scan.ok, output, error: scan.error });
+      } else if (ref.kind === 'file') {
+        const result = await readDocument(ref);
+        const output = summarizeReadResults([result]);
+        if (result.ok && ref.path) taskState.filesRead = [...(taskState.filesRead ?? []), ref.path];
+        emitStep({
+          id: nowStepId('document-read'),
+          type: result.ok ? 'verification' : 'error',
+          tool: 'document.read',
+          input: JSON.stringify(ref),
+          output,
+          error: result.ok ? undefined : result.error,
+          timestamp: new Date().toISOString(),
+          details: { documentRead: result },
+        });
+        recordAction({ action: 'document.read', argsSummary: JSON.stringify(ref), success: result.ok, output, error: result.error });
+      }
+    }
+    setActiveTask(sessionId, taskState);
+  }
+
+  const history = (opts.history ?? []).slice(-HISTORY_WINDOW);
+  const historyBlock = history.length
+    ? `\n\n## Recent conversation\n${history.map((m) => `${m.role}: ${m.content}`).join('\n')}`
+    : '';
+
+  const systemPrompt =
+    `${CONTROL_SYSTEM_PROMPT}\n\n## Tool catalog\n${toolCatalogSummary()}\n\n## Workspace\n${workspaceRoot}` +
+    `${historyBlock}\n\n${renderTaskStatePrompt(taskState)}\n\n## Current message\n${task}`;
+
   const messages: { role: 'user' | 'assistant' | 'system'; content: MessageContent }[] = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: task },
   ];
 
+  // Rolling record of executed actions — the evidence the completion guard checks.
   for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     if (signal?.aborted) {
       await completeStopped(onStatus, onComplete);
@@ -184,17 +274,47 @@ export async function runControlLoop(
 
     if (action.action === 'ask_user') {
       onStatus('waiting_user');
+      taskState.status = 'waiting_user';
+      setActiveTask(sessionId, taskState);
       const answer = await onAskUser(action.question);
       if (signal?.aborted) {
         await completeStopped(onStatus, onComplete);
         return;
       }
+      taskState.status = 'running';
+      setActiveTask(sessionId, taskState);
       messages.push({ role: 'assistant', content: aiResponse });
-      messages.push({ role: 'user', content: `User answered: ${answer}` });
+      messages.push({ role: 'user', content: `User answered: ${answer}\nResume the SAME active task with the same goal.` });
       continue;
     }
 
     if (action.action === 'task.complete') {
+      // Completion guard: do not close the run unless the requested outcome is
+      // actually proven by the recorded evidence. On reject, keep looping.
+      const guard = verifyBeforeComplete(taskState, recentActions);
+      if (!guard.ok) {
+        recordFailedAttempt(taskState, {
+          step: 'task.complete',
+          reason: guard.reason,
+          tool: 'task.complete',
+        });
+        setActiveTask(sessionId, taskState);
+        emitStep({
+          id: nowStepId('complete-rejected'),
+          type: 'error',
+          tool: 'task.complete',
+          error: 'completion_rejected',
+          output: guard.reason,
+          timestamp: new Date().toISOString(),
+        });
+        messages.push({ role: 'assistant', content: aiResponse });
+        messages.push({ role: 'user', content: rejectionMessage(guard) });
+        continue;
+      }
+      taskState.status = 'complete';
+      taskState.completedChecks = [...taskState.pendingChecks];
+      taskState.pendingChecks = [];
+      setActiveTask(sessionId, taskState);
       await finalDeduct(userId, totalCostUsd);
       emitStep({ id: nowStepId('complete'), type: 'complete', output: action.summary, timestamp: new Date().toISOString() });
       await updateOverlay({ active: false, status: 'complete', task, steps });
@@ -220,11 +340,33 @@ export async function runControlLoop(
     });
     await updateOverlay({ active: true, status: 'executing', task, steps });
 
+    // Record evidence for the completion guard.
+    recordAction({
+      action: action.action,
+      argsSummary: sanitizeArgs(action),
+      success: result.success,
+      output: result.output,
+      error: result.error,
+    });
+
+    // Browser state awareness: when a page read reveals a login / CAPTCHA wall,
+    // mark the task blocked and steer the model to a manual handoff (not failure).
+    let blockerNote = '';
+    if (result.success && (action.action === 'browser.read' || action.action === 'browser.get_state' || action.action === 'browser.open')) {
+      const pageState = detectPageState(result.output);
+      taskState.lastKnownState = `${pageState.kind}${pageState.url ? ` @ ${pageState.url}` : ''}`;
+      if (pageState.isManualBlocker) {
+        taskState.status = 'blocked';
+        blockerNote = `\nMANUAL BLOCKER (${pageState.kind}). Do NOT complete. ask_user: "${manualHandoffMessage(pageState.kind === 'login_required' ? 'login_required' : pageState.kind === 'captcha' ? 'captcha' : 'permission_required')}" Then resume the same task.`;
+      }
+      setActiveTask(sessionId, taskState);
+    }
+
     messages.push({ role: 'assistant', content: aiResponse });
     messages.push({
       role: 'user',
       content: result.success
-        ? `Action result: ${result.output}\nComplete with task.complete only when this proves the requested outcome.`
+        ? `Action result: ${result.output}${blockerNote}\nComplete with task.complete only when the result is verified by a read-back and proves the requested outcome.`
         : `Action error: ${result.error ?? result.output}\nPick a different structured tool. Mouse/cursor/visual control is unavailable. If only a GUI mouse path exists, ask_user for a manual step or an API/export alternative.`,
     });
   }

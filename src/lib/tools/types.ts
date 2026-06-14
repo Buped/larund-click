@@ -1,10 +1,12 @@
 import type { ControlAction, ControlActionName, ControlToolResult, ToolRisk } from '../control-system/types';
+import type { DocumentReference } from '../references/types';
 
 export type { ToolRisk } from '../control-system/types';
 
 export type ToolCategory =
   | 'runtime'
   | 'files'
+  | 'documents'
   | 'browser'
   | 'apps'
   | 'data'
@@ -85,6 +87,7 @@ export interface ToolContext {
   sessionId: string;
   workspaceRoot: string;
   task: string;
+  references?: DocumentReference[];
   addCost?: (usd: number) => void;
   audit: AuditLogger;
   approvals: ApprovalService;

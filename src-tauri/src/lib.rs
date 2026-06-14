@@ -52,6 +52,7 @@ pub fn run() {
             commands::browser::browser_type,
             commands::browser::browser_read,
             commands::browser::browser_key,
+            commands::browser::browser_shortcut,
             commands::browser::browser_wait,
             commands::browser::browser_probe,
             commands::browser::browser_close,

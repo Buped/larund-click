@@ -21,17 +21,52 @@ trigger: "organize sort clean rename restructure files folders downloads project
 
 const browserAutomation = `---
 name: browser-automation
-description: "Drive websites via the browser DOM/CDP tools (read/click/type/extract) — never the mouse or screen pixels."
-allowed_tools: ["browser.open", "browser.read", "browser.click", "browser.type", "browser.key", "browser.wait", "browser.extract_table", "browser.download", "browser.upload", "ask_user"]
+description: "Drive websites via the browser DOM/CDP tools (read/click/type/paste/extract) — never the mouse or screen pixels."
+allowed_tools: ["browser.open", "browser.read", "browser.get_state", "browser.click", "browser.type", "browser.key", "browser.shortcut", "browser.paste", "browser.assert_text", "browser.assert_url", "browser.wait", "browser.extract_table", "browser.download", "browser.upload", "clipboard.set", "ask_user"]
 requires_connections: []
 risk: "external_write"
 trigger: "open website fill form extract data log into web app browser"
 ---
 
 # Browser Automation
-1. browser.open the page. 2. browser.read to snapshot DOM.
-3. Act by element text/selector. 4. Re-read after UI changes.
-5. extract_table for tables. 6. login/2FA/captcha -> ask_user. Never use a mouse.`;
+1. browser.open then browser.wait + browser.read/get_state (URL/title/focus/inputs/STATE_HINTS).
+2. Check state: login_required/captcha/permission_required = manual blocker -> ask_user, resume.
+3. Act by element text/selector; browser.type errors AMBIGUOUS -> use a more specific target.
+4. Re-read after EVERY state-changing action; verify with assert_text/assert_url.
+5. Opening a page is NOT completion unless the user only asked to open it. Never use a mouse.`;
+
+const googleSheetsWeb = `---
+name: google-sheets-web
+description: "Create/populate a CLOUD Google Sheet (sheets.new / docs.google.com) via browser or Google connection — never a local file."
+allowed_tools: ["browser.open", "browser.read", "browser.get_state", "browser.wait", "browser.click", "browser.type", "browser.shortcut", "browser.paste", "browser.assert_text", "clipboard.set", "connection.call", "ask_user"]
+requires_connections: []
+risk: "external_write"
+trigger: "google sheet google táblázat sheets.new spreadsheet online open google spreadsheet fill upload"
+---
+
+# Google Sheets (Web)
+A Google Sheet is a CLOUD doc, NOT local sheet.write. A local .xlsx/.csv does NOT satisfy it.
+1. If google-workspace connection configured -> connection.call sheets.write + sheets.read to verify.
+2. Else browser: browser.open https://sheets.new -> wait/read. If login_required -> ask_user, resume.
+3. Build TSV rows; clipboard.set the TSV; browser.paste into the grid (A1 is focused on a fresh sheet).
+4. browser.read/assert_text to confirm rows are in the grid, THEN task.complete.
+5. "at least N rows" with no data -> generate sample rows. Never write into the title box.`;
+
+const taskVerification = `---
+name: task-verification
+description: "Before completing, verify the requested outcome actually exists with a read-back appropriate to the surface."
+allowed_tools: ["file.exists", "file.list", "file.tree", "file.read", "sheet.read", "browser.read", "browser.get_state", "browser.assert_text", "browser.assert_url", "connection.call"]
+requires_connections: []
+risk: "read_only"
+trigger: "verify confirm check done complete read back outcome"
+---
+
+# Task Verification
+Prove the outcome; never trust "done" alone (the runtime guard re-checks).
+- Local files -> file.exists/list/tree; read back writes; confirm source+dest for moves.
+- Local spreadsheet -> sheet.read the rows. Cloud Google Sheet -> browser.assert_text or connection sheets.read (a local file does NOT count).
+- Browser/webapp -> after a change, browser.read + assert_text/assert_url. Opening a page is not proof.
+- If a login/captcha/permission wall blocks verification -> ask_user and resume; never complete.`;
 
 const vscodeProject = `---
 name: vscode-project
@@ -89,6 +124,8 @@ trigger: "marketing report weekly metrics summary analytics dashboard compile"
 export const BUNDLED_SKILL_FILES: string[] = [
   fileOrganizer,
   browserAutomation,
+  googleSheetsWeb,
+  taskVerification,
   vscodeProject,
   githubMaintainer,
   notionWorkspace,

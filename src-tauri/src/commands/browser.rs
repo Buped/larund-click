@@ -47,9 +47,18 @@ function vis(e){try{const r=e.getBoundingClientRect();const s=getComputedStyle(e
 let el=null;
 try{el=document.querySelector(target);if(el&&!vis(el))el=null;}catch(_){}
 if(!el){const t=(target||'').trim().toLowerCase();
-const c=[...document.querySelectorAll('input,textarea,[contenteditable="true"],[role=textbox],[role=searchbox],[role=combobox]')];
-const lab=e=>(((e.getAttribute&&e.getAttribute('placeholder'))||(e.getAttribute&&e.getAttribute('aria-label'))||e.name||e.id||'')+'').toLowerCase();
-el=c.find(e=>vis(e)&&t&&lab(e).includes(t))||c.find(e=>vis(e));}
+const c=[...document.querySelectorAll('input,textarea,[contenteditable="true"],[role=textbox],[role=searchbox],[role=combobox]')].filter(vis);
+const lab=e=>(((e.getAttribute&&e.getAttribute('placeholder'))||(e.getAttribute&&e.getAttribute('aria-label'))||e.name||e.id||(e.labels&&e.labels[0]&&e.labels[0].innerText)||'')+'').toLowerCase();
+if(t){const matches=c.filter(e=>lab(e).includes(t));
+if(matches.length===1){el=matches[0];}
+else if(matches.length>1){return 'AMBIGUOUS: '+matches.length+' inputs match "'+t+'" ('+matches.map(e=>lab(e)||e.tagName.toLowerCase()).slice(0,6).join(' | ')+'). Use a more specific target.';}
+else{return 'NOT_FOUND';}}
+else{
+// No target given: only safe when exactly one input is visible. Never guess
+// into a title/search box when several inputs exist.
+if(c.length===1){el=c[0];}
+else if(c.length>1){return 'AMBIGUOUS: '+c.length+' inputs on page ('+c.map(e=>lab(e)||e.tagName.toLowerCase()).slice(0,6).join(' | ')+'). Specify a target.';}
+else{return 'NOT_FOUND';}}}
 if(!el)return 'NOT_FOUND';
 el.scrollIntoView({block:'center'});el.focus();
 try{
@@ -62,14 +71,18 @@ return 'TYPED into '+el.tagName;}"#;
 
 const READ_JS: &str = r#"(function(){
 function vis(e){try{const r=e.getBoundingClientRect();const s=getComputedStyle(e);return r.width>1&&r.height>1&&s.visibility!=='hidden'&&s.display!=='none';}catch(_){return false;}}
-const out=[];
-const c=[...document.querySelectorAll('a,button,input,textarea,select,[role=button],[role=link],[role=tab],[role=textbox],[role=menuitem]')];
-for(const e of c){if(!vis(e))continue;
-const lab=((e.innerText||e.value||e.getAttribute('aria-label')||e.getAttribute('placeholder')||e.title||'')+'').trim().replace(/\s+/g,' ').slice(0,70);
-const tag=e.tagName.toLowerCase()+(e.type?('['+e.type+']'):'');
-if(lab||tag.indexOf('input')===0)out.push(tag+': '+lab);
-if(out.length>=70)break;}
-return 'URL: '+location.href+'\nTITLE: '+document.title+'\nCLICKABLE/INPUTS:\n'+out.join('\n');})()"#;
+const lab=e=>((e.innerText||e.value||(e.getAttribute&&e.getAttribute('aria-label'))||(e.getAttribute&&e.getAttribute('placeholder'))||e.title||'')+'').trim().replace(/\s+/g,' ').slice(0,70);
+const inputs=[],buttons=[];
+for(const e of document.querySelectorAll('input,textarea,select,[role=textbox],[role=searchbox],[role=combobox],[contenteditable="true"]')){if(!vis(e))continue;const tag=e.tagName.toLowerCase()+(e.type?('['+e.type+']'):'');inputs.push(tag+': '+lab(e));if(inputs.length>=40)break;}
+for(const e of document.querySelectorAll('a,button,[role=button],[role=link],[role=tab],[role=menuitem]')){if(!vis(e))continue;const l=lab(e);if(l)buttons.push(l);if(buttons.length>=40)break;}
+const ae=document.activeElement;
+const focused=ae&&ae!==document.body?((ae.tagName||'').toLowerCase()+(ae.type?('['+ae.type+']'):'')+': '+(lab(ae)||(ae.getAttribute&&ae.getAttribute('aria-label'))||ae.id||'')).slice(0,80):'(none)';
+const bodyText=((document.body&&document.body.innerText)||'').toLowerCase();
+const hints=[];
+if(/sign ?in|log ?in|bejelentkez|email or phone|choose an account|enter your password/.test(bodyText)||/accounts\.google\.com/.test(location.href))hints.push('login_required');
+if(/captcha|i'?m not a robot|nem vagyok robot/.test(bodyText))hints.push('captcha');
+if(/access denied|permission required|nincs jogosultság|403 forbidden/.test(bodyText))hints.push('permission_required');
+return 'URL: '+location.href+'\nTITLE: '+document.title+'\nFOCUSED: '+focused+'\nSTATE_HINTS: '+(hints.join(',')||'none')+'\nINPUTS:\n'+inputs.join('\n')+'\nBUTTONS/LINKS:\n'+buttons.join(' | ');})()"#;
 
 struct BrowserState {
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
@@ -365,7 +378,70 @@ pub async fn browser_type(target: String, text: String) -> Result<String, String
         if r.starts_with("NOT_FOUND") {
             return Err(format!("No input matching \"{}\" was found on the page", target));
         }
+        if r.starts_with("AMBIGUOUS") {
+            // Surface as an error so the agent picks a more specific target rather
+            // than silently typing into the wrong field (e.g. a sheet title box).
+            return Err(r);
+        }
         Ok(r)
+    })
+}
+
+/// Maps a single non-modifier key name to (key, code, windowsVirtualKeyCode).
+fn key_descriptor(k: &str) -> Result<(String, String, i64), String> {
+    let lower = k.to_lowercase();
+    if lower.len() == 1 {
+        let ch = lower.chars().next().unwrap();
+        if ch.is_ascii_alphabetic() {
+            let up = ch.to_ascii_uppercase();
+            return Ok((lower.clone(), format!("Key{}", up), up as i64));
+        }
+        if ch.is_ascii_digit() {
+            return Ok((lower.clone(), format!("Digit{}", ch), ch as i64));
+        }
+    }
+    match lower.as_str() {
+        "enter" | "return" => Ok(("Enter".into(), "Enter".into(), 13)),
+        "tab" => Ok(("Tab".into(), "Tab".into(), 9)),
+        "escape" | "esc" => Ok(("Escape".into(), "Escape".into(), 27)),
+        "space" => Ok((" ".into(), "Space".into(), 32)),
+        "backspace" => Ok(("Backspace".into(), "Backspace".into(), 8)),
+        "delete" | "del" => Ok(("Delete".into(), "Delete".into(), 46)),
+        _ => Err(format!("Unsupported shortcut key: {}", k)),
+    }
+}
+
+/// Sends a key combination (e.g. ["ctrl","v"]) to the page over CDP. CDP-injected
+/// input events are trusted by Chrome, so Ctrl+V triggers a real clipboard paste —
+/// this is how multi-cell TSV is pasted into a Google Sheet grid without a mouse.
+#[tauri::command]
+pub async fn browser_shortcut(keys: Vec<String>) -> Result<String, String> {
+    with_browser(|s| {
+        let mut modifiers: i64 = 0;
+        let mut main: Option<(String, String, i64)> = None;
+        for k in &keys {
+            match k.to_lowercase().as_str() {
+                "ctrl" | "control" => modifiers |= 2,
+                "alt" => modifiers |= 1,
+                "shift" => modifiers |= 8,
+                "meta" | "cmd" | "command" | "win" => modifiers |= 4,
+                other => main = Some(key_descriptor(other)?),
+            }
+        }
+        let (key, code, vk) = main.ok_or("browser.shortcut needs one non-modifier key")?;
+        let base = json!({
+            "key": key, "code": code,
+            "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk,
+            "modifiers": modifiers,
+        });
+        let mut down = base.clone();
+        down["type"] = json!("keyDown");
+        let mut up = base;
+        up["type"] = json!("keyUp");
+        cdp(s, "Input.dispatchKeyEvent", down)?;
+        cdp(s, "Input.dispatchKeyEvent", up)?;
+        wait_ready(s);
+        Ok(format!("Sent shortcut {}", keys.join("+")))
     })
 }
 

@@ -24,13 +24,86 @@ function callbacks(steps: AgentStep[], extra: Record<string, unknown> = {}) {
 describe('no-mouse control loop', () => {
   beforeEach(() => { invokeMock.mockReset(); openRouterMock.mockReset(); rpcMock.mockReset(); });
 
-  it('completes via task.complete', async () => {
-    openRouterMock.mockImplementation(async (_m, _md, _u, onChunk) => onChunk('{"action":"task.complete","summary":"Done"}'));
+  it('completes via task.complete after a verified action', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'shell_run') return { stdout: 'ok', stderr: '', exit_code: 0, success: true };
+      return undefined;
+    });
+    openRouterMock
+      .mockImplementationOnce(async (_m, _md, _u, onChunk) => onChunk('{"action":"cli.run","cmd":"echo hi"}'))
+      .mockImplementationOnce(async (_m, _md, _u, onChunk) => onChunk('{"action":"task.complete","summary":"Done"}'));
     const { runControlLoop } = await import('../loop');
     const steps: AgentStep[] = [];
     const cbs = callbacks(steps);
-    await runControlLoop('do a thing', 'model', 'user', cbs, { aborted: false });
+    await runControlLoop('do a thing', 'model', 'user', cbs, { aborted: false }, { sessionId: 'sess-complete' });
     expect((cbs as { onComplete: ReturnType<typeof vi.fn> }).onComplete).toHaveBeenCalledWith('Done');
+  });
+
+  it('rejects task.complete with no work, then completes once work is verified', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'shell_run') return { stdout: 'ok', stderr: '', exit_code: 0, success: true };
+      return undefined;
+    });
+    openRouterMock
+      .mockImplementationOnce(async (_m, _md, _u, onChunk) => onChunk('{"action":"task.complete","summary":"too soon"}'))
+      .mockImplementationOnce(async (_m, _md, _u, onChunk) => onChunk('{"action":"cli.run","cmd":"echo hi"}'))
+      .mockImplementationOnce(async (_m, _md, _u, onChunk) => onChunk('{"action":"task.complete","summary":"Done"}'));
+    const { runControlLoop } = await import('../loop');
+    const steps: AgentStep[] = [];
+    const cbs = callbacks(steps);
+    await runControlLoop('do a thing', 'model', 'user', cbs, { aborted: false }, { sessionId: 'sess-reject' });
+    expect(steps).toContainEqual(expect.objectContaining({ type: 'error', error: 'completion_rejected' }));
+    expect((cbs as { onComplete: ReturnType<typeof vi.fn> }).onComplete).toHaveBeenCalledWith('Done');
+  });
+
+  it('rejects completing a Google Sheets task after only opening the page', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'browser_open') return 'Opened';
+      return undefined;
+    });
+    let turn = 0;
+    openRouterMock.mockImplementation(async (_m: unknown, _md: unknown, _u: unknown, onChunk: (c: string) => void) => {
+      turn += 1;
+      if (turn === 1) return onChunk('{"action":"browser.open","url":"https://sheets.new"}');
+      return onChunk('{"action":"task.complete","summary":"opened the sheet"}');
+    });
+    const { runControlLoop } = await import('../loop');
+    const steps: AgentStep[] = [];
+    const cbs = callbacks(steps);
+    await runControlLoop(
+      'Készíts egy új Google táblázatot és töltsd fel minimum 5 adattal.',
+      'model', 'user', cbs, { aborted: false }, { sessionId: 'sess-sheet' },
+    );
+    expect(steps).toContainEqual(expect.objectContaining({ type: 'error', error: 'completion_rejected' }));
+    expect((cbs as { onComplete: ReturnType<typeof vi.fn> }).onComplete).not.toHaveBeenCalled();
+  });
+
+  it('completes a file move task after file.list verification', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'dir_list') return ['a.txt', 'b.txt'];
+      if (cmd === 'fs_mkdir') return 'Created';
+      if (cmd === 'fs_move') return 'Moved';
+      return undefined;
+    });
+    const seq = [
+      '{"action":"file.list","path":"~/Desktop"}',
+      '{"action":"file.mkdir","path":"~/Desktop/txts","recursive":true}',
+      '{"action":"file.move","from":"~/Desktop/a.txt","to":"~/Desktop/txts/a.txt"}',
+      '{"action":"file.list","path":"~/Desktop/txts"}',
+      '{"action":"task.complete","summary":"Moved txt files into the folder"}',
+    ];
+    let i = 0;
+    openRouterMock.mockImplementation(async (_m: unknown, _md: unknown, _u: unknown, onChunk: (c: string) => void) =>
+      onChunk(seq[Math.min(i++, seq.length - 1)]),
+    );
+    const { runControlLoop } = await import('../loop');
+    const steps: AgentStep[] = [];
+    const cbs = callbacks(steps);
+    await runControlLoop(
+      'Create a folder on my desktop and move every txt file to it',
+      'model', 'user', cbs, { aborted: false }, { sessionId: 'sess-files' },
+    );
+    expect((cbs as { onComplete: ReturnType<typeof vi.fn> }).onComplete).toHaveBeenCalledWith('Moved txt files into the folder');
   });
 
   it('rejects a mouse-click request and never invokes a mouse command', async () => {
