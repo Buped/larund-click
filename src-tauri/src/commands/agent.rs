@@ -310,7 +310,9 @@ pub async fn take_screenshot(
                 rh * scale,
                 image::imageops::FilterType::Triangle,
             );
-            draw_region_grid(&mut zoomed, rx as i32, ry as i32, scale);
+            if grid.unwrap_or(true) {
+                draw_region_grid(&mut zoomed, rx as i32, ry as i32, scale);
+            }
             rgb = zoomed;
         } else if grid.unwrap_or(true) {
             draw_coordinate_grid(&mut rgb);
@@ -332,10 +334,26 @@ pub async fn take_screenshot(
     })
 }
 
-// ─── Mouse commands ───────────────────────────────────────────────────────────
+#[tauri::command]
+pub async fn capture_screen_raw(
+    app: tauri::AppHandle,
+    monitor_id: Option<u32>,
+) -> Result<ScreenshotResult, String> {
+    take_screenshot(app, monitor_id, Some(false), None).await
+}
 
 #[tauri::command]
-pub async fn mouse_click(
+pub async fn capture_screen_region(
+    app: tauri::AppHandle,
+    monitor_id: Option<u32>,
+    region: Region,
+) -> Result<ScreenshotResult, String> {
+    take_screenshot(app, monitor_id, Some(false), Some(region)).await
+}
+
+// ─── Mouse commands ───────────────────────────────────────────────────────────
+
+async fn mouse_click(
     x: i32, y: i32,
     button: Option<String>,
 ) -> Result<(), String> {
@@ -360,89 +378,40 @@ pub async fn mouse_click(
 }
 
 #[tauri::command]
-pub async fn mouse_double_click(x: i32, y: i32) -> Result<(), String> {
-    if desktop::active_agent_desktop().is_some() {
-        return desktop::agent_mouse_double_click(x, y);
+pub async fn mouse_click_verified(
+    x: i32,
+    y: i32,
+    target_label: String,
+    bbox: Vec<i32>,
+    confidence: f32,
+    source: String,
+) -> Result<String, String> {
+    if bbox.len() != 4 {
+        return Err("invalid_verified_target: bbox must contain [x1,y1,x2,y2]".to_string());
     }
-
-    use enigo::{Enigo, Mouse, Settings, Button, Coordinate};
-    let mut enigo = Enigo::new(&Settings::default())
-        .map_err(|e| e.to_string())?;
-    enigo.move_mouse(x, y, Coordinate::Abs)
-        .map_err(|e| e.to_string())?;
-    std::thread::sleep(std::time::Duration::from_millis(80));
-    enigo.button(Button::Left, enigo::Direction::Click)
-        .map_err(|e| e.to_string())?;
-    std::thread::sleep(std::time::Duration::from_millis(80));
-    enigo.button(Button::Left, enigo::Direction::Click)
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn mouse_move(x: i32, y: i32) -> Result<(), String> {
-    if desktop::active_agent_desktop().is_some() {
-        return desktop::agent_mouse_move(x, y);
+    let x1 = bbox[0];
+    let y1 = bbox[1];
+    let x2 = bbox[2];
+    let y2 = bbox[3];
+    if x2 <= x1 || y2 <= y1 {
+        return Err("invalid_verified_target: bbox has non-positive size".to_string());
     }
-
-    use enigo::{Enigo, Mouse, Settings, Coordinate};
-    let mut enigo = Enigo::new(&Settings::default())
-        .map_err(|e| e.to_string())?;
-    enigo.move_mouse(x, y, Coordinate::Abs)
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn mouse_drag(
-    from_x: i32, from_y: i32,
-    to_x: i32,   to_y: i32,
-) -> Result<(), String> {
-    if desktop::active_agent_desktop().is_some() {
-        return desktop::agent_mouse_drag(from_x, from_y, to_x, to_y);
+    if x < x1 || x > x2 || y < y1 || y > y2 {
+        return Err("invalid_verified_target: click point is outside bbox".to_string());
     }
-
-    use enigo::{Enigo, Mouse, Settings, Button, Coordinate, Direction};
-    let mut enigo = Enigo::new(&Settings::default())
-        .map_err(|e| e.to_string())?;
-    enigo.move_mouse(from_x, from_y, Coordinate::Abs)
-        .map_err(|e| e.to_string())?;
-    std::thread::sleep(std::time::Duration::from_millis(60));
-    enigo.button(Button::Left, Direction::Press)
-        .map_err(|e| e.to_string())?;
-    std::thread::sleep(std::time::Duration::from_millis(60));
-    enigo.move_mouse(to_x, to_y, Coordinate::Abs)
-        .map_err(|e| e.to_string())?;
-    std::thread::sleep(std::time::Duration::from_millis(60));
-    enigo.button(Button::Left, Direction::Release)
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn mouse_scroll(
-    x: i32, y: i32,
-    direction: String,
-    amount: i32,
-) -> Result<(), String> {
-    if desktop::active_agent_desktop().is_some() {
-        return desktop::agent_mouse_scroll(x, y, direction, amount);
+    if !confidence.is_finite() || confidence < 0.0 || confidence > 1.0 {
+        return Err("invalid_verified_target: confidence must be between 0 and 1".to_string());
     }
-
-    use enigo::{Enigo, Mouse, Settings, Coordinate, Axis};
-    let mut enigo = Enigo::new(&Settings::default())
-        .map_err(|e| e.to_string())?;
-    enigo.move_mouse(x, y, Coordinate::Abs)
-        .map_err(|e| e.to_string())?;
-    let (axis, delta) = match direction.as_str() {
-        "up"    => (Axis::Vertical,    amount),
-        "down"  => (Axis::Vertical,   -amount),
-        "left"  => (Axis::Horizontal, -amount),
-        "right" => (Axis::Horizontal,  amount),
-        _       => (Axis::Vertical,   -amount),
-    };
-    enigo.scroll(delta, axis).map_err(|e| e.to_string())?;
-    Ok(())
+    mouse_click(x, y, Some("left".to_string())).await?;
+    serde_json::to_string(&serde_json::json!({
+        "clicked": true,
+        "x": x,
+        "y": y,
+        "target_label": target_label,
+        "bbox": bbox,
+        "confidence": confidence,
+        "source": source,
+    })).map_err(|e| e.to_string())
 }
 
 // ─── Keyboard commands ────────────────────────────────────────────────────────
@@ -691,11 +660,6 @@ pub async fn desktop_invoke_target(id: String, snapshot_token: String) -> Result
 }
 
 #[tauri::command]
-pub async fn desktop_click_point(x: i32, y: i32) -> Result<String, String> {
-    desktop::desktop_click_point(x, y)
-}
-
-#[tauri::command]
 pub async fn desktop_focus_next() -> Result<String, String> {
     desktop::desktop_focus_next()
 }
@@ -758,17 +722,13 @@ pub async fn desktop_zoom_target_region(
 }
 
 #[tauri::command]
-pub async fn desktop_visual_locate(
-    id: Option<String>,
-    snapshot_token: Option<String>,
-    region: Option<desktop::DesktopReadRegion>,
-) -> Result<String, String> {
-    desktop::desktop_visual_locate(id, snapshot_token, region)
+pub async fn ocr_read(region: Option<desktop::DesktopReadRegion>) -> Result<String, String> {
+    desktop::ocr_read(region)
 }
 
 #[tauri::command]
-pub async fn ocr_read(region: Option<desktop::DesktopReadRegion>) -> Result<String, String> {
-    desktop::ocr_read(region)
+pub async fn ocr_read_region(region: desktop::DesktopReadRegion) -> Result<String, String> {
+    desktop::ocr_read(Some(region))
 }
 
 #[tauri::command]

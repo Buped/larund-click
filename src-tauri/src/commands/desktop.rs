@@ -119,24 +119,6 @@ pub struct DesktopResolvedPoint {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DesktopVisualCandidate {
-    pub x: i32,
-    pub y: i32,
-    pub confidence: f32,
-    pub method: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DesktopVisualLocateResult {
-    pub target_id: Option<String>,
-    pub window_title: String,
-    pub reason: String,
-    pub confidence: f32,
-    pub candidate_points: Vec<DesktopVisualCandidate>,
-    pub next_region: Option<DesktopReadRegion>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DesktopFocusInfo {
     pub id: Option<String>,
     pub name: String,
@@ -191,30 +173,6 @@ mod windows_impl {
             x: i32,
             y: i32,
             button: Option<String>,
-            resp: mpsc::Sender<Result<(), String>>,
-        },
-        MouseDoubleClick {
-            x: i32,
-            y: i32,
-            resp: mpsc::Sender<Result<(), String>>,
-        },
-        MouseMove {
-            x: i32,
-            y: i32,
-            resp: mpsc::Sender<Result<(), String>>,
-        },
-        MouseDrag {
-            from_x: i32,
-            from_y: i32,
-            to_x: i32,
-            to_y: i32,
-            resp: mpsc::Sender<Result<(), String>>,
-        },
-        MouseScroll {
-            x: i32,
-            y: i32,
-            direction: String,
-            amount: i32,
             resp: mpsc::Sender<Result<(), String>>,
         },
         TypeText {
@@ -1279,26 +1237,6 @@ $items | ConvertTo-Json -Depth 6 -Compress
         Ok(())
     }
 
-    fn mouse_move_impl(x: i32, y: i32) -> Result<(), String> {
-        use enigo::{Coordinate, Enigo, Mouse, Settings};
-        let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
-        enigo.move_mouse(x, y, Coordinate::Abs).map_err(|e| e.to_string())?;
-        Ok(())
-    }
-
-    fn mouse_drag_impl(from_x: i32, from_y: i32, to_x: i32, to_y: i32) -> Result<(), String> {
-        use enigo::{Button, Coordinate, Direction, Enigo, Mouse, Settings};
-        let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
-        enigo.move_mouse(from_x, from_y, Coordinate::Abs).map_err(|e| e.to_string())?;
-        std::thread::sleep(std::time::Duration::from_millis(60));
-        enigo.button(Button::Left, Direction::Press).map_err(|e| e.to_string())?;
-        std::thread::sleep(std::time::Duration::from_millis(60));
-        enigo.move_mouse(to_x, to_y, Coordinate::Abs).map_err(|e| e.to_string())?;
-        std::thread::sleep(std::time::Duration::from_millis(60));
-        enigo.button(Button::Left, Direction::Release).map_err(|e| e.to_string())?;
-        Ok(())
-    }
-
     fn mouse_scroll_impl(x: i32, y: i32, direction: String, amount: i32) -> Result<(), String> {
         use enigo::{Axis, Coordinate, Enigo, Mouse, Settings};
         let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
@@ -1459,22 +1397,6 @@ $items | ConvertTo-Json -Depth 6 -Compress
                 }
                 DesktopRequest::MouseClick { x, y, button, resp } => {
                     let result = mouse_click_impl(x, y, button);
-                    let _ = resp.send(result);
-                }
-                DesktopRequest::MouseDoubleClick { x, y, resp } => {
-                    let result = mouse_double_click_impl(x, y);
-                    let _ = resp.send(result);
-                }
-                DesktopRequest::MouseMove { x, y, resp } => {
-                    let result = mouse_move_impl(x, y);
-                    let _ = resp.send(result);
-                }
-                DesktopRequest::MouseDrag { from_x, from_y, to_x, to_y, resp } => {
-                    let result = mouse_drag_impl(from_x, from_y, to_x, to_y);
-                    let _ = resp.send(result);
-                }
-                DesktopRequest::MouseScroll { x, y, direction, amount, resp } => {
-                    let result = mouse_scroll_impl(x, y, direction, amount);
                     let _ = resp.send(result);
                 }
                 DesktopRequest::TypeText { text, resp } => {
@@ -1648,62 +1570,6 @@ $items | ConvertTo-Json -Depth 6 -Compress
         let sender = session.sender.clone();
         drop(guard);
         send_request(sender, |resp| DesktopRequest::MouseClick { x, y, button, resp })?;
-        Ok(())
-    }
-
-    pub fn agent_mouse_double_click(x: i32, y: i32) -> Result<(), String> {
-        let guard = session_store().lock().map_err(|_| "Desktop session lock poisoned".to_string())?;
-        let Some(session) = guard.as_ref() else {
-            return Err("No active agent desktop".to_string());
-        };
-        let sender = session.sender.clone();
-        drop(guard);
-        send_request(sender, |resp| DesktopRequest::MouseDoubleClick { x, y, resp })?;
-        Ok(())
-    }
-
-    pub fn agent_mouse_move(x: i32, y: i32) -> Result<(), String> {
-        let guard = session_store().lock().map_err(|_| "Desktop session lock poisoned".to_string())?;
-        let Some(session) = guard.as_ref() else {
-            return Err("No active agent desktop".to_string());
-        };
-        let sender = session.sender.clone();
-        drop(guard);
-        send_request(sender, |resp| DesktopRequest::MouseMove { x, y, resp })?;
-        Ok(())
-    }
-
-    pub fn agent_mouse_drag(from_x: i32, from_y: i32, to_x: i32, to_y: i32) -> Result<(), String> {
-        let guard = session_store().lock().map_err(|_| "Desktop session lock poisoned".to_string())?;
-        let Some(session) = guard.as_ref() else {
-            return Err("No active agent desktop".to_string());
-        };
-        let sender = session.sender.clone();
-        drop(guard);
-        send_request(sender, |resp| DesktopRequest::MouseDrag {
-            from_x,
-            from_y,
-            to_x,
-            to_y,
-            resp,
-        })?;
-        Ok(())
-    }
-
-    pub fn agent_mouse_scroll(x: i32, y: i32, direction: String, amount: i32) -> Result<(), String> {
-        let guard = session_store().lock().map_err(|_| "Desktop session lock poisoned".to_string())?;
-        let Some(session) = guard.as_ref() else {
-            return Err("No active agent desktop".to_string());
-        };
-        let sender = session.sender.clone();
-        drop(guard);
-        send_request(sender, |resp| DesktopRequest::MouseScroll {
-            x,
-            y,
-            direction,
-            amount,
-            resp,
-        })?;
         Ok(())
     }
 
@@ -2444,19 +2310,6 @@ if ($hit) {{ $hit }}"#
         .map_err(|e| e.to_string())
     }
 
-    pub fn desktop_click_point(x: i32, y: i32) -> Result<String, String> {
-        mouse_click_impl(x, y, Some("left".to_string()))?;
-        serde_json::to_string(&serde_json::json!({
-            "status": "click_confirmed",
-            "verification": "click_confirmed",
-            "strategy_path": "raw_mouse",
-            "precision_path": "visual-microtarget",
-            "anchor_x": x,
-            "anchor_y": y
-        }))
-        .map_err(|e| e.to_string())
-    }
-
     pub fn desktop_focus_next() -> Result<String, String> {
         key_press_impl("tab")?;
         std::thread::sleep(std::time::Duration::from_millis(120));
@@ -2539,76 +2392,6 @@ if ($hit) {{ $hit }}"#
             region.ok_or_else(|| "region is required when no target id is provided".to_string())?
         };
         crop_desktop_screenshot(resolved_region, zoom.unwrap_or(2).clamp(1, 6))
-    }
-
-    pub fn desktop_visual_locate(
-        id: Option<String>,
-        snapshot_token: Option<String>,
-        region: Option<DesktopReadRegion>,
-    ) -> Result<String, String> {
-        let (target_id, window_title, bounds, reason, confidence) =
-            if let (Some(id), Some(snapshot_token)) = (id, snapshot_token) {
-                let (_, target) = resolve_target(&id, &snapshot_token)?;
-                (
-                    Some(target.id.clone()),
-                    target.window_title.clone(),
-                    target.bounds.clone(),
-                    format!("target {} requires visual micro-targeting", target.name),
-                    target.target_confidence.clamp(0.35, 0.9),
-                )
-            } else if let Some(region) = region.clone() {
-                (
-                    None,
-                    "foreground".to_string(),
-                    DesktopBounds {
-                        x: region.x,
-                        y: region.y,
-                        width: region.width,
-                        height: region.height,
-                    },
-                    "manual region supplied for visual targeting".to_string(),
-                    0.45,
-                )
-            } else {
-                return Err("Either target id + snapshot_token or region is required.".to_string());
-            };
-
-        let center = DesktopVisualCandidate {
-            x: bounds.x + bounds.width / 2,
-            y: bounds.y + bounds.height / 2,
-            confidence,
-            method: "center".to_string(),
-        };
-        let left_inner = DesktopVisualCandidate {
-            x: bounds.x + (bounds.width / 4).clamp(6, 20),
-            y: bounds.y + bounds.height / 2,
-            confidence: (confidence - 0.08).clamp(0.1, 0.95),
-            method: "left_inner".to_string(),
-        };
-        let safe = current_safe_point(&bounds);
-        let result = DesktopVisualLocateResult {
-            target_id,
-            window_title,
-            reason,
-            confidence,
-            candidate_points: vec![
-                DesktopVisualCandidate {
-                    x: safe.0,
-                    y: safe.1,
-                    confidence: (confidence + 0.04).clamp(0.1, 0.95),
-                    method: "safe_inset".to_string(),
-                },
-                center,
-                left_inner,
-            ],
-            next_region: Some(DesktopReadRegion {
-                x: bounds.x.saturating_sub(8),
-                y: bounds.y.saturating_sub(8),
-                width: bounds.width.saturating_add(16),
-                height: bounds.height.saturating_add(16),
-            }),
-        };
-        serde_json::to_string(&result).map_err(|e| e.to_string())
     }
 
     /// Offline OCR via Windows.Media.Ocr (WinRT), driven from PowerShell exactly
@@ -2716,22 +2499,6 @@ mod windows_impl {
         Err("Agent desktops are only supported on Windows".to_string())
     }
 
-    pub fn agent_mouse_double_click(_: i32, _: i32) -> Result<(), String> {
-        Err("Agent desktops are only supported on Windows".to_string())
-    }
-
-    pub fn agent_mouse_move(_: i32, _: i32) -> Result<(), String> {
-        Err("Agent desktops are only supported on Windows".to_string())
-    }
-
-    pub fn agent_mouse_drag(_: i32, _: i32, _: i32, _: i32) -> Result<(), String> {
-        Err("Agent desktops are only supported on Windows".to_string())
-    }
-
-    pub fn agent_mouse_scroll(_: i32, _: i32, _: String, _: i32) -> Result<(), String> {
-        Err("Agent desktops are only supported on Windows".to_string())
-    }
-
     pub fn agent_type_text(_: String) -> Result<(), String> {
         Err("Agent desktops are only supported on Windows".to_string())
     }
@@ -2800,10 +2567,6 @@ mod windows_impl {
         Err("Desktop targeting is only supported on Windows".to_string())
     }
 
-    pub fn desktop_click_point(_: i32, _: i32) -> Result<String, String> {
-        Err("Desktop targeting is only supported on Windows".to_string())
-    }
-
     pub fn desktop_focus_next() -> Result<String, String> {
         Err("Desktop targeting is only supported on Windows".to_string())
     }
@@ -2830,14 +2593,6 @@ mod windows_impl {
         _: Option<DesktopReadRegion>,
         _: Option<u32>,
     ) -> Result<DesktopScreenshot, String> {
-        Err("Desktop targeting is only supported on Windows".to_string())
-    }
-
-    pub fn desktop_visual_locate(
-        _: Option<String>,
-        _: Option<String>,
-        _: Option<DesktopReadRegion>,
-    ) -> Result<String, String> {
         Err("Desktop targeting is only supported on Windows".to_string())
     }
 

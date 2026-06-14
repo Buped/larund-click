@@ -7,7 +7,16 @@
       "Bash(git init *)",
       "Bash(git config *)",
       "Bash(git commit -m ' *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(git remote *)",
+      "Bash(npm test *)",
+      "PowerShell(npx tsc --noEmit 2>&1)",
+      "PowerShell(npx vitest run 2>&1)",
+      "PowerShell(npx vitest run precision uia-precision merge summarize run-v2.precision 2>&1)",
+      "PowerShell(cargo check --manifest-path src-tauri/Cargo.toml 2>&1)",
+      "Bash(rustup target *)",
+      "PowerShell(cargo +stable-x86_64-pc-windows-msvc check --manifest-path src-tauri/Cargo.toml 2>&1)",
+      "Bash(npx vitest *)"
     ]
   }
 }
