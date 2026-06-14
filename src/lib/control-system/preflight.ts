@@ -15,6 +15,8 @@ export type TaskIntent =
   | 'connection_workflow'
   | 'spreadsheet_local'
   | 'spreadsheet_cloud'
+  | 'document_local'
+  | 'document_cloud'
   | 'unsupported_gui';
 
 export interface TaskPreflight {
@@ -50,12 +52,28 @@ function isGoogleSheet(t: string): boolean {
   );
 }
 
+function isGoogleDoc(t: string): boolean {
+  return (
+    /google\s*(docs?|document|doksi|dokumentum)/i.test(t) ||
+    /docs\.new/i.test(t) ||
+    /docs\.google\.com\/document/i.test(t)
+  );
+}
+
 function isLocalSpreadsheet(t: string): boolean {
   return (
     /\bexcel\b/i.test(t) ||
     /\.(xlsx|xls|csv|ods)\b/i.test(t) ||
     /\b(lokális|helyi|local)\s+(táblá|spreadsheet|excel|csv)/i.test(t) ||
     /\bcsv\b/i.test(t)
+  );
+}
+
+function isLocalDocument(t: string): boolean {
+  return (
+    /\.(docx|doc|txt|pdf)\b/i.test(t) ||
+    /\b(word|docx|document|dokumentum|szoveg|szöveg|txt)\b/i.test(t) ||
+    /\b(lokalis|lokális|helyi|local)\s+(word|document|dokumentum|docx|txt)/i.test(t)
   );
 }
 
@@ -101,6 +119,24 @@ export function preflight(task: string): TaskPreflight {
     };
   }
 
+  // 1b) Cloud Google Docs is distinct from local DOCX/TXT.
+  if (isGoogleDoc(t)) {
+    return {
+      intent: 'document_cloud',
+      targetSurface: 'connection',
+      targetUrl: url ?? 'https://docs.new',
+      targetDocumentType: 'google_doc',
+      requiresAuth: true,
+      mutates: true,
+      expectedOutcome:
+        'A Google Doc exists in the cloud with the requested content, confirmed by google.docs.read or an exported file read-back.',
+      recommendedTools: [
+        'connection.call', 'ask_user', 'browser.open', 'browser.read',
+      ],
+      forbiddenTools: ['doc.write_txt', 'doc.write_docx'],
+    };
+  }
+
   // 2) Local spreadsheet (Excel/CSV) — only when no Google cloud signal.
   if (isLocalSpreadsheet(t)) {
     return {
@@ -111,6 +147,20 @@ export function preflight(task: string): TaskPreflight {
       expectedOutcome:
         'A local spreadsheet file (.xlsx/.csv) exists with the requested rows, confirmed by reading it back.',
       recommendedTools: ['sheet.write', 'sheet.read', 'file.exists'],
+      forbiddenTools: [],
+    };
+  }
+
+  // 2b) Local Word/TXT/PDF-like document target.
+  if (isLocalDocument(t) && !isGoogleDoc(t) && !/\b(mozgasd|move|rendezd|organise|organize|copy|delete|mapp|folder)\b/i.test(t)) {
+    return {
+      intent: 'document_local',
+      targetSurface: 'local_files',
+      targetDocumentType: 'local_doc',
+      mutates,
+      expectedOutcome:
+        'A local document file exists with the requested content, confirmed by document/doc read-back.',
+      recommendedTools: ['doc.write_docx', 'doc.write_txt', 'document.read', 'doc.read', 'file.exists'],
       forbiddenTools: [],
     };
   }

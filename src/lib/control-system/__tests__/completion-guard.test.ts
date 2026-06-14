@@ -99,6 +99,60 @@ describe('completion guard — local spreadsheet', () => {
   });
 });
 
+describe('completion guard — Google Docs', () => {
+  it('rejects Google Doc create/insert without read-back or export proof', () => {
+    const s = stateFor('Készíts két példa számlát Google Docsban.');
+    s.expectedData = { values: ['Szamla 001', 'Larund Kft'] };
+    const r = verifyBeforeComplete(s, [
+      conn('google.docs.create'),
+      conn('google.docs.insert_text'),
+    ]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/not read back|export/i);
+  });
+
+  it('accepts Google Doc after read-back contains expected content', () => {
+    const s = stateFor('Készíts két példa számlát Google Docsban.');
+    s.expectedData = { values: ['Szamla 001', 'Larund Kft'] };
+    const r = verifyBeforeComplete(s, [
+      conn('google.docs.create'),
+      conn('google.docs.insert_text'),
+      conn('google.docs.read', 'Szamla 001\nKibocsato: Larund Kft\nVegosszeg: 50000 Ft'),
+    ]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts Google Doc export only when the exported file is confirmed locally', () => {
+    const s = stateFor('Készíts Google Docs számlát és exportáld docx-be.');
+    const r = verifyBeforeComplete(s, [
+      conn('google.docs.create'),
+      conn('google.docs.insert_text'),
+      conn('google.docs.export_docx', 'Exported Google Doc as DOCX'),
+      ok('file.exists', 'true'),
+    ]);
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe('completion guard — local document', () => {
+  it('rejects local docx write without read-back', () => {
+    const s = stateFor('Készíts egy helyi docx dokumentumot.');
+    const r = verifyBeforeComplete(s, [ok('doc.write_docx', 'Wrote invoice.docx')]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/not confirmed/i);
+  });
+
+  it('accepts local docx after document.read proof', () => {
+    const s = stateFor('Készíts egy helyi docx dokumentumot.');
+    s.expectedData = { values: ['Szamla 001', 'Larund Kft'] };
+    const r = verifyBeforeComplete(s, [
+      ok('doc.write_docx', 'Wrote invoice.docx'),
+      ok('document.read', 'OK invoice.docx: Szamla 001 Larund Kft 50000 Ft'),
+    ]);
+    expect(r.ok).toBe(true);
+  });
+});
+
 describe('completion guard — file ops', () => {
   const goal = 'Create a folder on my desktop and move every txt file to it.';
   it('accepts after move + file.list verification', () => {

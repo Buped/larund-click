@@ -802,6 +802,11 @@ export function ChatScreen({
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Backspace' && !input && references.length > 0) {
+      e.preventDefault();
+      setReferences((current) => current.slice(0, -1));
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();

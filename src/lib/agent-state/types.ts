@@ -25,7 +25,9 @@ export type TaskStatus =
 
 export type TargetDocumentType =
   | 'google_sheet'
+  | 'google_doc'
   | 'local_sheet'
+  | 'local_doc'
   | 'doc'
   | 'notion_page'
   | 'github_repo'

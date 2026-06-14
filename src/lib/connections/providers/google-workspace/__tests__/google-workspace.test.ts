@@ -35,4 +35,22 @@ describe('google workspace provider', () => {
     expect(pdf.success).toBe(true);
     expect(pdf.output).toMatch(/Mock exported pdf/i);
   });
+
+  it('mock docs batch_update content is visible in read-back', async () => {
+    const created = await call('google.docs.create', { mock: true, title: 'Invoice' });
+    const documentId = String(created.details?.documentId);
+    await call('google.docs.batch_update', {
+      mock: true,
+      documentId,
+      requests: [{ insertText: { location: { index: 1 }, text: 'Szamla 001 Larund Kft' } }],
+    });
+    const read = await call('google.docs.read', { mock: true, documentId });
+    expect(read.output).toContain('Szamla 001 Larund Kft');
+  });
+
+  it('google docs metadata requires auth outside mock mode', async () => {
+    const result = await call('google.docs.get_metadata', { documentId: 'real-doc' });
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('missing_google_workspace_auth');
+  });
 });

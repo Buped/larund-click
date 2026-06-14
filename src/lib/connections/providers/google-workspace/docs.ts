@@ -44,6 +44,14 @@ function extractGoogleDocText(doc: unknown): string {
   return parts.join('').trim();
 }
 
+function extractInsertTextRequests(requests: unknown): string {
+  if (!Array.isArray(requests)) return '';
+  return requests
+    .map((request) => (request as { insertText?: { text?: unknown } })?.insertText?.text)
+    .filter((text): text is string => typeof text === 'string')
+    .join('');
+}
+
 export const googleDocsTools: ConnectionToolDefinition[] = [
   {
     name: 'google.docs.create',
@@ -92,7 +100,11 @@ export const googleDocsTools: ConnectionToolDefinition[] = [
     async run(args, secrets) {
       const documentId = String(args.documentId ?? args.document_id ?? '');
       if (!documentId) return { success: false, output: '', error: 'missing_document_id' };
-      if (isMock(args)) return { success: true, output: `Mock batch_update for ${documentId}`, details: { documentId } };
+      if (isMock(args)) {
+        const text = extractInsertTextRequests(args.requests);
+        if (text) mockDocs.set(documentId, `${mockDocs.get(documentId) ?? ''}${text}`);
+        return { success: true, output: `Mock batch_update for ${documentId}`, details: { documentId, insertedChars: text.length } };
+      }
       const auth = googleAuthFromSecrets(secrets);
       if (!auth.accessToken) return missingGoogleAuth();
       const data = await googleFetch(`/v1/documents/${documentId}:batchUpdate`, auth.accessToken, {
@@ -121,9 +133,16 @@ export const googleDocsTools: ConnectionToolDefinition[] = [
     name: 'google.docs.get_metadata',
     description: 'Read Google Doc metadata.',
     risk: 'external_read',
-    async run(args) {
+    async run(args, secrets) {
       const documentId = String(args.documentId ?? args.document_id ?? '');
-      return documentId ? { success: true, output: JSON.stringify({ documentId }) } : { success: false, output: '', error: 'missing_document_id' };
+      if (!documentId) return { success: false, output: '', error: 'missing_document_id' };
+      if (isMock(args)) return { success: true, output: JSON.stringify({ documentId, title: 'Mock Google Doc' }), details: { documentId } };
+      const auth = googleAuthFromSecrets(secrets);
+      if (!auth.accessToken) return missingGoogleAuth();
+      const data = await googleFetch(`/v1/documents/${documentId}`, auth.accessToken);
+      const doc = data as { title?: string; documentId?: string; revisionId?: string };
+      const metadata = { documentId: doc.documentId ?? documentId, title: doc.title, revisionId: doc.revisionId };
+      return { success: true, output: JSON.stringify(metadata), details: metadata };
     },
   },
   {

@@ -114,6 +114,27 @@ function rememberExpectedSheetData(taskState: import('../agent-state/types').Act
     const rows = tsvRows(action.text);
     if (rows) taskState.expectedData = { rows, values: valuesFromRows(rows), source: 'clipboard.set' };
   }
+  if (action.action === 'connection.call' && /google\.docs\.(insert_text|batch_update)/i.test(action.tool)) {
+    const values: string[] = [];
+    if (typeof action.args.text === 'string') values.push(action.args.text);
+    const requests = action.args.requests;
+    if (Array.isArray(requests)) {
+      for (const request of requests) {
+        const text = (request as { insertText?: { text?: unknown } })?.insertText?.text;
+        if (typeof text === 'string') values.push(text);
+      }
+    }
+    const compact = values.map((v) => v.trim()).filter(Boolean);
+    if (compact.length) taskState.expectedData = { values: compact, source: action.tool };
+  }
+  if ((action.action === 'doc.write_docx' || action.action === 'doc.write_txt') && typeof action.content === 'string') {
+    const parts = action.content
+      .split(/\r?\n+/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 2)
+      .slice(0, 8);
+    if (parts.length) taskState.expectedData = { values: parts, source: action.action };
+  }
 }
 
 async function updateOverlay(state: object): Promise<void> {
@@ -334,6 +355,14 @@ export async function runControlLoop(
       // Completion guard: do not close the run unless the requested outcome is
       // actually proven by the recorded evidence. On reject, keep looping.
       const guard = verifyBeforeComplete(taskState, recentActions);
+      emitStep({
+        id: nowStepId('verification'),
+        type: 'verification',
+        tool: 'task.complete',
+        output: guard.ok ? `Verification passed: ${guard.reason}` : `Verification failed: ${guard.reason}`,
+        error: guard.ok ? undefined : 'completion_rejected',
+        timestamp: new Date().toISOString(),
+      });
       if (!guard.ok) {
         recordFailedAttempt(taskState, {
           step: 'task.complete',

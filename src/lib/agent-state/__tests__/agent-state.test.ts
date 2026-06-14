@@ -76,6 +76,19 @@ describe('session-memory', () => {
     expect(getActiveTask('s1')?.targetDocument?.type).toBe('google_sheet');
   });
 
+  it('classifies Google Docs as a cloud document target', () => {
+    const pf = preflight('Készíts két példa számlát Google Docsban és exportáld docx-be.');
+    expect(pf.intent).toBe('document_cloud');
+    expect(pf.targetDocumentType).toBe('google_doc');
+    expect(pf.forbiddenTools).toContain('doc.write_docx');
+  });
+
+  it('classifies local Word/DOCX tasks as local document targets', () => {
+    const pf = preflight('Készíts egy Word docx dokumentumot a számláról.');
+    expect(pf.intent).toBe('document_local');
+    expect(pf.targetDocumentType).toBe('local_doc');
+  });
+
   it('reopens a freshly completed task when the user correction says completion was false', () => {
     const first = resolveActiveTask('s1', 'Készíts egy új Google táblázatot és töltsd fel minimum 5 adattal.');
     const firstId = first.state.id;

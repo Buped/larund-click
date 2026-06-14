@@ -12,6 +12,12 @@ export function deriveTargetDocument(pf: TaskPreflight): TargetDocument | undefi
   if (pf.targetDocumentType === 'local_sheet') {
     return { type: 'local_sheet' };
   }
+  if (pf.targetDocumentType === 'google_doc') {
+    return { type: 'google_doc', url: pf.targetUrl };
+  }
+  if (pf.targetDocumentType === 'local_doc') {
+    return { type: 'local_doc' };
+  }
   return undefined;
 }
 
@@ -21,6 +27,10 @@ export function deriveExpectedArtifacts(pf: TaskPreflight): ExpectedArtifact[] {
       return [{ type: 'table', url: pf.targetUrl, description: 'Online Google Sheet populated with the requested rows' }];
     case 'spreadsheet_local':
       return [{ type: 'file', description: 'Local .xlsx/.csv file with the requested rows' }];
+    case 'document_cloud':
+      return [{ type: 'connection_record', url: pf.targetUrl, description: 'Cloud Google Doc with requested content' }];
+    case 'document_local':
+      return [{ type: 'file', description: 'Local document file with requested content' }];
     case 'browser_webapp':
       return [{ type: 'browser_page', url: pf.targetUrl, description: pf.expectedOutcome }];
     case 'file_ops':
@@ -43,6 +53,10 @@ export function derivePendingChecks(pf: TaskPreflight): string[] {
       ];
     case 'spreadsheet_local':
       return ['File written', 'File read back and rows confirmed'];
+    case 'document_cloud':
+      return ['Google Doc created/updated', 'google.docs.read confirms content', 'Export/read-back confirmed if requested'];
+    case 'document_local':
+      return ['Document file written', 'document.read/doc.read confirms content'];
     case 'browser_webapp':
       return pf.mutates
         ? ['Page open and verified', 'Change applied', 'Read-back confirms the change']

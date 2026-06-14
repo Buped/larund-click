@@ -18,6 +18,7 @@ const MUTATING = new Set([
 ]);
 const FILE_READS = new Set(['file.list', 'file.exists', 'file.tree', 'file.metadata', 'file.read', 'sheet.read']);
 const DOCUMENT_READS = new Set(['document.read', 'document.read_many', 'folder.read_relevant', 'doc.read']);
+const LOCAL_DOCUMENT_WRITES = new Set(['doc.write_txt', 'doc.write_docx', 'file.write']);
 
 function succeeded(recent: RecentAction[], action: string): boolean {
   return recent.some((a) => a.action === action && a.success);
@@ -61,6 +62,14 @@ function readbackHasRows(output: string | undefined): boolean {
     // Plain text is handled below.
   }
   return output.trim().length > 8 && !/^\s*(ok|true|success)\s*$/i.test(output);
+}
+
+function connectionSucceeded(recent: RecentAction[], toolPattern: RegExp): boolean {
+  return recent.some((a) => a.action === 'connection.call' && a.success && toolPattern.test(a.argsSummary ?? ''));
+}
+
+function lastConnectionSuccess(recent: RecentAction[], toolPattern: RegExp): RecentAction | undefined {
+  return [...recent].reverse().find((a) => a.action === 'connection.call' && a.success && toolPattern.test(a.argsSummary ?? ''));
 }
 
 /** A cloud Google Sheet is only done with real, verified data in the online grid. */
@@ -154,6 +163,79 @@ function verifyLocalSheet(recent: RecentAction[]): Verification {
   return { ok: true, reason: 'Local spreadsheet written and confirmed by read-back.', nextStepHint: '' };
 }
 
+function verifyCloudDoc(state: ActiveTaskState, recent: RecentAction[]): Verification {
+  const createdOrUpdated = connectionSucceeded(recent, /google\.docs\.(create|insert_text|batch_update)/i);
+  if (!createdOrUpdated) {
+    return {
+      ok: false,
+      reason: 'No Google Docs create/update action succeeded.',
+      nextStepHint: 'Use google.docs.create and google.docs.insert_text/batch_update through the Google Workspace connection.',
+    };
+  }
+
+  const read = lastConnectionSuccess(recent, /google\.docs\.read/i);
+  const exportProof = lastConnectionSuccess(recent, /google\.docs\.export_(docx|pdf)/i);
+  const localExportRead = [...recent].reverse().find((a) => a.success && ['document.read', 'doc.read', 'file.exists', 'file.read'].includes(a.action));
+  const expected = expectedValues(state);
+
+  if (read) {
+    if (expected.length > 0 && !outputContainsExpected(read.output, expected, 2)) {
+      return {
+        ok: false,
+        reason: 'Google Docs read-back does not contain enough expected content.',
+        nextStepHint: 'Read the Google Doc again and compare it with the text you inserted.',
+      };
+    }
+    if (expected.length === 0 && (!read.output || read.output.trim().length < 8)) {
+      return {
+        ok: false,
+        reason: 'Google Docs read-back was empty or too small to prove the document content.',
+        nextStepHint: 'Call google.docs.read after inserting the requested content.',
+      };
+    }
+    return { ok: true, reason: 'Google Doc content was confirmed by google.docs.read.', nextStepHint: '' };
+  }
+
+  if (exportProof && localExportRead) {
+    return { ok: true, reason: 'Google Doc was exported and the exported file was confirmed locally.', nextStepHint: '' };
+  }
+
+  return {
+    ok: false,
+    reason: 'Google Doc was created/updated but not read back or export-verified.',
+    nextStepHint: 'Call google.docs.read, or export the doc and confirm the exported file exists/readable.',
+  };
+}
+
+function verifyLocalDocument(state: ActiveTaskState, recent: RecentAction[]): Verification {
+  if (!anySucceeded(recent, LOCAL_DOCUMENT_WRITES)) {
+    return {
+      ok: false,
+      reason: 'No local document file was written.',
+      nextStepHint: 'Use doc.write_docx/doc.write_txt or file.write, then read it back.',
+    };
+  }
+  const lastWrite = lastSuccess(recent, LOCAL_DOCUMENT_WRITES);
+  const lastRead = lastSuccess(recent, new Set([...DOCUMENT_READS, 'file.exists', 'file.read']));
+  if (lastRead < lastWrite) {
+    return {
+      ok: false,
+      reason: 'The local document was not confirmed after writing.',
+      nextStepHint: 'Use document.read/doc.read or file.exists after writing the document.',
+    };
+  }
+  const expected = expectedValues(state);
+  const proof = [...recent].reverse().find((a) => a.success && [...DOCUMENT_READS, 'file.read'].includes(a.action));
+  if (expected.length > 0 && proof && !outputContainsExpected(proof.output, expected, 2)) {
+    return {
+      ok: false,
+      reason: 'Local document read-back does not contain enough expected content.',
+      nextStepHint: 'Read the generated document and ensure it contains the requested text.',
+    };
+  }
+  return { ok: true, reason: 'Local document written and confirmed by read-back.', nextStepHint: '' };
+}
+
 function verifyDocumentAccounting(state: ActiveTaskState, recent: RecentAction[], cloudTarget: boolean): Verification {
   if (!anySucceeded(recent, DOCUMENT_READS) && !succeeded(recent, 'file.read')) {
     return {
@@ -202,6 +284,10 @@ export function verifyCompletion(state: ActiveTaskState, recent: RecentAction[])
       return verifyCloudSheet(state, recent);
     case 'spreadsheet_local':
       return verifyLocalSheet(recent);
+    case 'document_cloud':
+      return verifyCloudDoc(state, recent);
+    case 'document_local':
+      return verifyLocalDocument(state, recent);
     case 'file_ops':
       return verifyFileOps(recent);
     case 'browser_webapp':
