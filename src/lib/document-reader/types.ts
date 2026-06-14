@@ -8,6 +8,8 @@ export interface ReadDocumentResult {
   contentText?: string;
   structured?: unknown;
   summary?: string;
+  /** For image references: a base64 `data:` URL to pass to a vision model. */
+  imageDataUrl?: string;
   metadata: {
     sizeBytes?: number;
     modifiedAt?: string;

@@ -308,3 +308,41 @@ pub async fn file_read_bytes(path: String) -> Result<Vec<u8>, String> {
     let expanded = expand_tilde(&path);
     std::fs::read(&expanded).map_err(|e| format!("file_read_bytes_failed:{path}: {e}"))
 }
+
+fn mime_for_image_ext(ext: &str) -> Option<&'static str> {
+    match ext.to_ascii_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
+        "bmp" => Some("image/bmp"),
+        _ => None,
+    }
+}
+
+/// Read an image file and return a ready-to-use base64 `data:` URL so the agent
+/// can pass it directly to a vision-capable model. Returns an error for files
+/// larger than `max_bytes` (caller-supplied, default 4 MiB) to protect the
+/// model context window, and for non-image extensions.
+#[tauri::command]
+pub async fn file_read_base64(path: String, max_bytes: Option<u64>) -> Result<String, String> {
+    use base64::{engine::general_purpose, Engine as _};
+    let expanded = expand_tilde(&path);
+    let ext = Path::new(&expanded)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let mime = mime_for_image_ext(ext)
+        .ok_or_else(|| format!("unsupported_image_ext:{ext}"))?;
+
+    let limit = max_bytes.unwrap_or(4 * 1024 * 1024);
+    let meta = std::fs::metadata(&expanded)
+        .map_err(|e| format!("file_read_base64_stat_failed:{path}: {e}"))?;
+    if meta.len() > limit {
+        return Err(format!("image_too_large:{}:{}>{}", path, meta.len(), limit));
+    }
+
+    let bytes = std::fs::read(&expanded).map_err(|e| format!("file_read_base64_failed:{path}: {e}"))?;
+    let encoded = general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{mime};base64,{encoded}"))
+}

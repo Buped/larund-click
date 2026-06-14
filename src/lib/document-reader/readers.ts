@@ -13,7 +13,15 @@ import { getCachedDocument, setCachedDocument } from './cache';
 const TEXT_EXT = new Set(['.txt', '.md', '.csv', '.json', '.xml', '.html', '.htm', '.log']);
 const SHEET_EXT = new Set(['.xlsx', '.xls', '.xlsm', '.ods']);
 const OFFICE_EXT = new Set(['.docx', '.doc', '.pptx', '.pdf']);
-const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
+
+// Images above this size are skipped for vision to protect the model context.
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+
+/** Read an image file as a base64 data URL via the Rust `file_read_base64` command. */
+export async function readImageAsDataUrl(path: string, maxBytes = MAX_IMAGE_BYTES): Promise<string> {
+  return invoke<string>('file_read_base64', { path, maxBytes });
+}
 
 function extOf(pathOrLabel: string): string {
   const name = pathOrLabel.split(/[\\/]/).pop() ?? pathOrLabel;
@@ -170,13 +178,26 @@ export async function readDocument(ref: DocumentReference, options: DocumentRead
         };
       }
     } else if (IMAGE_EXT.has(ext)) {
-      result = {
-        ref,
-        ok: true,
-        structured: { extraction: 'metadata_only', format: ext.slice(1), ocr: 'not_enabled' },
-        metadata: normalizeMetadata(md),
-        summary: 'Image metadata read. OCR/vision is intentionally not used yet.',
-      };
+      try {
+        const dataUrl = await readImageAsDataUrl(target);
+        result = {
+          ref,
+          ok: true,
+          imageDataUrl: dataUrl,
+          structured: { extraction: 'vision', format: ext.slice(1) },
+          metadata: normalizeMetadata(md),
+          summary: `Image loaded for vision analysis (${ext.slice(1)}).`,
+        };
+      } catch (imageError) {
+        result = {
+          ref,
+          ok: false,
+          structured: { extraction: 'vision_failed', format: ext.slice(1) },
+          metadata: normalizeMetadata(md),
+          error: String(imageError),
+          summary: 'Image could not be loaded for vision (too large or unreadable).',
+        };
+      }
     } else {
       result = {
         ref,

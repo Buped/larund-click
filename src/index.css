@@ -452,6 +452,40 @@ input[type="date"], input[type="time"] {
   padding: 0; margin-bottom: 10px;
 }
 .chat-textarea::placeholder { color: var(--text-hint); }
+
+/* Rich composer: contentEditable input with inline reference pills (mentions). */
+.mention-input {
+  width: 100%; display: block;
+  background: transparent; border: none; outline: none;
+  color: var(--text-primary); font-size: 13.5px;
+  line-height: 1.6; min-height: 22px; max-height: 130px;
+  overflow-y: auto; font-family: inherit;
+  padding: 0; margin-bottom: 10px;
+  white-space: pre-wrap; word-break: break-word;
+}
+.mention-input:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-hint);
+  pointer-events: none;
+}
+.mention-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  vertical-align: baseline;
+  margin: 0 1px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+}
+.mention-pill svg { transform: translateY(0.5px); }
+.mention-pill__label { white-space: nowrap; }
 .chat-toolbar {
   display: flex;
   align-items: center;

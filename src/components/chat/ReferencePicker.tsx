@@ -1,20 +1,81 @@
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon } from '../icons';
 import type { DocumentReference } from '../../lib/references/types';
-import { pickLocalFile, pickLocalFolder, pickUrlReference } from '../../lib/references/local-picker';
+import { pickLocalFile, pickLocalFolder } from '../../lib/references/local-picker';
 
-export function ReferencePicker({ open, onPicked, onClose }: {
+export function ReferencePicker({ open, onPicked, onClose, triggerRef }: {
   open: boolean;
   onPicked: (refs: DocumentReference[]) => void;
   onClose: () => void;
+  triggerRef?: React.RefObject<HTMLElement | null>;
 }) {
+  const [popoverStyle, setPopoverStyle] = useState<React.CSSProperties | null>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  function updatePopoverPosition() {
+    if (!triggerRef?.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const gap = 8;
+    const viewportPad = 12;
+    const width = 230;
+    const height = popoverRef.current?.offsetHeight ?? 130;
+    
+    const topAbove = rect.top - height - gap;
+    const topBelow = rect.bottom + gap;
+    const top = topAbove >= viewportPad
+      ? topAbove
+      : Math.min(topBelow, Math.max(viewportPad, window.innerHeight - height - viewportPad));
+    
+    const maxLeft = Math.max(viewportPad, window.innerWidth - width - viewportPad);
+    const left = Math.min(Math.max(rect.left, viewportPad), maxLeft);
+
+    setPopoverStyle({
+      position: 'fixed',
+      top,
+      left,
+      width,
+      zIndex: 1000,
+      pointerEvents: 'auto',
+    });
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    updatePopoverPosition();
+
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node;
+      if (triggerRef?.current?.contains(target) || popoverRef.current?.contains(target)) return;
+      onClose();
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    const onReposition = () => updatePopoverPosition();
+
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    window.addEventListener('resize', onReposition);
+    window.addEventListener('scroll', onReposition, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('resize', onReposition);
+      window.removeEventListener('scroll', onReposition, true);
+    };
+  }, [open, onClose, triggerRef]);
+
+  useEffect(() => {
+    if (open) updatePopoverPosition();
+  }, [open]);
+
   if (!open) return null;
 
-  async function choose(kind: 'file' | 'folder' | 'url') {
+  async function choose(kind: 'file' | 'folder') {
     const refs = kind === 'file'
       ? await pickLocalFile()
-      : kind === 'folder'
-        ? await pickLocalFolder()
-        : await pickUrlReference();
+      : await pickLocalFolder();
     if (refs.length) onPicked(refs);
     onClose();
   }
@@ -35,31 +96,37 @@ export function ReferencePicker({ open, onPicked, onClose }: {
         textAlign: 'left',
         boxShadow: 'none',
         fontSize: 13,
+        transition: 'background .1s',
+        cursor: 'pointer',
       }}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'; }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
     >
       <Icon name={icon} size={14} stroke={1.6} style={{ color: 'var(--text-muted)' }} />
       {label}
     </button>
   );
 
-  return (
+  const popover = popoverStyle ? createPortal(
     <div
+      ref={popoverRef}
+      className="popover-in"
       style={{
-        position: 'absolute',
-        left: 8,
-        bottom: 50,
-        width: 230,
+        position: 'fixed',
+        ...popoverStyle,
         padding: 6,
         borderRadius: 9,
         border: '1px solid var(--border-md)',
         background: 'var(--bg-elevated)',
         boxShadow: '0 18px 45px rgba(0,0,0,.45)',
-        zIndex: 20,
       }}
+      onPointerDown={e => e.stopPropagation()}
     >
-      {item('fileText', 'Select local file...', () => void choose('file'))}
-      {item('folder', 'Select local folder...', () => void choose('folder'))}
-      {item('link', 'Paste URL...', () => void choose('url'))}
-    </div>
-  );
+      {item('fileText', 'Fájl csatolása…', () => void choose('file'))}
+      {item('folder', 'Mappa csatolása…', () => void choose('folder'))}
+    </div>,
+    document.body,
+  ) : null;
+
+  return popover;
 }

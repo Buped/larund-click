@@ -21,7 +21,7 @@ import { detectPageState } from '../browser-workflows/detect-page-state';
 import { manualHandoffMessage } from '../browser-workflows/manual-blockers';
 import { sanitizeArgs } from '../tools/audit';
 import type { DocumentReference } from '../references/types';
-import { readDocument, summarizeReadResults, scanFolder, formatFolderScan } from '../document-reader';
+import { ingestReferences, buildReferenceMessageContent } from '../references/ingest';
 
 export type AgentStatus = 'idle' | 'planning' | 'executing' | 'waiting_user' | 'complete' | 'error';
 export type AutonomyMode = 'full' | 'semi' | 'manual';
@@ -225,44 +225,32 @@ export async function runControlLoop(
     if (recentActions.length > MAX_RECENT) recentActions.shift();
   };
 
-  if (references.length > 0) {
+  // Read attached references into model-ready content (text + image blocks).
+  // Shared with the normal chat path via ../references/ingest.
+  const ingest = references.length > 0 ? await ingestReferences(references, task) : null;
+  if (ingest) {
     emitStep({
       id: nowStepId('refs-plan'),
       type: 'checklist',
       output: `Referenced inputs: ${references.map((ref) => ref.label).join(', ')}. I will inspect them before using their contents.`,
       timestamp: new Date().toISOString(),
     });
-    for (const ref of references) {
-      if (ref.kind === 'folder') {
-        const scan = await scanFolder(ref);
-        const output = formatFolderScan(scan);
-        emitStep({
-          id: nowStepId('folder-scan'),
-          type: scan.ok ? 'verification' : 'error',
-          tool: 'folder.scan',
-          input: JSON.stringify(ref),
-          output,
-          error: scan.ok ? undefined : scan.error,
-          timestamp: new Date().toISOString(),
-          details: { folderScan: scan },
-        });
-        recordAction({ action: 'folder.scan', argsSummary: JSON.stringify(ref), success: scan.ok, output, error: scan.error });
-      } else if (ref.kind === 'file') {
-        const result = await readDocument(ref);
-        const output = summarizeReadResults([result]);
-        if (result.ok && ref.path) taskState.filesRead = [...(taskState.filesRead ?? []), ref.path];
-        emitStep({
-          id: nowStepId('document-read'),
-          type: result.ok ? 'verification' : 'error',
-          tool: 'document.read',
-          input: JSON.stringify(ref),
-          output,
-          error: result.ok ? undefined : result.error,
-          timestamp: new Date().toISOString(),
-          details: { documentRead: result },
-        });
-        recordAction({ action: 'document.read', argsSummary: JSON.stringify(ref), success: result.ok, output, error: result.error });
-      }
+    for (const item of ingest.perRef) {
+      const tool = item.kind === 'folder' ? 'folder.scan' : 'document.read';
+      emitStep({
+        id: nowStepId(item.kind === 'folder' ? 'folder-scan' : 'document-read'),
+        type: item.ok ? 'verification' : 'error',
+        tool,
+        input: JSON.stringify(item.ref),
+        output: item.output,
+        error: item.error,
+        timestamp: new Date().toISOString(),
+        details: item.kind === 'folder' ? { folderScan: item.folderScan } : { documentRead: item.documentRead },
+      });
+      recordAction({ action: tool, argsSummary: JSON.stringify(item.ref), success: item.ok, output: item.output, error: item.error });
+    }
+    if (ingest.filesRead.length) {
+      taskState.filesRead = [...(taskState.filesRead ?? []), ...ingest.filesRead];
     }
     setActiveTask(sessionId, taskState);
   }
@@ -280,6 +268,13 @@ export async function runControlLoop(
     { role: 'system', content: systemPrompt },
     { role: 'user', content: task },
   ];
+
+  // Inject the actual contents of attached references (text + images) so the
+  // model can analyze them directly instead of only seeing their labels.
+  const refContent = ingest ? buildReferenceMessageContent(ingest) : null;
+  if (refContent) {
+    messages.push({ role: 'user', content: refContent });
+  }
 
   // Rolling record of executed actions — the evidence the completion guard checks.
   for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {

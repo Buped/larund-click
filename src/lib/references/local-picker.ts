@@ -1,3 +1,4 @@
+import { open } from '@tauri-apps/plugin-dialog';
 import type { DocumentReference } from './types';
 
 function id(prefix: string): string {
@@ -28,15 +29,15 @@ export function referenceFromUrl(url: string): DocumentReference {
   };
 }
 
-async function tryDialogOpen(directory: boolean, multiple: boolean): Promise<string[] | null> {
+/**
+ * Open the native OS file/folder picker via the Tauri dialog plugin.
+ * Returns the selected paths, or `null` when the plugin is unavailable
+ * (e.g. running in a plain browser during development) so callers can fall back.
+ */
+async function nativeOpen(directory: boolean, multiple: boolean): Promise<string[] | null> {
   try {
-    const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<{
-      open?: (options: { directory?: boolean; multiple?: boolean }) => Promise<string | string[] | null>;
-    }>;
-    const mod = await dynamicImport('@tauri-apps/plugin-dialog');
-    if (!mod.open) return null;
-    const selected = await mod.open({ directory, multiple });
-    if (!selected) return null;
+    const selected = await open({ directory, multiple });
+    if (selected == null) return [];
     return Array.isArray(selected) ? selected.map(String) : [String(selected)];
   } catch {
     return null;
@@ -44,13 +45,13 @@ async function tryDialogOpen(directory: boolean, multiple: boolean): Promise<str
 }
 
 export async function pickLocalFile(): Promise<DocumentReference[]> {
-  const paths = await tryDialogOpen(false, true);
+  const paths = await nativeOpen(false, true);
   const selected = paths ?? promptPaths('Paste file path(s), one per line');
   return selected.map((path) => referenceFromPath(path, 'file'));
 }
 
 export async function pickLocalFolder(): Promise<DocumentReference[]> {
-  const paths = await tryDialogOpen(true, false);
+  const paths = await nativeOpen(true, false);
   const selected = paths ?? promptPaths('Paste folder path');
   return selected.map((path) => referenceFromPath(path, 'folder'));
 }

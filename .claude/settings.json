@@ -21,7 +21,16 @@
       "Read(//d/d/Larund-click/src/components/**)",
       "Bash(echo \"EXIT: $?\")",
       "PowerShell(npx vitest run 2>&1 | Select-Object -Last 8; \"---TSC---\"; npx tsc --noEmit -p tsconfig.json; \"TSC EXIT: $LASTEXITCODE\")",
-      "PowerShell(Set-Location D:\\\\Larund-click; npx vitest run 2>&1 | Select-Object -Last 6; \"---TSC---\"; npx tsc --noEmit -p tsconfig.json; \"TSC EXIT: $LASTEXITCODE\"; \"---BUILD---\"; npm run build 2>&1 | Select-Object -Last 4; \"BUILD EXIT: $LASTEXITCODE\")"
+      "PowerShell(Set-Location D:\\\\Larund-click; npx vitest run 2>&1 | Select-Object -Last 6; \"---TSC---\"; npx tsc --noEmit -p tsconfig.json; \"TSC EXIT: $LASTEXITCODE\"; \"---BUILD---\"; npm run build 2>&1 | Select-Object -Last 4; \"BUILD EXIT: $LASTEXITCODE\")",
+      "PowerShell($env:PATH = \"C:\\\\msys64\\\\mingw64\\\\bin;$env:PATH\"; npm run tauri dev)",
+      "Bash(grep -qE \"Running \\\\`?D:.*tauri-app\\\\.exe|error\\\\[|^error:|could not compile\" \"C:\\\\Users\\\\KomPhone\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Larund-click\\\\03337938-a3ca-41c7-8d2c-2186e62e7a80\\\\tasks\\\\b31d2dmwc.output\")",
+      "PowerShell($env:PATH = \"C:\\\\msys64\\\\mingw64\\\\bin;$env:PATH\"; cd src-tauri; cargo tree -i zstd-sys 2>&1 | Select-Object -First 20; \"=== bzip2 ===\"; cargo tree -i bzip2 2>&1 | Select-Object -First 20)",
+      "PowerShell(Get-Process tauri-app -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, @{N='RAM\\(MB\\)';E={[math]::Round\\($_.WorkingSet64/1MB\\)}}, StartTime)",
+      "PowerShell(npm install @tauri-apps/plugin-dialog@^2 2>&1)",
+      "Bash(cargo fetch *)",
+      "Bash(cd /d/Larund-click/src-tauri && cat .cargo/config.toml 2>/dev/null | head -30; echo \"=== exists? ===\"; ls -la .cargo/ 2>/dev/null)",
+      "Read(//d/d/Larund-click/src-tauri/.cargo/**)",
+      "PowerShell(npx vitest run src/lib/document-reader 2>&1)"
     ]
   }
 }

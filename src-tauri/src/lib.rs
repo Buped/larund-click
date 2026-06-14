@@ -6,6 +6,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         // NO-MOUSE CORE: the agent tool surface below deliberately excludes every
         // mouse / cursor / screenshot / SOC / OCR / UIA-click / grid / border /
         // virtual-desktop / input-guard command. Those Rust functions still exist
@@ -37,6 +38,7 @@ pub fn run() {
             commands::documents::docx_write,
             commands::documents::file_write_bytes,
             commands::documents::file_read_bytes,
+            commands::documents::file_read_base64,
             // ── clipboard ────────────────────────────────────────────────────
             commands::agent::clipboard_get,
             commands::agent::clipboard_set,

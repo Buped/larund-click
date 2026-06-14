@@ -5,15 +5,17 @@ import { RichMessage } from './rich-message';
 import { Sidebar } from './sidebar';
 import { MODELS } from '../constants/models';
 import { getMessages, addMessage, createSession, updateMessage, touchSession, getSettings } from '../lib/database';
-import { callOpenRouter } from '../lib/openrouter';
+import { callOpenRouter, type ChatMessage } from '../lib/openrouter';
 import { runAgentLoop, AgentStatus, AgentStep, AgentAbortSignal } from '../lib/agent-loop';
 import { v4 as uuidv4 } from 'uuid';
 import type { UserCredits } from '../lib/supabase';
 import { ReferenceChip } from './chat/ReferenceChip';
 import { ReferencePicker } from './chat/ReferencePicker';
+import { MentionInput, type MentionInputHandle } from './chat/MentionInput';
 import type { DocumentReference } from '../lib/references/types';
-import { appendReferenceSummary, deserializeReferences, serializeReferences } from '../lib/references/serialize';
-import { referenceFromPath, referenceFromUrl } from '../lib/references/local-picker';
+import { deserializeReferences, serializeReferences } from '../lib/references/serialize';
+import { referenceFromPath } from '../lib/references/local-picker';
+import { ingestReferences } from '../lib/references/ingest';
 import { policyForAutonomyMode, type AutonomyMode as PolicyAutonomyMode } from '../lib/tools/policy';
 
 // ─── Model picker ─────────────────────────────────────────────────────────────
@@ -744,9 +746,10 @@ export function ChatScreen({
   const [references,        setReferences       ] = useState<DocumentReference[]>([]);
   const [referencePickerOpen, setReferencePickerOpen] = useState(false);
 
-  const taRef         = useRef<HTMLTextAreaElement>(null);
+  const editorRef     = useRef<MentionInputHandle>(null);
   const fileRef       = useRef<HTMLInputElement>(null);
   const bottomRef     = useRef<HTMLDivElement>(null);
+  const referencePickerTriggerRef = useRef<HTMLButtonElement>(null);
   const skipNextFetch = useRef(false);
   const abortRef      = useRef<AgentAbortSignal>({ aborted: false });
   const chatAbortRef  = useRef<AbortController | null>(null);
@@ -764,24 +767,17 @@ export function ChatScreen({
 
   const chatTitle = messages.find(m => m.role === 'user')?.content.slice(0, 80) ?? '';
 
-  function growTextarea() {
-    const ta = taRef.current;
-    if (!ta) return;
-    ta.style.height = 'auto';
-    ta.style.height = Math.min(ta.scrollHeight, 130) + 'px';
-  }
-
-  function onInputChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    setInput(e.target.value);
-    growTextarea();
-    if (e.target.value.endsWith('@')) setReferencePickerOpen(true);
+  // The rich composer (contentEditable) is the source of truth: it reports its
+  // derived plain text + ordered references here on every edit.
+  function handleEditorChange(text: string, refs: DocumentReference[]) {
+    setInput(text);
+    setReferences(refs);
   }
 
   function handleReferencesPicked(picked: DocumentReference[]) {
-    setReferences((current) => [...current, ...picked]);
-    setInput((value) => value.endsWith('@') ? value.slice(0, -1).trimEnd() : value);
+    // Insert each pick inline at the caret; the editor's onChange syncs state.
+    for (const ref of picked) editorRef.current?.insertReference(ref);
     setReferencePickerOpen(false);
-    setTimeout(growTextarea, 0);
   }
 
   function handleReferenceDrop(e: React.DragEvent<HTMLDivElement>) {
@@ -794,19 +790,13 @@ export function ChatScreen({
     const text = e.dataTransfer.getData('text/plain')?.trim();
     if (text) {
       for (const line of text.split(/\r?\n/).map((v) => v.trim()).filter(Boolean)) {
-        if (/^https?:\/\//i.test(line)) refs.push(referenceFromUrl(line));
-        else if (/^[a-zA-Z]:[\\/]/.test(line) || line.startsWith('/') || line.startsWith('\\\\')) refs.push(referenceFromPath(line, 'file'));
+        if (/^[a-zA-Z]:[\\/]/.test(line) || line.startsWith('/') || line.startsWith('\\\\')) refs.push(referenceFromPath(line, 'file'));
       }
     }
-    if (refs.length > 0) setReferences((current) => [...current, ...refs]);
+    for (const ref of refs) editorRef.current?.insertReference(ref);
   }
 
-  function onKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Backspace' && !input && references.length > 0) {
-      e.preventDefault();
-      setReferences((current) => current.slice(0, -1));
-      return;
-    }
+  function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -825,9 +815,7 @@ export function ChatScreen({
 
   function handleStarter(prompt: string) {
     setInput(prompt);
-    setTimeout(() => {
-      if (taRef.current) { taRef.current.focus(); growTextarea(); }
-    }, 50);
+    setTimeout(() => editorRef.current?.setText(prompt), 50);
   }
 
   function handleCopyMessage(id: string, content: string) {
@@ -1032,12 +1020,14 @@ export function ChatScreen({
     const text = input.trim();
     const taskReferences = [...references];
     if ((!text && taskReferences.length === 0) || sending || runningTask || !userId) return;
-    const messageText = appendReferenceSummary(text || 'Use the referenced input(s).', taskReferences);
+    // Clean message for display/storage: only what the user wrote. Attached
+    // references are shown as chips; the model gets their contents via ingest.
+    const messageText = text || 'Use the referenced input(s).';
 
     let currentTaskId: string | null = null;
     setSending(true);
     setInput('');
-    if (taRef.current) taRef.current.style.height = 'auto';
+    editorRef.current?.clear();
     setAttachments([]);
     setReferences([]);
     try {
@@ -1104,10 +1094,24 @@ export function ChatScreen({
     }]);
     setRunningTask({ kind: 'chat', assistantMessageId: asstMsgId, sessionId: sessionId! });
 
-    const history = messages
+    const history: ChatMessage[] = messages
       .filter(m => !m._loading && !m.streaming && !m._agent && m.content)
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
-    history.push({ role: 'user', content: messageText });
+
+    // Send the actual contents of attached references (text + images) so the
+    // model can analyze them — not just their filenames. Stored/displayed
+    // message stays plain `messageText`; only what we send to the model differs.
+    let userContent: ChatMessage['content'] = messageText;
+    if (taskReferences.length > 0) {
+      const ingest = await ingestReferences(taskReferences, text);
+      if (ingest.textBlocks.length > 0 || ingest.imageBlocks.length > 0) {
+        const textPart = [messageText, ...ingest.textBlocks].join('\n\n');
+        userContent = ingest.imageBlocks.length > 0
+          ? [{ type: 'text', text: textPart }, ...ingest.imageBlocks]
+          : textPart;
+      }
+    }
+    history.push({ role: 'user', content: userContent });
 
     const serviceTier = 'service_tier' in modelDef ? (modelDef as any).service_tier : undefined;
     let fullContent = '';
@@ -1325,31 +1329,19 @@ export function ChatScreen({
                 </div>
               )}
 
-              {/* Textarea */}
-              <textarea
-                ref={taRef}
-                value={input}
-                onChange={onInputChange}
+              {/* Rich composer: text with inline reference pills (mention-style) */}
+              <MentionInput
+                ref={editorRef}
+                onChange={handleEditorChange}
+                onTriggerPicker={() => setReferencePickerOpen(true)}
                 onKeyDown={onKeyDown}
                 placeholder={agentMode ? 'Describe a task for the agent…' : 'Tell Click what to do…'}
-                rows={1}
-                className="chat-textarea"
               />
-              {references.length > 0 && (
-                <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 8, marginBottom: 2 }}>
-                  {references.map((ref) => (
-                    <ReferenceChip
-                      key={ref.id}
-                      refItem={ref}
-                      onRemove={() => setReferences((current) => current.filter((item) => item.id !== ref.id))}
-                    />
-                  ))}
-                </div>
-              )}
               <ReferencePicker
                 open={referencePickerOpen}
                 onPicked={handleReferencesPicked}
                 onClose={() => setReferencePickerOpen(false)}
+                triggerRef={referencePickerTriggerRef}
               />
 
               {/* Toolbar */}
@@ -1372,9 +1364,10 @@ export function ChatScreen({
                 </button>
 
                 <button
+                  ref={referencePickerTriggerRef}
                   className="toolbar-btn"
                   onClick={() => setReferencePickerOpen((open) => !open)}
-                  title="Attach file, folder, or URL reference"
+                  title="Fájl vagy mappa csatolása"
                 >
                   <Icon name="paperclip" size={15} stroke={1.5} />
                 </button>
