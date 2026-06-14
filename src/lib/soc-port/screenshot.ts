@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { SocScreenshot } from './types';
+import type { SocPortScreenshot } from './types';
 
-export async function takeDesktopScreenshot(): Promise<SocScreenshot> {
+export async function takeSocScreenshot(): Promise<SocPortScreenshot> {
   const shot = await invoke<{ base64: string; width: number; height: number; monitor_id?: number; monitorId?: number }>(
     'capture_screen_raw',
     { monitorId: null },
@@ -14,6 +14,6 @@ export async function takeDesktopScreenshot(): Promise<SocScreenshot> {
   };
 }
 
-export function screenshotDataUrl(screenshot: SocScreenshot, mime = 'image/jpeg'): string {
-  return `data:${mime};base64,${screenshot.base64}`;
+export function imageDataUrl(screenshot: SocPortScreenshot, base64 = screenshot.base64): string {
+  return `data:image/jpeg;base64,${base64}`;
 }

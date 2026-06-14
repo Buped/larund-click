@@ -14,8 +14,8 @@ vi.mock('../../openrouter', () => ({
 vi.mock('../../supabase', () => ({
   supabase: { rpc: rpcMock },
 }));
-vi.mock('../../soc-mode/run-soc-turn', () => ({
-  runSocLoop: runSocLoopMock,
+vi.mock('../../soc-port/loop', () => ({
+  runSocPortLoop: runSocLoopMock,
 }));
 
 describe('control-system loop', () => {
@@ -91,7 +91,7 @@ describe('control-system loop', () => {
       success: true,
       summary: 'Roblox game screen visible',
       history: [],
-      debugDir: '~/.larund-click/soc-mode/test-run',
+      debugDir: '~/.larund-click/soc-port/test-run',
       screenshot: { base64: 'after', width: 1920, height: 1080 },
     });
 

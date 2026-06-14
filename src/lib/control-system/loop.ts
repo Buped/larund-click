@@ -6,7 +6,7 @@ import { CONTROL_SYSTEM_PROMPT } from './prompt';
 import { executeControlAction } from './executor';
 import { isRawMouseActionName, parseControlAction } from './parser';
 import type { ControlAction } from './types';
-import { routeHighLevel } from '../soc-mode/router';
+import { routeHighLevel } from '../soc-port/router';
 
 export type AgentStatus = 'idle' | 'planning' | 'executing' | 'waiting_user' | 'complete' | 'error';
 export type AutonomyMode = 'full' | 'semi' | 'manual';
@@ -92,13 +92,6 @@ async function finalDeduct(userId: string, costUsd: number): Promise<void> {
 function actionTouchesScreen(action: ControlAction): boolean {
   return action.action === 'app.open'
     || action.action === 'window.focus'
-    || action.action === 'ui.read'
-    || action.action === 'ui.invoke'
-    || action.action === 'ui.click'
-    || action.action === 'ui.type'
-    || action.action === 'ui.scroll'
-    || action.action === 'ui.focusNext'
-    || action.action === 'ui.activate'
     || action.action === 'soc.visual'
     || action.action === 'keyboard.press'
     || action.action === 'keyboard.combo';
@@ -106,12 +99,7 @@ function actionTouchesScreen(action: ControlAction): boolean {
 
 // Actions that inject mouse/keyboard input: block physical input during the burst.
 function actionInjectsInput(action: ControlAction): boolean {
-  return action.action === 'ui.invoke'
-    || action.action === 'ui.click'
-    || action.action === 'ui.type'
-    || action.action === 'ui.scroll'
-    || action.action === 'ui.activate'
-    || action.action === 'soc.visual'
+  return action.action === 'soc.visual'
     || action.action === 'keyboard.press'
     || action.action === 'keyboard.combo';
 }

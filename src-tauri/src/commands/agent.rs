@@ -414,6 +414,60 @@ pub async fn mouse_click_verified(
     })).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn soc_mouse_click(
+    x: i32,
+    y: i32,
+    button: Option<String>,
+) -> Result<String, String> {
+    mouse_click(x, y, button.clone()).await?;
+    serde_json::to_string(&serde_json::json!({
+        "clicked": true,
+        "x": x,
+        "y": y,
+        "button": button.unwrap_or_else(|| "left".to_string()),
+        "source": "soc-port-standard"
+    })).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn soc_label_yolo(screenshot_base64: String) -> Result<String, String> {
+    let repo_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "Failed to resolve repository directory".to_string())?
+        .to_path_buf();
+    let temp_dir = std::env::temp_dir();
+    let nonce = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_millis()
+    );
+    let input_path = temp_dir.join(format!("larund-soc-label-{nonce}.json"));
+    let output_path = temp_dir.join(format!("larund-soc-label-{nonce}-out.json"));
+    let input = serde_json::json!({ "screenshot_base64": screenshot_base64 });
+    std::fs::write(&input_path, input.to_string()).map_err(|e| e.to_string())?;
+
+    let output = Command::new("python")
+        .args([
+            "python/soc_label.py",
+            "--input",
+            &input_path.to_string_lossy(),
+            "--output",
+            &output_path.to_string_lossy(),
+        ])
+        .current_dir(&repo_dir)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+      return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    std::fs::read_to_string(&output_path).map_err(|e| e.to_string())
+}
+
 // ─── Keyboard commands ────────────────────────────────────────────────────────
 
 #[tauri::command]

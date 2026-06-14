@@ -18,6 +18,8 @@ pub fn run() {
             commands::agent::capture_screen_raw,
             commands::agent::capture_screen_region,
             commands::agent::mouse_click_verified,
+            commands::agent::soc_mouse_click,
+            commands::agent::soc_label_yolo,
             commands::agent::type_text,
             commands::agent::key_press,
             commands::agent::key_combo,

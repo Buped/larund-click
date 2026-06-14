@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ControlAction, ControlToolResult } from './types';
-import { runSocLoop } from '../soc-mode/run-soc-turn';
+import { runSocPortLoop } from '../soc-port/loop';
 
 export async function executeControlAction(
   action: ControlAction,
@@ -124,60 +124,10 @@ export async function executeControlAction(
       });
       return { success: true, output };
     }
-    case 'ui.read': {
-      const output = await invoke<string>('desktop_read', { mode: action.mode ?? null });
-      return { success: true, output };
-    }
-    case 'ui.invoke': {
-      try {
-        const output = await invoke<string>('desktop_invoke_target', { id: action.id, snapshotToken: action.snapshot_token });
-        return { success: true, output };
-      } catch (err) {
-        return { success: false, output: '', error: String(err) };
-      }
-    }
-    case 'ui.click': {
-      try {
-        const output = await invoke<string>('desktop_click_target', { id: action.id, snapshotToken: action.snapshot_token });
-        return { success: true, output };
-      } catch (err) {
-        return { success: false, output: '', error: String(err) };
-      }
-    }
-    case 'ui.type': {
-      try {
-        const output = await invoke<string>('desktop_type_target', { id: action.id, text: action.text, snapshotToken: action.snapshot_token });
-        return { success: true, output };
-      } catch (err) {
-        return { success: false, output: '', error: String(err) };
-      }
-    }
-    case 'ui.scroll': {
-      try {
-        const output = await invoke<string>('desktop_scroll_target', {
-          id: action.id,
-          direction: action.direction,
-          amount: action.amount ?? null,
-          snapshotToken: action.snapshot_token,
-        });
-        return { success: true, output };
-      } catch (err) {
-        return { success: false, output: '', error: String(err) };
-      }
-    }
-    case 'ui.focusNext': {
-      const output = await invoke<string>('desktop_focus_next');
-      return { success: true, output };
-    }
-    case 'ui.activate': {
-      const output = await invoke<string>('desktop_activate_focused');
-      return { success: true, output };
-    }
     case 'soc.visual': {
-      const result = await runSocLoop(action.objective || ctx.task, ctx.userId, {
+      const result = await runSocPortLoop(action.objective || ctx.task, ctx.userId, {
         addCost: ctx.addCost,
         onStep: ctx.onSocStep,
-        onAskUser: ctx.onAskUser,
       });
       return {
         success: result.success,
@@ -186,7 +136,7 @@ export async function executeControlAction(
           : `soc_visual_failed: ${result.error}; debug=${result.debugDir}`,
         error: result.success ? undefined : result.error,
         screenshot: result.screenshot,
-        details: { mode: 'soc_visual', history: result.history, debugDir: result.debugDir },
+        details: { mode: 'soc_visual', implementation: 'soc-port', history: result.history, debugDir: result.debugDir },
       };
     }
     case 'keyboard.press': {

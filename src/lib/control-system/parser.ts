@@ -22,18 +22,10 @@ const ALLOWED = new Set([
   'browser.type',
   'browser.key',
   'browser.wait',
-  // Layer 5: native GUI element targeting (UIA)
-  'ui.read',
-  'ui.invoke',
-  'ui.click',
-  'ui.type',
-  'ui.scroll',
-  'ui.focusNext',
-  'ui.activate',
-  // Layer 6: keyboard
+  // Layer 5: keyboard
   'keyboard.press',
   'keyboard.combo',
-  // Layer 7: SOC visual cursor control
+  // Layer 6: SOC visual cursor control
   'soc.visual',
   // Control flow
   'task.complete',
@@ -63,5 +55,7 @@ export function parseControlAction(text: string): ControlAction | null {
 }
 
 export function isRawMouseActionName(name: string): boolean {
-  return /^(mouse_click|mouse_double_click|mouse_move|mouse_drag|desktop_click_point|click_visual_target|ground_visual_target|desktop_visual_locate|visual\.clickIntent|visual\.typeIntent)$/.test(name);
+  return /^(mouse_(click|double_click|move|drag)|desktop_click_point)$/.test(name)
+    || name.startsWith('visual.')
+    || (/visual/.test(name) && /_(target|locate)$/.test(name));
 }
