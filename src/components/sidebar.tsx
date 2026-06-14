@@ -68,6 +68,7 @@ function ChatRow({ chat, active, onSelect, onRename, onDelete }: {
       <button
         onClick={onSelect}
         className={`sidebar-row${active ? ' sidebar-row--active' : ''}`}
+        title={chat.title}
       >
         <span style={{
           width: 6, height: 6, borderRadius: '50%', flex: 'none',
@@ -133,7 +134,7 @@ function ChatRow({ chat, active, onSelect, onRename, onDelete }: {
       {menuOpen && (
         <div
           ref={menuRef}
-          className="fade-up"
+          className="sidebar-row-menu fade-up"
           style={{
             position: 'absolute', top: 'calc(100% - 2px)', right: 4,
             width: 162, background: 'var(--bg-elevated)',
@@ -242,6 +243,7 @@ export function Sidebar({ nav, activeChat, onChatChange, userEmail, refreshKey, 
         <button
           onClick={() => onChatChange(null)}
           className={`sidebar-new-row${isNewChat ? ' sidebar-new-row--active' : ''}`}
+          title="New chat"
         >
           <span style={{
             display: 'grid', placeItems: 'center', flex: 'none',
@@ -306,11 +308,11 @@ export function Sidebar({ nav, activeChat, onChatChange, userEmail, refreshKey, 
 
       {/* ── Bottom nav ── */}
       <div className="sidebar-footer">
-        <button className="sidebar-nav-btn" onClick={() => nav('scheduler')}>
+        <button className="sidebar-nav-btn" onClick={() => nav('scheduler')} title="Scheduler">
           <Icon name="calendar" size={15} stroke={1.5} style={{ color: 'var(--text-hint)', flex: 'none' }} />
           <span style={{ fontSize: 13, color: 'var(--text-muted)', flex: 1, textAlign: 'left' }}>Scheduler</span>
         </button>
-        <button className="sidebar-nav-btn" onClick={() => nav('settings')}>
+        <button className="sidebar-nav-btn" onClick={() => nav('settings')} title="Settings">
           <Icon name="settings" size={15} stroke={1.5} style={{ color: 'var(--text-hint)', flex: 'none' }} />
           <span style={{ fontSize: 13, color: 'var(--text-muted)', flex: 1, textAlign: 'left' }}>Settings</span>
           <span style={{ fontSize: 10.5, color: 'var(--text-hint)', fontFamily: 'var(--font-mono)' }}>v1.8.2</span>

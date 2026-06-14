@@ -6,69 +6,55 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
+        // NO-MOUSE CORE: the agent tool surface below deliberately excludes every
+        // mouse / cursor / screenshot / SOC / OCR / UIA-click / grid / border /
+        // virtual-desktop / input-guard command. Those Rust functions still exist
+        // in `commands::agent` (compiled but unreachable) and are intentionally NOT
+        // registered here, so nothing — not the agent core, not the UI — can invoke
+        // them. See docs/NO_MOUSE_CORE.md and docs/MIGRATION_FROM_VISUAL.md.
         .invoke_handler(tauri::generate_handler![
+            // ── runtime / shell ──────────────────────────────────────────────
             commands::agent::shell_run,
+            commands::process::process_start,
+            commands::process::process_status,
+            commands::process::process_kill,
+            // ── files ────────────────────────────────────────────────────────
             commands::agent::file_read,
             commands::agent::file_write,
             commands::agent::dir_list,
+            commands::fs_ops::fs_mkdir,
+            commands::fs_ops::fs_copy,
+            commands::fs_ops::fs_move,
+            commands::fs_ops::fs_delete,
+            commands::fs_ops::fs_exists,
+            commands::fs_ops::fs_metadata,
+            commands::fs_ops::fs_tree,
+            commands::fs_ops::fs_search,
+            // ── data (spreadsheets) ──────────────────────────────────────────
             commands::agent::sheet_read,
             commands::agent::sheet_write,
+            // ── clipboard ────────────────────────────────────────────────────
+            commands::agent::clipboard_get,
+            commands::agent::clipboard_set,
+            // ── apps / windows / keyboard (no-mouse: launch + focus + keys) ──
             commands::agent::app_open,
-            commands::agent::take_screenshot,
-            commands::agent::capture_screen_raw,
-            commands::agent::capture_screen_region,
-            commands::agent::mouse_click_verified,
-            commands::agent::soc_mouse_click,
-            commands::agent::soc_label_yolo,
+            commands::agent::desktop_list_apps,
+            commands::agent::desktop_open_app,
+            commands::agent::get_window_list,
+            commands::agent::focus_window,
             commands::agent::type_text,
             commands::agent::key_press,
             commands::agent::key_combo,
-            commands::agent::clipboard_get,
-            commands::agent::clipboard_set,
-            commands::agent::get_screen_size,
-            commands::agent::get_window_list,
-            commands::agent::focus_window,
-            commands::agent::desktop_list_apps,
-            commands::agent::desktop_open_app,
-            commands::agent::desktop_read,
-            commands::agent::desktop_read_debug,
-            commands::agent::desktop_resolve_target,
-            commands::agent::desktop_click_target,
-            commands::agent::desktop_double_click_target,
-            commands::agent::desktop_invoke_target,
-            commands::agent::desktop_focus_next,
-            commands::agent::desktop_focus_prev,
-            commands::agent::desktop_read_focus,
-            commands::agent::desktop_activate_focused,
-            commands::agent::desktop_type_target,
-            commands::agent::desktop_scroll_target,
-            commands::agent::desktop_capture_region,
-            commands::agent::desktop_zoom_target_region,
-            commands::agent::ocr_read,
-            commands::agent::ocr_read_region,
             commands::agent::send_notification,
-            commands::agent::minimize_main_window,
-            commands::agent::restore_main_window,
-            commands::agent::show_agent_border,
-            commands::agent::hide_agent_border,
-            commands::input_guard::input_guard_start,
-            commands::input_guard::input_guard_stop,
-            commands::input_guard::input_guard_set_block,
-            commands::input_guard::input_guard_pause,
-            commands::input_guard::input_guard_resume,
-            commands::input_guard::input_guard_poll,
+            // ── browser (DOM/CDP automation — the GUI substitute) ────────────
             commands::browser::browser_open,
             commands::browser::browser_click,
             commands::browser::browser_type,
             commands::browser::browser_read,
             commands::browser::browser_key,
-            commands::browser::browser_screenshot,
             commands::browser::browser_wait,
             commands::browser::browser_probe,
             commands::browser::browser_close,
-            commands::agent::create_virtual_desktop,
-            commands::agent::switch_to_desktop,
-            commands::agent::close_virtual_desktop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

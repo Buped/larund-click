@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon, ClickMark } from './icons';
 import { RichMessage } from './rich-message';
 import { Sidebar } from './sidebar';
@@ -13,21 +14,108 @@ import type { UserCredits } from '../lib/supabase';
 
 function InlineModelPicker({ model, setModel }: { model: string; setModel: (m: string) => void }) {
   const [open, setOpen] = useState(false);
+  const [popoverStyle, setPopoverStyle] = useState<React.CSSProperties | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const cur = MODELS.find(m => m.id === model) || MODELS[1];
 
+  function updatePopoverPosition() {
+    const trigger = ref.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const gap = 10;
+    const viewportPad = 12;
+    const width = Math.min(282, Math.max(220, window.innerWidth - viewportPad * 2));
+    const height = popoverRef.current?.offsetHeight ?? 238;
+    const maxLeft = Math.max(viewportPad, window.innerWidth - width - viewportPad);
+    const left = Math.min(Math.max(rect.left, viewportPad), maxLeft);
+    const topAbove = rect.top - height - gap;
+    const top = topAbove >= viewportPad
+      ? topAbove
+      : Math.min(rect.bottom + gap, Math.max(viewportPad, window.innerHeight - height - viewportPad));
+
+    setPopoverStyle({
+      position: 'fixed',
+      top,
+      left,
+      width,
+      zIndex: 1000,
+      pointerEvents: 'auto',
+    });
+  }
+
   useEffect(() => {
-    const fn = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    if (!open) return;
+    updatePopoverPosition();
+
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node;
+      if (ref.current?.contains(target) || popoverRef.current?.contains(target)) return;
+      setOpen(false);
     };
-    document.addEventListener('mousedown', fn);
-    return () => document.removeEventListener('mousedown', fn);
-  }, []);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    const onReposition = () => updatePopoverPosition();
+
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    window.addEventListener('resize', onReposition);
+    window.addEventListener('scroll', onReposition, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('resize', onReposition);
+      window.removeEventListener('scroll', onReposition, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (open) updatePopoverPosition();
+  }, [open, model]);
+
+  const pickerPopover = open && popoverStyle ? createPortal(
+    <div
+      ref={popoverRef}
+      className="model-popover popover-in"
+      style={popoverStyle}
+      onPointerDown={e => e.stopPropagation()}
+    >
+      <div className="sec-label model-popover-title">Model</div>
+      {MODELS.map(m => {
+        const active = m.id === model;
+        return (
+          <button
+            key={m.id}
+            className={`model-option${active ? ' model-option--active' : ''}`}
+            onClick={() => { setModel(m.id); setOpen(false); }}
+          >
+            <span className="model-option-icon">
+              <Icon name={m.icon} size={14} stroke={1.5} />
+            </span>
+            <span className="model-option-main">
+              <span className="model-option-line">
+                <span className="model-option-name">{m.name}</span>
+                <span className="model-option-tag">- {m.tag}</span>
+              </span>
+              <span className="model-option-desc">{m.desc}</span>
+            </span>
+            <span className="model-option-cost">{m.cost}</span>
+          </button>
+        );
+      })}
+    </div>,
+    document.body,
+  ) : null;
 
   return (
     <div ref={ref} style={{ position: 'relative', flex: 'none' }}>
       <button
-        onClick={() => setOpen(v => !v)}
+        onClick={() => {
+          const nextOpen = !open;
+          if (nextOpen) updatePopoverPosition();
+          setOpen(nextOpen);
+        }}
         className="model-btn"
         style={{
           display: 'flex', alignItems: 'center', gap: 5,
@@ -43,7 +131,9 @@ function InlineModelPicker({ model, setModel }: { model: string; setModel: (m: s
         />
       </button>
 
-      {open && (
+      {pickerPopover}
+
+      {false && open && (
         <div
           className="fade-up"
           style={{
@@ -174,15 +264,38 @@ function NewChatPanel({ onStarter }: { onStarter: (p: string) => void }) {
 
 // ─── Agent step rendering ─────────────────────────────────────────────────────
 
+// Icons keyed by the no-mouse ControlAction names (see control-system/types.ts).
+// Unknown / unlisted actions fall back to 'circle'.
 const TOOL_ICONS: Record<string, string> = {
-  run_shell:     'command',
-  open_app:      'externalLink',
-  read_file:     'fileText',
-  write_file:    'upload',
-  list_dir:      'folder',
-  create_virtual_desktop: 'monitor',
-  task_complete: 'check',
-  ask_user:      'sparkle',
+  'cli.run':           'command',
+  'process.start':     'command',
+  'process.status':    'command',
+  'process.kill':      'command',
+  'file.read':         'fileText',
+  'file.write':        'upload',
+  'file.edit':         'upload',
+  'file.list':         'folder',
+  'file.tree':         'folder',
+  'file.search':       'folder',
+  'file.mkdir':        'folder',
+  'file.copy':         'folder',
+  'file.move':         'folder',
+  'file.delete':       'folder',
+  'sheet.read':        'fileText',
+  'sheet.write':       'upload',
+  'clipboard.get':     'fileText',
+  'clipboard.set':     'upload',
+  'app.open':          'externalLink',
+  'window.focus':      'monitor',
+  'window.list':       'monitor',
+  'browser.open':      'externalLink',
+  'browser.read':      'fileText',
+  'connection.call':   'externalLink',
+  'skill.run':         'sparkle',
+  'workflow.start':    'monitor',
+  'approval.request':  'sparkle',
+  'task.complete':     'check',
+  'ask_user':          'sparkle',
 };
 
 function AgentStepItem({ step }: { step: AgentStep }) {
@@ -190,7 +303,7 @@ function AgentStepItem({ step }: { step: AgentStep }) {
 
   if (step.type === 'thinking') {
     return (
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, padding: '3px 0 3px 0' }}>
+      <div className="agent-step-item" style={{ display: 'flex', alignItems: 'flex-start', gap: 6, padding: '3px 0 3px 0' }}>
         <span style={{
           width: 18, height: 18, borderRadius: 4, flex: 'none',
           display: 'grid', placeItems: 'center',
@@ -216,7 +329,7 @@ function AgentStepItem({ step }: { step: AgentStep }) {
     } catch { /* ignore */ }
 
     return (
-      <div>
+      <div className="agent-step-item">
         <button
           onClick={() => step.input && setOpen(v => !v)}
           style={{
@@ -280,7 +393,7 @@ function AgentStepItem({ step }: { step: AgentStep }) {
     const hasMore = rawText.length > 90;
 
     return (
-      <div>
+      <div className="agent-step-item">
         <button
           onClick={() => hasMore && setOpen(v => !v)}
           style={{
@@ -329,19 +442,6 @@ function AgentStepItem({ step }: { step: AgentStep }) {
           }}>
             {rawText}
           </pre>
-        )}
-        {step.screenshotBase64 && (
-          <img
-            src={`data:image/jpeg;base64,${step.screenshotBase64}`}
-            alt="screenshot"
-            style={{
-              display: 'block',
-              margin: '4px 0 4px 29px',
-              maxWidth: 'calc(100% - 29px)',
-              borderRadius: 6,
-              border: '1px solid rgba(255,255,255,0.08)',
-            }}
-          />
         )}
       </div>
     );
@@ -413,7 +513,7 @@ function AgentMsgContent({
         <div style={{ flex: 1 }} />
 
         {/* Stop button — visible while running */}
-        {isRunning && (
+        {false && isRunning && (
           <button
             onClick={onStop}
             style={{
@@ -431,7 +531,7 @@ function AgentMsgContent({
             Stop
           </button>
         )}
-        {isRunning && (
+        {false && isRunning && (
           <span style={{ fontSize: 10.5, color: 'var(--text-hint)', marginLeft: 6 }}>
             vagy ESC
           </span>
@@ -541,9 +641,15 @@ type Message = {
   _agentAskQuestion?: string | null;
 };
 
-function stripScreenshotFromStep(step: AgentStep): Omit<AgentStep, 'screenshotBase64'> {
-  const { screenshotBase64, ...rest } = step;
-  return rest;
+type RunningTask = {
+  kind: 'chat' | 'agent';
+  assistantMessageId: string;
+  sessionId: string;
+};
+
+// No-mouse core no longer produces screenshots; persist steps as-is.
+function stripScreenshotFromStep(step: AgentStep): AgentStep {
+  return step;
 }
 
 function parseAgentSteps(raw?: string | null): AgentStep[] {
@@ -596,12 +702,14 @@ export function ChatScreen({
   const [copiedId,          setCopiedId         ] = useState<string | null>(null);
   const [agentMode,         setAgentMode        ] = useState(false);
   const [agentAskAnswer,    setAgentAskAnswer   ] = useState('');
+  const [runningTask,       setRunningTask      ] = useState<RunningTask | null>(null);
 
   const taRef         = useRef<HTMLTextAreaElement>(null);
   const fileRef       = useRef<HTMLInputElement>(null);
   const bottomRef     = useRef<HTMLDivElement>(null);
   const skipNextFetch = useRef(false);
   const abortRef      = useRef<AgentAbortSignal>({ aborted: false });
+  const chatAbortRef  = useRef<AbortController | null>(null);
   const askResolveRef = useRef<((answer: string) => void) | null>(null);
 
   useEffect(() => {
@@ -659,8 +767,44 @@ export function ChatScreen({
     });
   }
 
-  function handleAgentStop() {
+  function handleStop() {
+    if (!runningTask) return;
+
+    setSending(false);
+    setRunningTask(null);
+
+    if (runningTask.kind === 'chat') {
+      chatAbortRef.current?.abort();
+      setMessages(prev => prev.map(m =>
+        m.id === runningTask.assistantMessageId
+          ? { ...m, content: m.content || 'Stopped.', streaming: false }
+          : m,
+      ));
+      return;
+    }
+
     abortRef.current.aborted = true;
+    if (askResolveRef.current) {
+      askResolveRef.current('Stopped by user.');
+      askResolveRef.current = null;
+      setAgentAskAnswer('');
+    }
+
+    setMessages(prev => prev.map(m =>
+      m.id === runningTask.assistantMessageId
+        ? { ...m, content: 'Stopped.', _agentStatus: 'complete', _agentAskQuestion: null }
+        : m,
+    ));
+    updateMessage(runningTask.assistantMessageId, {
+      content: 'Stopped.',
+      message_type: 'agent',
+      agent_status: 'complete',
+      agent_ask_question: null,
+    }).catch(err => console.warn('Failed to persist stopped agent message:', err));
+  }
+
+  function handleAgentStop() {
+    handleStop();
   }
 
   function handleAskSubmit() {
@@ -763,6 +907,7 @@ export function ChatScreen({
             { content: summary, _agentStatus: 'complete', _agentAskQuestion: null },
           );
           setSending(false);
+          setRunningTask(prev => prev?.assistantMessageId === asstMsgId ? null : prev);
           onCreditsRefresh?.();
         },
 
@@ -772,6 +917,7 @@ export function ChatScreen({
             { content: err, _agentStatus: 'error', _error: true, _agentAskQuestion: null },
           );
           setSending(false);
+          setRunningTask(prev => prev?.assistantMessageId === asstMsgId ? null : prev);
           onCreditsRefresh?.();
         },
       },
@@ -783,8 +929,9 @@ export function ChatScreen({
 
   async function handleSend() {
     const text = input.trim();
-    if (!text || sending || !userId) return;
+    if (!text || sending || runningTask || !userId) return;
 
+    let currentTaskId: string | null = null;
     setSending(true);
     setInput('');
     if (taRef.current) taRef.current.style.height = 'auto';
@@ -816,11 +963,13 @@ export function ChatScreen({
     // ── Agent mode path ──
     if (agentMode) {
       const asstMsgId = uuidv4();
+      currentTaskId = asstMsgId;
       setMessages(prev => [...prev, {
         id: asstMsgId, session_id: sessionId!, role: 'assistant',
         content: '', created_at: new Date().toISOString(),
         _agent: true, _agentStatus: 'planning', _agentSteps: [],
       }]);
+      setRunningTask({ kind: 'agent', assistantMessageId: asstMsgId, sessionId: sessionId! });
       await addMessage(asstMsgId, sessionId, 'assistant', '', {
         message_type: 'agent',
         agent_status: 'planning',
@@ -833,10 +982,12 @@ export function ChatScreen({
 
     // ── Normal chat path ──
     const asstMsgId = uuidv4();
+    currentTaskId = asstMsgId;
     setMessages(prev => [...prev, {
       id: asstMsgId, session_id: sessionId!, role: 'assistant',
       content: '', created_at: new Date().toISOString(), streaming: true,
     }]);
+    setRunningTask({ kind: 'chat', assistantMessageId: asstMsgId, sessionId: sessionId! });
 
     const history = messages
       .filter(m => !m._loading && !m.streaming && !m._agent && m.content)
@@ -845,6 +996,8 @@ export function ChatScreen({
 
     const serviceTier = 'service_tier' in modelDef ? (modelDef as any).service_tier : undefined;
     let fullContent = '';
+    const controller = new AbortController();
+    chatAbortRef.current = controller;
 
     await callOpenRouter(
       history,
@@ -866,6 +1019,7 @@ export function ChatScreen({
           console.warn('Failed to save assistant message:', err),
         );
         setSending(false);
+        setRunningTask(prev => prev?.assistantMessageId === asstMsgId ? null : prev);
         onCreditsRefresh?.();
       },
       (error) => {
@@ -875,11 +1029,24 @@ export function ChatScreen({
             : m,
         ));
         setSending(false);
+        setRunningTask(prev => prev?.assistantMessageId === asstMsgId ? null : prev);
       },
       serviceTier,
+      controller.signal,
     );
+    if (controller.signal.aborted) {
+      const stoppedContent = fullContent.trim() ? fullContent : 'Stopped.';
+      setMessages(prev => prev.map(m =>
+        m.id === asstMsgId ? { ...m, content: stoppedContent, streaming: false } : m,
+      ));
+      await addMessage(asstMsgId, sessionId!, 'assistant', stoppedContent).catch(err =>
+        console.warn('Failed to save stopped assistant message:', err),
+      );
+    }
     } finally {
+      chatAbortRef.current = null;
       setSending(false);
+      setRunningTask(prev => prev?.assistantMessageId === currentTaskId ? null : prev);
     }
   }
 
@@ -1003,8 +1170,7 @@ export function ChatScreen({
         <div className="chat-footer">
           <div className="chat-col">
             <div
-              className="chat-input-box"
-              style={agentMode ? { borderColor: 'rgba(74,158,255,.35)', boxShadow: '0 0 0 3px rgba(74,158,255,.07)' } : undefined}
+              className={`chat-input-box${agentMode ? ' chat-input-box--agent' : ''}${runningTask ? ' chat-input-box--working' : ''}`}
             >
 
               {/* Attachment previews */}
@@ -1044,7 +1210,7 @@ export function ChatScreen({
               />
 
               {/* Toolbar */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+              <div className="chat-toolbar">
                 <InlineModelPicker model={model} setModel={setModel} />
 
                 {/* Agent mode toggle — ⚡ zap icon */}
@@ -1083,12 +1249,14 @@ export function ChatScreen({
                 </button>
 
                 <button
-                  className="send-btn"
-                  onClick={handleSend}
-                  disabled={sending || !input.trim() || !userId}
-                  title="Send (Enter)"
+                  className={`send-btn${runningTask ? ' send-btn--stop send-stop-swap' : ''}`}
+                  onClick={runningTask ? handleStop : handleSend}
+                  disabled={!runningTask && (sending || !input.trim() || !userId)}
+                  title={runningTask ? 'Stop' : 'Send (Enter)'}
                 >
-                  {agentMode
+                  {runningTask
+                    ? <Icon name="stop" size={12} stroke={2.4} />
+                    : agentMode
                     ? <Icon name="zap" size={14} stroke={2} />
                     : <Icon name="arrowUp" size={15} stroke={2.2} />
                   }

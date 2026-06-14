@@ -1,157 +1,229 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ControlAction, ControlToolResult } from './types';
-import { runSocPortLoop } from '../soc-port/loop';
+import type { ToolContext } from '../tools/types';
 
-export async function executeControlAction(
-  action: ControlAction,
-  ctx: {
-    userId: string;
-    addCost: (usd: number) => void;
-    task: string;
-    onSocStep?: (step: {
-      type: 'tool_call' | 'tool_result' | 'thinking' | 'complete' | 'error';
-      tool?: string;
-      input?: string;
-      output?: string;
-      error?: string;
-      screenshotBase64?: string;
-      details?: Record<string, unknown>;
-    }) => void;
-    onAskUser?: (question: string) => Promise<string>;
-  },
-): Promise<ControlToolResult> {
+const ERR = (error: string): ControlToolResult => ({ success: false, output: '', error });
+
+async function tryInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
+  try {
+    const value = await invoke<T>(cmd, args);
+    return { ok: true, value };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Performs a single no-mouse action. This is a pure dispatcher: policy, approval
+ * and audit gating happen in tools/run.ts before this is called. There is no
+ * mouse / cursor / screenshot / visual case anywhere here, by design.
+ */
+export async function performControlAction(action: ControlAction, ctx: ToolContext): Promise<ControlToolResult> {
   switch (action.action) {
+    // ── runtime ──────────────────────────────────────────────────────────
     case 'cli.run': {
-      if (/^\s*(cmd\s+\/c\s+)?start\s+/i.test(action.cmd)) {
-        return { success: false, output: '', error: 'desktop_app_launch_must_use_app_open' };
-      }
-      const result = await invoke<{ stdout: string; stderr: string; exit_code: number; success: boolean }>('shell_run', {
-        command: action.cmd,
-        workingDir: action.working_dir ?? null,
+      const r = await tryInvoke<{ stdout: string; stderr: string; exit_code: number; success: boolean }>('shell_run', {
+        command: action.cmd, workingDir: action.working_dir ?? null,
       });
-      return { success: result.success, output: result.stdout || result.stderr, error: result.success ? undefined : result.stderr };
+      if (!r.ok) return ERR(r.error);
+      return { success: r.value.success, output: r.value.stdout || r.value.stderr, error: r.value.success ? undefined : r.value.stderr };
     }
+    case 'process.start': {
+      const r = await tryInvoke<string>('process_start', {
+        command: action.cmd, workingDir: action.working_dir ?? null, background: action.background ?? true,
+      });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'process.status': {
+      const r = await tryInvoke<string>('process_status', { processId: action.process_id });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'process.kill': {
+      const r = await tryInvoke<string>('process_kill', { processId: action.process_id });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+
+    // ── files ────────────────────────────────────────────────────────────
     case 'file.read': {
-      const content = await invoke<string>('file_read', { path: action.path });
-      return { success: true, output: content };
+      const r = await tryInvoke<string>('file_read', { path: action.path });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
     }
     case 'file.write': {
-      await invoke('file_write', { path: action.path, content: action.content });
-      return { success: true, output: `Written to ${action.path}` };
+      const r = await tryInvoke<void>('file_write', { path: action.path, content: action.content });
+      return r.ok ? { success: true, output: `Wrote ${action.path}` } : ERR(r.error);
+    }
+    case 'file.edit': {
+      const read = await tryInvoke<string>('file_read', { path: action.path });
+      if (!read.ok) return ERR(read.error);
+      let next = read.value;
+      if (typeof action.find === 'string') {
+        if (!next.includes(action.find)) return ERR(`find text not present in ${action.path}`);
+        next = next.split(action.find).join(action.replace ?? '');
+      } else if (action.patch) {
+        next = action.patch; // treat patch as full replacement content
+      } else {
+        return ERR('file.edit requires find/replace or patch');
+      }
+      const w = await tryInvoke<void>('file_write', { path: action.path, content: next });
+      return w.ok ? { success: true, output: `Edited ${action.path}` } : ERR(w.error);
     }
     case 'file.list': {
-      const files = await invoke<string[]>('dir_list', { path: action.path });
-      return { success: true, output: files.join('\n') };
+      const r = await tryInvoke<string[]>('dir_list', { path: action.path });
+      return r.ok ? { success: true, output: r.value.join('\n') } : ERR(r.error);
     }
+    case 'file.mkdir': {
+      const r = await tryInvoke<string>('fs_mkdir', { path: action.path, recursive: action.recursive ?? true });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'file.copy': {
+      const r = await tryInvoke<string>('fs_copy', { from: action.from, to: action.to });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'file.move': {
+      const r = await tryInvoke<string>('fs_move', { from: action.from, to: action.to });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'file.delete': {
+      const r = await tryInvoke<string>('fs_delete', { path: action.path, recursive: action.recursive ?? false });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'file.search': {
+      const r = await tryInvoke<string>('fs_search', { path: action.path, query: action.query, glob: action.glob ?? null });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'file.tree': {
+      const r = await tryInvoke<string>('fs_tree', { path: action.path, depth: action.depth ?? 2 });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'file.exists': {
+      const r = await tryInvoke<boolean>('fs_exists', { path: action.path });
+      return r.ok ? { success: true, output: String(r.value) } : ERR(r.error);
+    }
+    case 'file.metadata': {
+      const r = await tryInvoke<string>('fs_metadata', { path: action.path });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+
+    // ── data ─────────────────────────────────────────────────────────────
     case 'sheet.read': {
-      const output = await invoke<string>('sheet_read', {
-        path: action.path,
-        sheet: action.sheet ?? null,
-        maxRows: action.max_rows ?? null,
-      });
-      return { success: true, output };
+      const r = await tryInvoke<string>('sheet_read', { path: action.path, sheet: action.sheet ?? null, maxRows: action.max_rows ?? null });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
     }
     case 'sheet.write': {
-      const output = await invoke<string>('sheet_write', {
-        path: action.path,
-        sheet: action.sheet ?? null,
-        rows: action.rows ?? null,
-        cells: null,
-        startCell: action.start_cell ?? null,
-        mode: action.mode ?? null,
+      const r = await tryInvoke<string>('sheet_write', {
+        path: action.path, sheet: action.sheet ?? null, rows: action.rows ?? null,
+        cells: null, startCell: action.start_cell ?? null, mode: action.mode ?? null,
       });
-      return { success: true, output };
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
     }
+
+    // ── clipboard ──────────────────────────────────────────────────────────
     case 'clipboard.get': {
-      const text = await invoke<string>('clipboard_get');
-      return { success: true, output: text };
+      const r = await tryInvoke<string>('clipboard_get');
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
     }
     case 'clipboard.set': {
-      await invoke('clipboard_set', { text: action.text });
-      return { success: true, output: 'Clipboard set' };
+      const r = await tryInvoke<void>('clipboard_set', { text: action.text });
+      return r.ok ? { success: true, output: 'Clipboard set' } : ERR(r.error);
     }
+
+    // ── apps / windows / keyboard ──────────────────────────────────────────
     case 'app.open': {
-      const output = await invoke<string>('desktop_open_app', {
-        name: action.name ?? null,
-        appId: action.app_id ?? null,
-      });
-      return { success: true, output };
+      const r = await tryInvoke<string>('desktop_open_app', { name: action.name ?? action.uri ?? action.path ?? null, appId: action.app_id ?? null });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
     }
     case 'window.list': {
-      const titles = await invoke<string[]>('get_window_list');
-      return { success: true, output: titles.join('\n') };
+      const r = await tryInvoke<string[]>('get_window_list');
+      return r.ok ? { success: true, output: r.value.join('\n') } : ERR(r.error);
     }
     case 'window.focus': {
-      await invoke('focus_window', { title: action.title });
-      return { success: true, output: `Focused window: ${action.title}` };
-    }
-    case 'browser.open': {
-      const output = await invoke<string>('browser_open', { url: action.url });
-      return { success: true, output };
-    }
-    case 'browser.read': {
-      const output = await invoke<string>('browser_read');
-      return { success: true, output };
-    }
-    case 'browser.click': {
-      try {
-        const output = await invoke<string>('browser_click', { target: action.target });
-        return { success: true, output };
-      } catch (err) {
-        return { success: false, output: '', error: String(err) };
-      }
-    }
-    case 'browser.type': {
-      try {
-        const output = await invoke<string>('browser_type', { target: action.target, text: action.text });
-        return { success: true, output };
-      } catch (err) {
-        return { success: false, output: '', error: String(err) };
-      }
-    }
-    case 'browser.key': {
-      try {
-        const output = await invoke<string>('browser_key', { key: action.key });
-        return { success: true, output };
-      } catch (err) {
-        return { success: false, output: '', error: String(err) };
-      }
-    }
-    case 'browser.wait': {
-      const output = await invoke<string>('browser_wait', {
-        text: action.text ?? null,
-        seconds: action.seconds ?? null,
-      });
-      return { success: true, output };
-    }
-    case 'soc.visual': {
-      const result = await runSocPortLoop(action.objective || ctx.task, ctx.userId, {
-        addCost: ctx.addCost,
-        onStep: ctx.onSocStep,
-      });
-      return {
-        success: result.success,
-        output: result.success
-          ? `soc_visual_complete: ${result.summary}; debug=${result.debugDir}`
-          : `soc_visual_failed: ${result.error}; debug=${result.debugDir}`,
-        error: result.success ? undefined : result.error,
-        screenshot: result.screenshot,
-        details: { mode: 'soc_visual', implementation: 'soc-port', history: result.history, debugDir: result.debugDir },
-      };
+      const r = await tryInvoke<void>('focus_window', { title: action.title });
+      return r.ok ? { success: true, output: `Focused: ${action.title}` } : ERR(r.error);
     }
     case 'keyboard.press': {
-      await invoke('key_press', { key: action.key });
-      return { success: true, output: `Key pressed: ${action.key}` };
+      const r = await tryInvoke<void>('key_press', { key: action.key });
+      return r.ok ? { success: true, output: `Key: ${action.key}` } : ERR(r.error);
     }
     case 'keyboard.combo': {
-      await invoke('key_combo', { keys: action.keys });
-      return { success: true, output: `Key combo: ${action.keys.join('+')}` };
+      const r = await tryInvoke<void>('key_combo', { keys: action.keys });
+      return r.ok ? { success: true, output: `Combo: ${action.keys.join('+')}` } : ERR(r.error);
     }
+
+    // ── browser ────────────────────────────────────────────────────────────
+    case 'browser.open': {
+      const r = await tryInvoke<string>('browser_open', { url: action.url });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'browser.read': {
+      const r = await tryInvoke<string>('browser_read', { selector: action.selector ?? null });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'browser.click': {
+      const r = await tryInvoke<string>('browser_click', { target: action.target });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'browser.type': {
+      const r = await tryInvoke<string>('browser_type', { target: action.target, text: action.text });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'browser.key': {
+      const r = await tryInvoke<string>('browser_key', { key: action.key });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'browser.wait': {
+      const r = await tryInvoke<string>('browser_wait', { text: action.text ?? null, selector: action.selector ?? null, seconds: action.seconds ?? null });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'browser.extract_table': {
+      const r = await tryInvoke<string>('browser_extract_table', { selector: action.selector ?? null });
+      // Fall back to a DOM read if the dedicated command is unavailable.
+      if (!r.ok) {
+        const read = await tryInvoke<string>('browser_read', { selector: action.selector ?? null });
+        return read.ok ? { success: true, output: read.value } : ERR(r.error);
+      }
+      return { success: true, output: r.value };
+    }
+    case 'browser.download': {
+      const r = await tryInvoke<string>('browser_download', { url: action.url ?? null, target: action.target ?? null, saveAs: action.save_as ?? null });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'browser.upload': {
+      const r = await tryInvoke<string>('browser_upload', { target: action.target, path: action.path });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+
+    // ── connections / skills / workflows ───────────────────────────────────
+    case 'connection.call': {
+      if (!ctx.connections) return ERR('connections_unavailable');
+      const r = await ctx.connections.call(action.connection, action.tool, action.args ?? {});
+      return { success: r.success, output: r.output, error: r.error, details: r.details };
+    }
+    case 'skill.run': {
+      if (!ctx.skills) return ERR('skills_unavailable');
+      return ctx.skills.run(action.skill, action.input);
+    }
+    case 'workflow.start': {
+      if (!ctx.workflows) return ERR('workflows_unavailable');
+      return ctx.workflows.start(action.workflow, action.input);
+    }
+    case 'workflow.status': {
+      if (!ctx.workflows) return ERR('workflows_unavailable');
+      return ctx.workflows.status(action.workflow_id);
+    }
+    case 'workflow.cancel': {
+      if (!ctx.workflows) return ERR('workflows_unavailable');
+      return ctx.workflows.cancel(action.workflow_id);
+    }
+
+    // ── control flow ───────────────────────────────────────────────────────
+    case 'approval.request':
+      return { success: true, output: action.reason, approvalRequired: true, details: { proposed_action: action.proposed_action } };
     case 'task.complete':
       return { success: true, output: action.summary };
     case 'ask_user':
       return { success: true, output: action.question };
+
     default:
-      return { success: false, output: '', error: 'unknown_control_action' };
+      return ERR('unknown_control_action');
   }
 }

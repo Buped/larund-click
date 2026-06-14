@@ -1,25 +1,31 @@
-import { invoke } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
 import { callOpenRouterWithTools, type MessageContent } from '../openrouter';
 import { supabase } from '../supabase';
 import { CONTROL_SYSTEM_PROMPT } from './prompt';
-import { executeControlAction } from './executor';
-import { isRawMouseActionName, parseControlAction } from './parser';
+import { parseControlAction, isLegacyVisualActionName } from './parser';
 import type { ControlAction } from './types';
-import { routeHighLevel } from '../soc-port/router';
+import { runControlAction } from '../tools/run';
+import { MemoryAuditLogger } from '../tools/audit';
+import { PromptApprovalService } from '../tools/approvals';
+import { DEFAULT_POLICY, type RiskPolicy } from '../tools/policy';
+import { toolCatalogSummary } from '../tools/registry';
+import type { AuditEntry, ConnectionRegistry, SkillRunner, WorkflowRunner } from '../tools/types';
+import { createConnectionRegistry } from '../connections/registry';
+import { createSkillRunner } from '../skills/runner';
+import { createWorkflowRunner } from '../workflows/runner';
 
 export type AgentStatus = 'idle' | 'planning' | 'executing' | 'waiting_user' | 'complete' | 'error';
 export type AutonomyMode = 'full' | 'semi' | 'manual';
 
 export interface AgentStep {
   id: string;
-  type: 'tool_call' | 'tool_result' | 'thinking' | 'complete' | 'error';
+  type: 'tool_call' | 'tool_result' | 'thinking' | 'complete' | 'error' | 'approval';
   tool?: string;
   input?: string;
   output?: string;
   error?: string;
   timestamp: string;
-  screenshotBase64?: string;
+  risk?: string;
   details?: Record<string, unknown>;
 }
 
@@ -29,10 +35,22 @@ export interface AgentLoopCallbacks {
   onAskUser: (question: string) => Promise<string>;
   onComplete: (summary: string) => void;
   onError: (error: string) => void;
+  /** Optional dedicated approval prompt. Falls back to onAskUser yes/no. */
+  onApproval?: (req: { action: string; risk: string; reason: string; argsSummary: string }) => Promise<'allow_once' | 'allow_always' | 'deny'>;
+  onAudit?: (entry: AuditEntry) => void;
 }
 
 export interface AgentAbortSignal {
   aborted: boolean;
+}
+
+export interface RunOptions {
+  policy?: RiskPolicy;
+  sessionId?: string;
+  workspaceRoot?: string;
+  connections?: ConnectionRegistry;
+  skills?: SkillRunner;
+  workflows?: WorkflowRunner;
 }
 
 const MAX_ITERATIONS = 40;
@@ -45,41 +63,8 @@ async function updateOverlay(state: object): Promise<void> {
   try { await emit('agent-overlay-update', state); } catch { /* optional */ }
 }
 
-async function minimizeMainWindow(): Promise<void> {
-  try { await invoke('minimize_main_window'); } catch { /* optional */ }
-}
-
-async function restoreMainWindow(): Promise<void> {
-  try { await invoke('restore_main_window'); } catch { /* optional */ }
-}
-
-async function guardStart(): Promise<void> {
-  try { await invoke('input_guard_start'); } catch { /* optional */ }
-}
-
-async function guardStop(): Promise<void> {
-  try { await invoke('input_guard_stop'); } catch { /* optional */ }
-}
-
-async function guardPause(): Promise<void> {
-  try { await invoke('input_guard_pause'); } catch { /* optional */ }
-}
-
-async function guardSetBlock(on: boolean): Promise<void> {
-  try { await invoke('input_guard_set_block', { on }); } catch { /* optional */ }
-}
-
-async function sendRunningNotification(): Promise<void> {
-  try {
-    await invoke('send_notification', {
-      title: 'Larund Click',
-      message: 'Az AI most a kepernyot vezerli - nyomj ESC-et a leallitashoz.',
-    });
-  } catch { /* optional */ }
-}
-
 async function finalDeduct(userId: string, costUsd: number): Promise<void> {
-  if (costUsd <= 0) return;
+  if (costUsd <= 0 || !userId) return;
   try {
     await supabase.rpc('deduct_uc_credits', { p_user_id: userId, p_cost_usd: costUsd });
   } catch (err) {
@@ -87,21 +72,13 @@ async function finalDeduct(userId: string, costUsd: number): Promise<void> {
   }
 }
 
-// Actions that act on the live foreground desktop: minimize our chat window and
-// engage the input guard. Browser (CDP), data I/O, and window.list need neither.
-function actionTouchesScreen(action: ControlAction): boolean {
-  return action.action === 'app.open'
-    || action.action === 'window.focus'
-    || action.action === 'soc.visual'
-    || action.action === 'keyboard.press'
-    || action.action === 'keyboard.combo';
-}
-
-// Actions that inject mouse/keyboard input: block physical input during the burst.
-function actionInjectsInput(action: ControlAction): boolean {
-  return action.action === 'soc.visual'
-    || action.action === 'keyboard.press'
-    || action.action === 'keyboard.combo';
+async function completeStopped(
+  onStatus: AgentLoopCallbacks['onStatus'],
+  onComplete: AgentLoopCallbacks['onComplete'],
+): Promise<void> {
+  await updateOverlay({ active: false, status: 'complete' });
+  onStatus('complete');
+  onComplete('Stopped.');
 }
 
 export async function runControlLoop(
@@ -110,52 +87,51 @@ export async function runControlLoop(
   userId: string,
   callbacks: AgentLoopCallbacks,
   signal?: AgentAbortSignal,
-  _autonomyMode: AutonomyMode = 'semi',
+  opts: RunOptions = {},
 ): Promise<void> {
   const { onStatus, onStep, onAskUser, onComplete, onError } = callbacks;
   const steps: AgentStep[] = [];
-  const emitStep = (step: AgentStep) => {
-    steps.push(step);
-    onStep(step);
-  };
+  const emitStep = (step: AgentStep) => { steps.push(step); onStep(step); };
 
   let totalCostUsd = 0;
-  let screenPrepared = false;
-  let lastSuccessfulAction = '';
+  const policy = opts.policy ?? DEFAULT_POLICY;
+  const sessionId = opts.sessionId ?? `sess-${Date.now()}`;
+  const workspaceRoot = opts.workspaceRoot ?? '~';
 
-  const cleanup = async () => {
-    await guardStop();
-    if (screenPrepared) await restoreMainWindow();
-    await updateOverlay({ active: false, status: 'idle', task, steps });
-  };
+  const audit = new MemoryAuditLogger((entry) => callbacks.onAudit?.(entry));
+  const approvals = new PromptApprovalService(async (req) => {
+    if (callbacks.onApproval) {
+      return callbacks.onApproval({ action: req.action.action, risk: req.risk, reason: req.reason, argsSummary: req.argsSummary });
+    }
+    emitStep({ id: nowStepId('approval'), type: 'approval', tool: req.action.action, risk: req.risk, output: req.reason, timestamp: new Date().toISOString() });
+    const answer = await onAskUser(`Approval needed for ${req.action.action} (${req.risk}). ${req.reason}\nArgs: ${req.argsSummary}\nReply "yes" to allow.`);
+    return /^\s*(y|yes|allow|ok)/i.test(answer) ? 'allow_once' : 'deny';
+  });
 
-  const ensureScreenPrepared = async () => {
-    if (screenPrepared) return;
-    screenPrepared = true;
-    await minimizeMainWindow();
-    await guardStart();
-    await sendRunningNotification();
-    await new Promise((resolve) => setTimeout(resolve, 600));
-  };
+  const connections = opts.connections ?? createConnectionRegistry(userId);
+  const skills = opts.skills ?? createSkillRunner();
+  const workflows = opts.workflows ?? createWorkflowRunner();
+
+  const ctx = { userId, sessionId, workspaceRoot, task, audit, approvals, connections, skills, workflows, onAskUser, addCost: (usd: number) => { totalCostUsd += usd; } };
 
   onStatus('planning');
   emitStep({
     id: nowStepId('mode'),
     type: 'thinking',
-    output: 'Feladat modja: hybrid CLI + SOC. Determinisztikus reszek CLI/browser/file/app toolokkal; vizualis kurzorvezerles csak SOC screenshot -> OCR/label -> action loopon keresztul.',
+    output: 'No-mouse operator. Working via CLI, files, browser DOM, apps, connections and skills. No mouse/cursor/visual control.',
     timestamp: new Date().toISOString(),
   });
   await updateOverlay({ active: true, status: 'planning', task, steps });
 
+  const systemPrompt = `${CONTROL_SYSTEM_PROMPT}\n\n## Tool catalog\n${toolCatalogSummary()}\n\n## Workspace\n${workspaceRoot}\n\n## Task\n${task}`;
   const messages: { role: 'user' | 'assistant' | 'system'; content: MessageContent }[] = [
-    { role: 'system', content: `${CONTROL_SYSTEM_PROMPT}\n\nTask: ${task}` },
+    { role: 'system', content: systemPrompt },
     { role: 'user', content: task },
   ];
 
   for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     if (signal?.aborted) {
-      await cleanup();
-      onError('Task stopped by user.');
+      await completeStopped(onStatus, onComplete);
       return;
     }
 
@@ -164,62 +140,55 @@ export async function runControlLoop(
 
     let aiResponse = '';
     let streamError = '';
-    await callOpenRouterWithTools(
-      messages,
-      modelId,
-      userId,
-      (chunk) => { aiResponse += chunk; },
-      (usage) => { totalCostUsd += usage.costUsd; },
-      (err) => { streamError = err; },
-      false,
-    );
-    if (streamError) {
-      await cleanup();
-      onError(streamError);
+    const streamController = new AbortController();
+    const abortPoll = globalThis.setInterval(() => {
+      if (signal?.aborted) streamController.abort();
+    }, 60);
+    try {
+      await callOpenRouterWithTools(
+        messages, modelId, userId,
+        (chunk) => { aiResponse += chunk; },
+        (usage) => { totalCostUsd += usage.costUsd; },
+        (err) => { streamError = err; },
+        false,
+        streamController.signal,
+      );
+    } finally {
+      globalThis.clearInterval(abortPoll);
+    }
+    if (signal?.aborted) {
+      await completeStopped(onStatus, onComplete);
       return;
+    }
+    if (streamError) { onError(streamError); await updateOverlay({ active: false }); return; }
+
+    // Reject any retired mouse/cursor/visual action by name before parsing.
+    const attempted = aiResponse.match(/"(?:action|tool)"\s*:\s*"([^"]+)"/)?.[1] ?? '';
+    if (attempted && isLegacyVisualActionName(attempted)) {
+      messages.push({ role: 'assistant', content: aiResponse });
+      messages.push({ role: 'user', content: `Rejected "${attempted}": this is a no-mouse operator. There is no mouse/cursor/visual control. Use CLI, files, browser DOM, connections, skills — or ask_user for a manual handoff.` });
+      emitStep({ id: nowStepId('legacy-blocked'), type: 'error', tool: attempted, error: 'mouse_cursor_visual_not_supported', timestamp: new Date().toISOString() });
+      continue;
     }
 
     const action = parseControlAction(aiResponse);
-    const rawToolAttempt = aiResponse.match(/"tool"\s*:\s*"([^"]+)"/)?.[1] ?? '';
-    if (rawToolAttempt && isRawMouseActionName(rawToolAttempt)) {
-      messages.push({ role: 'assistant', content: aiResponse });
-      messages.push({ role: 'user', content: `Rejected raw/legacy mouse tool "${rawToolAttempt}". Use soc.visual for visual cursor control.` });
-      emitStep({
-        id: nowStepId('raw-blocked'),
-        type: 'error',
-        tool: rawToolAttempt,
-        error: 'raw_mouse_tool_not_available',
-        timestamp: new Date().toISOString(),
-      });
-      continue;
-    }
     if (!action) {
       messages.push({ role: 'assistant', content: aiResponse });
       messages.push({ role: 'user', content: 'Invalid action JSON. Return exactly one allowed action object with an "action" field.' });
-      emitStep({
-        id: nowStepId('parse-error'),
-        type: 'error',
-        error: 'invalid_control_action',
-        output: aiResponse.slice(0, 500),
-        timestamp: new Date().toISOString(),
-      });
+      emitStep({ id: nowStepId('parse-error'), type: 'error', error: 'invalid_control_action', output: aiResponse.slice(0, 500), timestamp: new Date().toISOString() });
       continue;
     }
 
     const stepId = nowStepId('action');
-    emitStep({
-      id: stepId,
-      type: 'tool_call',
-      tool: action.action,
-      input: JSON.stringify(action, null, 2),
-      timestamp: new Date().toISOString(),
-    });
+    emitStep({ id: stepId, type: 'tool_call', tool: action.action, input: JSON.stringify(action, null, 2), timestamp: new Date().toISOString() });
 
     if (action.action === 'ask_user') {
       onStatus('waiting_user');
-      await guardPause();
-      await restoreMainWindow();
       const answer = await onAskUser(action.question);
+      if (signal?.aborted) {
+        await completeStopped(onStatus, onComplete);
+        return;
+      }
       messages.push({ role: 'assistant', content: aiResponse });
       messages.push({ role: 'user', content: `User answered: ${answer}` });
       continue;
@@ -227,35 +196,18 @@ export async function runControlLoop(
 
     if (action.action === 'task.complete') {
       await finalDeduct(userId, totalCostUsd);
-      emitStep({
-        id: nowStepId('complete'),
-        type: 'complete',
-        output: action.summary,
-        timestamp: new Date().toISOString(),
-      });
-      await cleanup();
+      emitStep({ id: nowStepId('complete'), type: 'complete', output: action.summary, timestamp: new Date().toISOString() });
+      await updateOverlay({ active: false, status: 'complete', task, steps });
       onStatus('complete');
       onComplete(action.summary);
       return;
     }
 
-    if (actionTouchesScreen(action)) await ensureScreenPrepared();
-    const inputAction = actionInjectsInput(action);
-    if (inputAction) await guardSetBlock(true);
-    let result;
-    try {
-      result = await executeControlAction(action, {
-        userId,
-        task,
-        addCost: (usd) => { totalCostUsd += usd; },
-        onAskUser,
-        onSocStep: (step) => emitStep({ id: nowStepId('soc-inner'), timestamp: new Date().toISOString(), ...step }),
-      });
-    } finally {
-      if (inputAction) await guardSetBlock(false);
+    const result = await runControlAction(action as ControlAction, ctx, policy);
+    if (signal?.aborted) {
+      await completeStopped(onStatus, onComplete);
+      return;
     }
-
-    if (result.success) lastSuccessfulAction = action.action;
 
     emitStep({
       id: `${stepId}-result`,
@@ -263,9 +215,8 @@ export async function runControlLoop(
       tool: action.action,
       output: result.output,
       error: result.error,
-      screenshotBase64: result.screenshot?.base64,
       timestamp: new Date().toISOString(),
-      details: { ...result.details, lastSuccessfulAction },
+      details: result.details,
     });
     await updateOverlay({ active: true, status: 'executing', task, steps });
 
@@ -273,76 +224,12 @@ export async function runControlLoop(
     messages.push({
       role: 'user',
       content: result.success
-        ? `Action result: ${result.output}\nComplete only when this result proves the requested outcome.`
-        : `Action error: ${result.error ?? result.output}\nSwitch to a different layer on the escalation ladder rather than repeating. Raw mouse and legacy visual tools are unavailable.`,
+        ? `Action result: ${result.output}\nComplete with task.complete only when this proves the requested outcome.`
+        : `Action error: ${result.error ?? result.output}\nPick a different structured tool. Mouse/cursor/visual control is unavailable. If only a GUI mouse path exists, ask_user for a manual step or an API/export alternative.`,
     });
-
-    if (action.action === 'soc.visual' && result.success) {
-      await finalDeduct(userId, totalCostUsd);
-      emitStep({
-        id: nowStepId('complete'),
-        type: 'complete',
-        output: result.output,
-        timestamp: new Date().toISOString(),
-      });
-      await cleanup();
-      onStatus('complete');
-      onComplete(result.output);
-      return;
-    }
-
-    if (action.action === 'app.open' && result.success && routeHighLevel(task, action, result.output) === 'soc_visual') {
-      const socAction: ControlAction = { action: 'soc.visual', objective: task };
-      const socStepId = nowStepId('soc-after-launch');
-      emitStep({
-        id: socStepId,
-        type: 'tool_call',
-        tool: socAction.action,
-        input: JSON.stringify(socAction, null, 2),
-        timestamp: new Date().toISOString(),
-        details: { mode: 'soc_visual', reason: 'mandatory_after_gui_app_launch' },
-      });
-      await guardSetBlock(true);
-      let socResult;
-      try {
-        socResult = await executeControlAction(socAction, {
-          userId,
-          task,
-          addCost: (usd) => { totalCostUsd += usd; },
-          onAskUser,
-          onSocStep: (step) => emitStep({ id: nowStepId('soc-inner'), timestamp: new Date().toISOString(), ...step }),
-        });
-      } finally {
-        await guardSetBlock(false);
-      }
-      emitStep({
-        id: `${socStepId}-result`,
-        type: socResult.success ? 'tool_result' : 'error',
-        tool: socAction.action,
-        output: socResult.output,
-        error: socResult.error,
-        screenshotBase64: socResult.screenshot?.base64,
-        timestamp: new Date().toISOString(),
-        details: socResult.details,
-      });
-      if (socResult.success) {
-        await finalDeduct(userId, totalCostUsd);
-        emitStep({
-          id: nowStepId('complete'),
-          type: 'complete',
-          output: socResult.output,
-          timestamp: new Date().toISOString(),
-        });
-        await cleanup();
-        onStatus('complete');
-        onComplete(socResult.output);
-        return;
-      }
-      messages.push({ role: 'user', content: `Mandatory SOC visual result after app launch: ${socResult.error ?? socResult.output}` });
-    }
   }
 
   await finalDeduct(userId, totalCostUsd);
-  await cleanup();
+  await updateOverlay({ active: false });
   onError(`Reached maximum iterations (${MAX_ITERATIONS})`);
 }

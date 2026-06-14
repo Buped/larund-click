@@ -8,6 +8,7 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import type { AuthUser } from '../lib/auth';
 import type { UserCredits } from '../lib/supabase';
+import { OperatorPanel } from './operator-panel';
 
 function emailInitials(email: string): string {
   const local = email.split('@')[0];
@@ -41,6 +42,7 @@ const SECTIONS = [
   { id: "behavior",   icon: "sparkle",   label: "Behavior"   },
   { id: "memory",     icon: "cpu",       label: "Memory"     },
   { id: "apps",       icon: "globe",     label: "Apps"       },
+  { id: "operator",   icon: "cpu",       label: "Operator"   },
   { id: "account",    icon: "user",      label: "Account"    },
   { id: "danger",     icon: "alert",     label: "Danger zone"},
 ];
@@ -439,6 +441,8 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
                 </div>
               </>
             )}
+
+            {section === "operator" && <OperatorPanel />}
 
             {section === "account" && (
               <>

@@ -16,7 +16,12 @@
       "PowerShell(cargo check --manifest-path src-tauri/Cargo.toml 2>&1)",
       "Bash(rustup target *)",
       "PowerShell(cargo +stable-x86_64-pc-windows-msvc check --manifest-path src-tauri/Cargo.toml 2>&1)",
-      "Bash(npx vitest *)"
+      "Bash(npx vitest *)",
+      "Bash(cd /d/Larund-click && grep -n \"export default\\\\|export function\" src/components/settings.tsx | head; echo \"===\"; sed -n '1,40p' src/components/settings.tsx)",
+      "Read(//d/d/Larund-click/src/components/**)",
+      "Bash(echo \"EXIT: $?\")",
+      "PowerShell(npx vitest run 2>&1 | Select-Object -Last 8; \"---TSC---\"; npx tsc --noEmit -p tsconfig.json; \"TSC EXIT: $LASTEXITCODE\")",
+      "PowerShell(Set-Location D:\\\\Larund-click; npx vitest run 2>&1 | Select-Object -Last 6; \"---TSC---\"; npx tsc --noEmit -p tsconfig.json; \"TSC EXIT: $LASTEXITCODE\"; \"---BUILD---\"; npm run build 2>&1 | Select-Object -Last 4; \"BUILD EXIT: $LASTEXITCODE\")"
     ]
   }
 }

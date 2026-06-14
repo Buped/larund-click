@@ -11,6 +11,10 @@ const BALANCE_CHECK_INTERVAL_MS = 5_000;
 // ~4 characters per token is a conservative estimate for most languages.
 const CHARS_PER_TOKEN = 4;
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError';
+}
+
 export type MessageContent =
   | string
   | Array<
@@ -45,6 +49,7 @@ export async function callOpenRouter(
   onComplete: (usage: UsageResult) => void,
   onError: (error: string) => void,
   serviceTier?: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!OPENROUTER_KEY || OPENROUTER_KEY === 'your_openrouter_key_here') {
     onError('OpenRouter API key not configured');
@@ -86,8 +91,10 @@ export async function callOpenRouter(
         'X-Title': 'Larund Click',
       },
       body: JSON.stringify(body),
+      signal,
     });
   } catch (e) {
+    if (isAbortError(e)) return;
     onError(e instanceof Error ? e.message : String(e));
     return;
   }
@@ -123,6 +130,10 @@ export async function callOpenRouter(
   // "no credits" errors because estimates always overshoot the real cost.
   try {
     outer: while (true) {
+      if (signal?.aborted) {
+        await reader.cancel().catch(() => undefined);
+        return;
+      }
       const { done, value } = await reader.read();
       if (done) break;
 
@@ -167,6 +178,7 @@ export async function callOpenRouter(
       }
     }
   } catch (e) {
+    if (isAbortError(e) || signal?.aborted) return;
     onError(e instanceof Error ? e.message : String(e));
     return;
   }
@@ -216,6 +228,7 @@ export async function callOpenRouterWithTools(
   onComplete: (usage: UsageResult) => void,
   onError: (error: string) => void,
   deductCredits: boolean = true,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!OPENROUTER_KEY || OPENROUTER_KEY === 'your_openrouter_key_here') {
     onError('OpenRouter API key not configured');
@@ -248,8 +261,10 @@ export async function callOpenRouterWithTools(
         'X-Title': 'Larund Click',
       },
       body: JSON.stringify(body),
+      signal,
     });
   } catch (e) {
+    if (isAbortError(e)) return;
     onError(e instanceof Error ? e.message : String(e));
     return;
   }
@@ -276,6 +291,10 @@ export async function callOpenRouterWithTools(
 
   try {
     outer: while (true) {
+      if (signal?.aborted) {
+        await reader.cancel().catch(() => undefined);
+        return;
+      }
       const { done, value } = await reader.read();
       if (done) break;
 
@@ -315,6 +334,7 @@ export async function callOpenRouterWithTools(
       }
     }
   } catch (e) {
+    if (isAbortError(e) || signal?.aborted) return;
     onError(e instanceof Error ? e.message : String(e));
     return;
   }
