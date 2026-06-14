@@ -2421,6 +2421,7 @@ if ($hit) {{ $hit }}"#
             r#"
 try {{
   Add-Type -AssemblyName System.Drawing
+  Add-Type -AssemblyName System.Runtime.WindowsRuntime
   $rx = {x}; $ry = {y}; $rw = {w}; $rh = {h}
   $bmp = New-Object System.Drawing.Bitmap $rw, $rh
   $g = [System.Drawing.Graphics]::FromImage($bmp)

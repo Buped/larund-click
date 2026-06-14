@@ -68,9 +68,47 @@ export async function readOcr(screenshot: SocScreenshot): Promise<SocOcrBox[]> {
 
 export function findOcrText(ocr: SocOcrBox[], text: string): SocOcrBox | null {
   let best: { box: SocOcrBox; score: number } | null = null;
-  for (const box of ocr) {
+  for (const box of [...ocr, ...buildOcrTextGroups(ocr)]) {
     const score = fuzzyScore(text, box.text);
     if (!best || score > best.score) best = { box, score };
   }
   return best && best.score >= 0.58 ? best.box : null;
+}
+
+function buildOcrTextGroups(ocr: SocOcrBox[]): SocOcrBox[] {
+  const sorted = [...ocr].sort((a, b) => a.bbox[1] - b.bbox[1] || a.bbox[0] - b.bbox[0]);
+  const rows: SocOcrBox[][] = [];
+  for (const box of sorted) {
+    const cy = (box.bbox[1] + box.bbox[3]) / 2;
+    const row = rows.find((items) => {
+      const first = items[0];
+      const rowCy = (first.bbox[1] + first.bbox[3]) / 2;
+      return Math.abs(rowCy - cy) <= 14;
+    });
+    if (row) row.push(box);
+    else rows.push([box]);
+  }
+
+  return rows.flatMap((row, rowIndex) => {
+    const words = row.sort((a, b) => a.bbox[0] - b.bbox[0]);
+    const groups: SocOcrBox[] = [];
+    for (let start = 0; start < words.length; start++) {
+      for (let end = start + 1; end < Math.min(words.length, start + 5); end++) {
+        const slice = words.slice(start, end + 1);
+        const text = slice.map((box) => box.text).join(' ');
+        groups.push({
+          id: `ocr-group-${rowIndex + 1}-${start + 1}-${end + 1}`,
+          text,
+          bbox: [
+            Math.min(...slice.map((box) => box.bbox[0])),
+            Math.min(...slice.map((box) => box.bbox[1])),
+            Math.max(...slice.map((box) => box.bbox[2])),
+            Math.max(...slice.map((box) => box.bbox[3])),
+          ],
+          confidence: slice.reduce((sum, box) => sum + box.confidence, 0) / slice.length,
+        });
+      }
+    }
+    return groups;
+  });
 }

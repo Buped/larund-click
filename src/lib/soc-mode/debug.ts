@@ -23,7 +23,9 @@ export function createSocDebugWriter(runId: string, step: number): SocDebugWrite
     },
     async writeBase64(name, base64) {
       try {
-        await invoke('file_write', { path: `${dir}/${safeName(name)}.base64`, content: base64 });
+        const fileName = safeName(name);
+        await invoke('file_write', { path: `${dir}/${fileName}`, content: base64 });
+        await invoke('file_write', { path: `${dir}/${fileName}.base64`, content: base64 });
       } catch {
         // Debug artifacts must never break execution.
       }

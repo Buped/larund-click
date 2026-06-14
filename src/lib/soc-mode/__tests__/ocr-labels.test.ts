@@ -14,6 +14,17 @@ describe('SOC OCR text click and labels', () => {
     expect(bboxCenter(match!.bbox)).toEqual({ x: 255, y: 235 });
   });
 
+  it('fuzzy matches text split across neighboring OCR words', () => {
+    const boxes = parseOcrJson(JSON.stringify([
+      { text: 'Ground', bbox: { x: 14, y: 85, width: 47, height: 10 }, confidence: 0.6 },
+      { text: 'war', bbox: { x: 70, y: 85, width: 24, height: 10 }, confidence: 0.6 },
+      { text: 'Continue', bbox: { x: 14, y: 103, width: 64, height: 10 }, confidence: 0.6 },
+    ]));
+    const match = findOcrText(boxes, 'Ground War');
+    expect(match?.text).toBe('Ground war');
+    expect(match?.bbox).toEqual([14, 85, 94, 95]);
+  });
+
   it('builds label map and resolves click labels', () => {
     const labels = buildLabelMap([
       { id: 'ocr-1', text: 'Ground War', bbox: [200, 220, 310, 250], confidence: 0.7 },
