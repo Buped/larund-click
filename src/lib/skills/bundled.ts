@@ -52,6 +52,86 @@ A Google Sheet is a CLOUD doc, NOT local sheet.write. A local .xlsx/.csv does NO
 4. browser.read/assert_text to confirm rows are in the grid, THEN task.complete.
 5. "at least N rows" with no data -> generate sample rows. Never write into the title box.`;
 
+const googleSheets = `---
+name: google-sheets
+description: "Create, write, append, read and verify cloud Google Sheets via the Google Workspace connection."
+allowed_tools: ["connection.call", "ask_user"]
+requires_connections: ["google-workspace"]
+risk: "external_write"
+trigger: "google sheet google sheets online spreadsheet sheets.new szamla konyveles"
+---
+
+# Google Sheets
+1. Use google.sheets.create if a new cloud sheet is needed.
+2. Use google.sheets.write_values or google.sheets.append_values for rows.
+3. Always call google.sheets.read_values after writing and verify expected values.
+4. A local .xlsx or .csv never completes a Google Sheets request unless the user changes the target.
+5. If auth is missing, ask for Google Workspace setup or offer local .xlsx as an explicit fallback.`;
+
+const googleWorkspace = `---
+name: google-workspace
+description: "Use Google Workspace through API-first connection tools; browser fallback only when explicitly needed."
+allowed_tools: ["connection.call", "browser.open", "browser.read", "browser.wait", "ask_user"]
+requires_connections: ["google-workspace"]
+risk: "external_write"
+trigger: "google workspace google drive google sheets google docs gmail calendar"
+---
+
+# Google Workspace
+1. Prefer connection.call with google-workspace tools.
+2. If auth is missing, ask the user to connect Google Workspace or offer a local file fallback when acceptable.
+3. Never satisfy a Google cloud document request with only a local file.
+4. Verify every create/write by reading metadata, values or content back.
+5. Browser fallback must use DOM/read-back only; no mouse or visual control.`;
+
+const googleDocs = `---
+name: google-docs
+description: "Create, fill, read and export Google Docs through the Google Workspace connection."
+allowed_tools: ["connection.call", "ask_user", "doc.write_txt", "doc.write_docx"]
+requires_connections: ["google-workspace"]
+risk: "external_write"
+trigger: "google docs google doc document invoice szamla"
+---
+
+# Google Docs
+1. Use google.docs.create for new cloud docs.
+2. Insert content with google.docs.insert_text or google.docs.batch_update.
+3. Read back with google.docs.read before completion.
+4. Export through Drive with google.docs.export_docx or google.docs.export_pdf when requested.
+5. If auth is missing, ask to connect Google or offer local .docx/.txt as a fallback.`;
+
+const localOffice = `---
+name: local-office
+description: "Create/read local Excel, CSV, text and document files directly without GUI Office control."
+allowed_tools: ["document.read", "doc.read", "doc.write_txt", "doc.write_docx", "sheet.read", "sheet.write", "sheet.append", "sheet.export_csv", "sheet.to_json", "file.exists"]
+requires_connections: []
+risk: "local_write"
+trigger: "excel xlsx csv word docx txt local office libreoffice"
+---
+
+# Local Office
+1. For Excel, write .xlsx with sheet.write; for CSV use .csv.
+2. Read back with sheet.read/sheet.to_json before completion.
+3. For Word-like local output, prefer doc.write_docx when requested or doc.write_txt for plain text.
+4. Opening Word/Excel is optional preview only; no GUI editing.
+5. Google Sheets/Docs requests are cloud targets, not local Office targets.`;
+
+const documentAccounting = `---
+name: document-accounting
+description: "Read referenced invoices and create an accounting table in local xlsx/csv or Google Sheets."
+allowed_tools: ["document.read", "document.read_many", "folder.scan", "folder.read_relevant", "sheet.write", "sheet.read", "connection.call", "ask_user"]
+requires_connections: []
+risk: "local_write"
+trigger: "invoice szamla accounting konyvel konyveles xlsx google sheet"
+---
+
+# Document Accounting
+1. Read all referenced invoice files first with document.read/document.read_many; for folders use folder.scan then folder.read_relevant.
+2. Extract invoice number, issuer, customer, date, item, net, gross/total and currency.
+3. If target is local Excel, use sheet.write to .xlsx and sheet.read back.
+4. If target is Google Sheets, use the Google connection and read values back.
+5. Complete only when source files read and output rows verified.`;
+
 const taskVerification = `---
 name: task-verification
 description: "Before completing, verify the requested outcome actually exists with a read-back appropriate to the surface."
@@ -125,6 +205,11 @@ export const BUNDLED_SKILL_FILES: string[] = [
   fileOrganizer,
   browserAutomation,
   googleSheetsWeb,
+  googleSheets,
+  googleWorkspace,
+  googleDocs,
+  localOffice,
+  documentAccounting,
   taskVerification,
   vscodeProject,
   githubMaintainer,

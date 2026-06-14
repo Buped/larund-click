@@ -76,6 +76,21 @@ describe('session-memory', () => {
     expect(getActiveTask('s1')?.targetDocument?.type).toBe('google_sheet');
   });
 
+  it('reopens a freshly completed task when the user correction says completion was false', () => {
+    const first = resolveActiveTask('s1', 'Készíts egy új Google táblázatot és töltsd fel minimum 5 adattal.');
+    const firstId = first.state.id;
+    first.state.status = 'complete';
+    first.state.completedChecks = ['claimed done'];
+
+    const second = resolveActiveTask('s1', 'Nem, üres a Google táblázat, nem töltötted fel.');
+    expect(second.isCorrection).toBe(true);
+    expect(second.state.id).toBe(firstId);
+    expect(second.state.status).toBe('running');
+    expect(second.state.completedChecks).toEqual([]);
+    expect(second.state.userCorrections.length).toBeGreaterThan(0);
+    expect(second.state.failedAttempts.some((f) => /completion was false/i.test(f.reason))).toBe(true);
+  });
+
   it('starts a new task for an unrelated fresh message', () => {
     const a = resolveActiveTask('s1', 'Nyisd meg a YouTube-ot.');
     const b = resolveActiveTask('s1', 'Készíts egy Excel fájlt 5 sor adattal.');

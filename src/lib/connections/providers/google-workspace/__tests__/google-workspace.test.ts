@@ -21,4 +21,18 @@ describe('google workspace provider', () => {
     expect(result.success).toBe(false);
     expect(result.error).toBe('missing_google_workspace_auth');
   });
+
+  it('mock exports sheets and docs without requiring auth', async () => {
+    const xlsx = await call('google.sheets.export_xlsx', { mock: true, spreadsheetId: 'sheet-1' });
+    expect(xlsx.success).toBe(true);
+    expect(xlsx.output).toMatch(/Mock exported sheet/i);
+
+    const docx = await call('google.docs.export_docx', { mock: true, documentId: 'doc-1' });
+    expect(docx.success).toBe(true);
+    expect(docx.output).toMatch(/Mock exported docx/i);
+
+    const pdf = await call('google.docs.export_pdf', { mock: true, documentId: 'doc-1' });
+    expect(pdf.success).toBe(true);
+    expect(pdf.output).toMatch(/Mock exported pdf/i);
+  });
 });

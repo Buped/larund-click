@@ -58,6 +58,7 @@ export interface FileMetadata {
 export interface DocumentIO {
   readText(path: string): Promise<string>;
   readSheet(path: string, maxRows: number): Promise<unknown>;
+  extractText?(path: string): Promise<string>;
   listDir(path: string): Promise<string[]>;
   metadata(path: string): Promise<FileMetadata>;
 }

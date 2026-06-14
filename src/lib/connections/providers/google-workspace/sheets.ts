@@ -1,5 +1,7 @@
 import type { ConnectionToolDefinition } from '../../types';
 import { googleAuthFromSecrets, missingGoogleAuth } from './auth';
+import { driveDownloadBytes } from './drive';
+import { invoke } from '@tauri-apps/api/core';
 
 const mockStore = new Map<string, string[][]>();
 
@@ -127,8 +129,23 @@ export const googleSheetsTools: ConnectionToolDefinition[] = [
     name: 'google.sheets.export_xlsx',
     description: 'Export a Google Sheet as xlsx through Drive export.',
     risk: 'external_read',
-    async run(args) {
-      return { success: false, output: '', error: 'google_sheets_export_xlsx_requires_drive_download_export', details: { args } };
+    async run(args, secrets) {
+      const spreadsheetId = String(args.spreadsheetId ?? args.spreadsheet_id ?? args.fileId ?? '');
+      if (!spreadsheetId) return { success: false, output: '', error: 'missing_spreadsheet_id' };
+      const targetPath = String(args.targetPath ?? args.target_path ?? '');
+      if (isMock(args)) {
+        if (targetPath) await invoke<string>('file_write_bytes', { path: targetPath, bytes: Array.from(new TextEncoder().encode('mock xlsx export')) });
+        return { success: true, output: targetPath ? `Mock exported sheet to ${targetPath}` : 'Mock exported sheet', details: { spreadsheetId, targetPath } };
+      }
+      const auth = googleAuthFromSecrets(secrets);
+      if (!auth.accessToken) return missingGoogleAuth();
+      const mime = encodeURIComponent('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      const bytes = await driveDownloadBytes(`/drive/v3/files/${spreadsheetId}/export?mimeType=${mime}`, auth.accessToken);
+      if (targetPath) {
+        const msg = await invoke<string>('file_write_bytes', { path: targetPath, bytes: Array.from(bytes) });
+        return { success: true, output: msg, details: { spreadsheetId, targetPath, bytes: bytes.length } };
+      }
+      return { success: true, output: `Exported Google Sheet ${spreadsheetId} (${bytes.length} bytes)`, details: { spreadsheetId, bytes: bytes.length } };
     },
   },
 ];

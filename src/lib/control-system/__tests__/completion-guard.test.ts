@@ -6,6 +6,7 @@ import { verifyBeforeComplete } from '../completion-guard';
 import type { RecentAction } from '../../agent-state/types';
 
 const ok = (action: string, output = ''): RecentAction => ({ action, success: true, output });
+const conn = (tool: string, output = ''): RecentAction => ({ action: 'connection.call', success: true, output, argsSummary: tool });
 
 function stateFor(goal: string) {
   return createTaskState(goal, preflight(goal));
@@ -38,8 +39,9 @@ describe('completion guard — cloud Google Sheet', () => {
     expect(r.nextStepHint).toMatch(/log in|ask_user/i);
   });
 
-  it('accepts completion after paste + verified read-back', () => {
+  it('rejects paste plus generic browser.read without concrete cell proof', () => {
     const s = stateFor(goal);
+    s.expectedData = { values: ['Kovacs Janos', 'Nagy Anna'] };
     const recent = [
       ok('browser.open'),
       ok('browser.read', 'URL: https://docs.google.com/spreadsheets\nINPUTS:\ngrid'),
@@ -48,7 +50,40 @@ describe('completion guard — cloud Google Sheet', () => {
       ok('browser.read', 'URL: https://docs.google.com/spreadsheets\nKovács János\nNagy Anna'),
     ];
     const r = verifyBeforeComplete(s, recent);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/reliable cell-content proof|concrete/i);
+  });
+
+  it('accepts browser paste only after concrete expected values are asserted', () => {
+    const s = stateFor(goal);
+    s.expectedData = { values: ['Kovacs Janos', 'Nagy Anna', '50000'] };
+    const recent = [
+      ok('browser.open'),
+      ok('browser.read', 'URL: https://docs.google.com/spreadsheets\nINPUTS:\ngrid'),
+      ok('clipboard.set'),
+      ok('browser.paste', 'Pasted clipboard TSV'),
+      ok('browser.assert_text', 'assert_text ok: Kovacs Janos Nagy Anna 50000'),
+    ];
+    const r = verifyBeforeComplete(s, recent);
     expect(r.ok).toBe(true);
+  });
+
+  it('accepts Google connection write followed by matching read_values', () => {
+    const s = stateFor(goal);
+    s.expectedData = { rows: [['Nev', 'Osszeg'], ['Kovacs Janos', '50000'], ['Nagy Anna', '42000']] };
+    const recent = [
+      conn('google.sheets.write_values'),
+      conn('google.sheets.read_values', JSON.stringify({ values: [['Nev', 'Osszeg'], ['Kovacs Janos', '50000'], ['Nagy Anna', '42000']], rowCount: 3 })),
+    ];
+    const r = verifyBeforeComplete(s, recent);
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects Google connection write without read_values', () => {
+    const s = stateFor(goal);
+    const r = verifyBeforeComplete(s, [conn('google.sheets.write_values')]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/not read back/i);
   });
 });
 

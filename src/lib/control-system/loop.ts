@@ -74,6 +74,48 @@ function nowStepId(suffix: string): string {
   return `step-${Date.now()}-${suffix}`;
 }
 
+function coerceRows(value: unknown): string[][] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const rows = value
+    .filter((row): row is unknown[] => Array.isArray(row))
+    .map((row) => row.map((cell) => String(cell)));
+  return rows.length ? rows : undefined;
+}
+
+function valuesFromRows(rows: string[][]): string[] {
+  return rows.flat().map((cell) => cell.trim()).filter(Boolean);
+}
+
+function tsvRows(text: string): string[][] | undefined {
+  const rows = text
+    .split(/\r?\n/)
+    .map((line) => line.split('\t').map((cell) => cell.trim()))
+    .filter((row) => row.some(Boolean));
+  return rows.length ? rows : undefined;
+}
+
+function rememberExpectedSheetData(taskState: import('../agent-state/types').ActiveTaskState, action: ControlAction): void {
+  if (action.action === 'connection.call' && /google\.sheets\.(write_values|append_values)/i.test(action.tool)) {
+    const rows = coerceRows(action.args.values ?? action.args.rows);
+    if (rows) {
+      taskState.expectedData = { rows, values: valuesFromRows(rows), source: action.tool };
+      const artifact = taskState.expectedArtifacts?.find((a) => a.type === 'table');
+      if (artifact) {
+        artifact.rows = rows;
+        artifact.values = valuesFromRows(rows);
+      }
+    }
+  }
+  if (action.action === 'browser.paste' && typeof action.text === 'string') {
+    const rows = tsvRows(action.text);
+    if (rows) taskState.expectedData = { rows, values: valuesFromRows(rows), source: 'browser.paste' };
+  }
+  if (action.action === 'clipboard.set') {
+    const rows = tsvRows(action.text);
+    if (rows) taskState.expectedData = { rows, values: valuesFromRows(rows), source: 'clipboard.set' };
+  }
+}
+
 async function updateOverlay(state: object): Promise<void> {
   try { await emit('agent-overlay-update', state); } catch { /* optional */ }
 }
@@ -341,6 +383,8 @@ export async function runControlLoop(
     await updateOverlay({ active: true, status: 'executing', task, steps });
 
     // Record evidence for the completion guard.
+    rememberExpectedSheetData(taskState, action as ControlAction);
+    setActiveTask(sessionId, taskState);
     recordAction({
       action: action.action,
       argsSummary: sanitizeArgs(action),

@@ -1,5 +1,7 @@
 import type { ConnectionToolDefinition } from '../../types';
 import { googleAuthFromSecrets, missingGoogleAuth } from './auth';
+import { driveDownloadBytes } from './drive';
+import { invoke } from '@tauri-apps/api/core';
 
 const mockDocs = new Map<string, string>();
 
@@ -23,6 +25,23 @@ async function googleFetch(path: string, token: string, init: RequestInit = {}) 
   const text = await res.text();
   if (!res.ok) throw new Error(`google_docs_api_${res.status}: ${text}`);
   return text ? JSON.parse(text) as unknown : {};
+}
+
+function extractGoogleDocText(doc: unknown): string {
+  const parts: string[] = [];
+  const walk = (value: unknown) => {
+    if (!value || typeof value !== 'object') return;
+    if ('textRun' in value) {
+      const textRun = (value as { textRun?: { content?: string } }).textRun;
+      if (textRun?.content) parts.push(textRun.content);
+    }
+    for (const child of Object.values(value as Record<string, unknown>)) {
+      if (Array.isArray(child)) child.forEach(walk);
+      else if (child && typeof child === 'object') walk(child);
+    }
+  };
+  walk(doc);
+  return parts.join('').trim();
 }
 
 export const googleDocsTools: ConnectionToolDefinition[] = [
@@ -94,7 +113,8 @@ export const googleDocsTools: ConnectionToolDefinition[] = [
       const auth = googleAuthFromSecrets(secrets);
       if (!auth.accessToken) return missingGoogleAuth();
       const data = await googleFetch(`/v1/documents/${documentId}`, auth.accessToken);
-      return { success: true, output: JSON.stringify(data), details: data as Record<string, unknown> };
+      const text = extractGoogleDocText(data);
+      return { success: true, output: text || JSON.stringify(data), details: { ...(data as Record<string, unknown>), text } };
     },
   },
   {
@@ -110,16 +130,45 @@ export const googleDocsTools: ConnectionToolDefinition[] = [
     name: 'google.docs.export_docx',
     description: 'Export a Google Doc to docx through Drive.',
     risk: 'external_read',
-    async run(args) {
-      return { success: false, output: '', error: 'google_docs_export_docx_requires_drive_download_export', details: { args } };
+    async run(args, secrets) {
+      const documentId = String(args.documentId ?? args.document_id ?? args.fileId ?? '');
+      if (!documentId) return { success: false, output: '', error: 'missing_document_id' };
+      const targetPath = String(args.targetPath ?? args.target_path ?? '');
+      if (isMock(args)) {
+        if (targetPath) await invoke<string>('file_write_bytes', { path: targetPath, bytes: Array.from(new TextEncoder().encode('mock docx export')) });
+        return { success: true, output: targetPath ? `Mock exported docx to ${targetPath}` : 'Mock exported docx', details: { documentId, targetPath } };
+      }
+      const auth = googleAuthFromSecrets(secrets);
+      if (!auth.accessToken) return missingGoogleAuth();
+      const mime = encodeURIComponent('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      const bytes = await driveDownloadBytes(`/drive/v3/files/${documentId}/export?mimeType=${mime}`, auth.accessToken);
+      if (targetPath) {
+        const msg = await invoke<string>('file_write_bytes', { path: targetPath, bytes: Array.from(bytes) });
+        return { success: true, output: msg, details: { documentId, targetPath, bytes: bytes.length } };
+      }
+      return { success: true, output: `Exported Google Doc ${documentId} as DOCX (${bytes.length} bytes)`, details: { documentId, bytes: bytes.length } };
     },
   },
   {
     name: 'google.docs.export_pdf',
     description: 'Export a Google Doc to PDF through Drive.',
     risk: 'external_read',
-    async run(args) {
-      return { success: false, output: '', error: 'google_docs_export_pdf_requires_drive_download_export', details: { args } };
+    async run(args, secrets) {
+      const documentId = String(args.documentId ?? args.document_id ?? args.fileId ?? '');
+      if (!documentId) return { success: false, output: '', error: 'missing_document_id' };
+      const targetPath = String(args.targetPath ?? args.target_path ?? '');
+      if (isMock(args)) {
+        if (targetPath) await invoke<string>('file_write_bytes', { path: targetPath, bytes: Array.from(new TextEncoder().encode('mock pdf export')) });
+        return { success: true, output: targetPath ? `Mock exported pdf to ${targetPath}` : 'Mock exported pdf', details: { documentId, targetPath } };
+      }
+      const auth = googleAuthFromSecrets(secrets);
+      if (!auth.accessToken) return missingGoogleAuth();
+      const bytes = await driveDownloadBytes(`/drive/v3/files/${documentId}/export?mimeType=application%2Fpdf`, auth.accessToken);
+      if (targetPath) {
+        const msg = await invoke<string>('file_write_bytes', { path: targetPath, bytes: Array.from(bytes) });
+        return { success: true, output: msg, details: { documentId, targetPath, bytes: bytes.length } };
+      }
+      return { success: true, output: `Exported Google Doc ${documentId} as PDF (${bytes.length} bytes)`, details: { documentId, bytes: bytes.length } };
     },
   },
 ];

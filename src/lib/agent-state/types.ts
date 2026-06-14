@@ -43,6 +43,8 @@ export interface ExpectedArtifact {
   path?: string;
   url?: string;
   description: string;
+  rows?: string[][];
+  values?: string[];
 }
 
 export interface FailedAttempt {
@@ -71,6 +73,11 @@ export interface ActiveTaskState {
   targetDocument?: TargetDocument;
   expectedOutcome?: string;
   expectedArtifacts?: ExpectedArtifact[];
+  expectedData?: {
+    rows?: string[][];
+    values?: string[];
+    source?: string;
+  };
   referencedInputs?: import('../references/types').DocumentReference[];
   filesRead?: string[];
   requiresAuth?: boolean;

@@ -40,7 +40,16 @@ export function resolveActiveTask(sessionId: string, message: string): ResolvedT
   const prior = SESSIONS.get(sessionId);
   const correction = detectCorrection(message);
 
-  if (prior && prior.status !== 'complete' && correction.isCorrection) {
+  if (prior && correction.isCorrection) {
+    if (prior.status === 'complete') {
+      prior.status = 'running';
+      prior.failedAttempts.push({
+        step: 'previous task.complete',
+        reason: 'User correction indicates the previous completion was false.',
+        evidence: message,
+      });
+      prior.completedChecks = [];
+    }
     applyCorrection(prior, message, correction.interpretation, correction.signals);
     SESSIONS.set(sessionId, prior);
     return { state: prior, isCorrection: true, signals: correction.signals };

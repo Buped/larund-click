@@ -9,6 +9,9 @@ import { v4 as uuidv4 } from 'uuid';
 import type { AuthUser } from '../lib/auth';
 import type { UserCredits } from '../lib/supabase';
 import { OperatorPanel } from './operator-panel';
+import { GOOGLE_WORKSPACE_SCOPES } from '../lib/connections/providers/google-workspace/auth';
+import { listConnections } from '../lib/connections/registry';
+import { loadPersistentSecret, setPersistentSecret } from '../lib/connections/secrets';
 
 function emailInitials(email: string): string {
   const local = email.split('@')[0];
@@ -41,6 +44,7 @@ const SECTIONS = [
   { id: "automation", icon: "zap",       label: "Automation" },
   { id: "behavior",   icon: "sparkle",   label: "Behavior"   },
   { id: "memory",     icon: "cpu",       label: "Memory"     },
+  { id: "connections", icon: "globe",    label: "Connections"},
   { id: "apps",       icon: "globe",     label: "Apps"       },
   { id: "operator",   icon: "cpu",       label: "Operator"   },
   { id: "account",    icon: "user",      label: "Account"    },
@@ -228,6 +232,9 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
   const [memEditVal, setMemEditVal] = useState("");
   const [newMemVal,  setNewMemVal ] = useState("");
   const [addingMem,  setAddingMem ] = useState(false);
+  const [googleToken, setGoogleToken] = useState("");
+  const [googleEmail, setGoogleEmail] = useState("");
+  const [googleStatus, setGoogleStatus] = useState("");
 
   useEffect(() => {
     getSettings().then(s => {
@@ -241,6 +248,13 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
     });
     getApps().then(setApps);
     getMemoryEntries().then(setMemories);
+    Promise.all([
+      loadPersistentSecret('GOOGLE_WORKSPACE_ACCESS_TOKEN'),
+      loadPersistentSecret('GOOGLE_WORKSPACE_ACCOUNT_EMAIL'),
+    ]).then(([token, email]) => {
+      if (token) setGoogleToken(token);
+      if (email) setGoogleEmail(email);
+    });
   }, []);
 
   async function handleSaveApp(a: AppEntry) {
@@ -304,6 +318,41 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
   async function handleClearMemories() {
     for (const m of memories) await deleteMemoryEntry(m.id);
     setMemories([]);
+  }
+
+  async function handleSaveGoogleWorkspace() {
+    await setPersistentSecret('GOOGLE_WORKSPACE_ACCESS_TOKEN', googleToken.trim());
+    await setPersistentSecret('GOOGLE_WORKSPACE_ACCOUNT_EMAIL', googleEmail.trim());
+    setGoogleStatus(googleToken.trim() ? 'Google Workspace saved for this app.' : 'Google Workspace token cleared.');
+  }
+
+  async function handleDisconnectGoogleWorkspace() {
+    setGoogleToken('');
+    setGoogleEmail('');
+    await setPersistentSecret('GOOGLE_WORKSPACE_ACCESS_TOKEN', '');
+    await setPersistentSecret('GOOGLE_WORKSPACE_ACCOUNT_EMAIL', '');
+    setGoogleStatus('Google Workspace disconnected.');
+  }
+
+  async function handleTestGoogleWorkspace() {
+    const token = googleToken.trim();
+    if (!token) {
+      setGoogleStatus('Add an OAuth access token first.');
+      return;
+    }
+    try {
+      const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json() as { email?: string };
+      if (data.email) setGoogleEmail(data.email);
+      await setPersistentSecret('GOOGLE_WORKSPACE_ACCESS_TOKEN', token);
+      await setPersistentSecret('GOOGLE_WORKSPACE_ACCOUNT_EMAIL', data.email || googleEmail.trim());
+      setGoogleStatus(`Connected${data.email ? ` as ${data.email}` : ''}.`);
+    } catch (err) {
+      setGoogleStatus(`Connection test failed: ${String(err)}`);
+    }
   }
 
   function formatDate(iso: string) {
@@ -430,6 +479,50 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
                       <Icon name="plus" size={13} stroke={2} /> Add memory
                     </button>
                   )}
+                </div>
+              </>
+            )}
+
+            {section === "connections" && (
+              <>
+                <div style={{ padding: "12px 0 14px", borderBottom: "1px solid var(--border)" }}>
+                  <div style={{ fontSize: 13.5, color: "var(--text-primary)", fontWeight: 600 }}>Google Workspace</div>
+                  <div style={{ fontSize: 12, color: "var(--text-hint)", lineHeight: 1.5, marginTop: 3 }}>
+                    API-first access for Drive, Sheets and Docs. Browser fallback is only used when a connection is unavailable and verification is possible.
+                  </div>
+                </div>
+                <SettingRow label="Account email" sub="Shown in operator context and setup status">
+                  <input value={googleEmail} onChange={e => setGoogleEmail(e.target.value)} placeholder="you@example.com"
+                    style={{ width: 220, background: "var(--bg-elevated)", border: "1px solid var(--border-md)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, color: "var(--text-primary)", outline: "none" }} />
+                </SettingRow>
+                <SettingRow label="OAuth access token" sub="Stored in app store when available; VITE_GOOGLE_WORKSPACE_ACCESS_TOKEN still works for dev">
+                  <input value={googleToken} onChange={e => setGoogleToken(e.target.value)} type="password" placeholder="ya29..."
+                    style={{ width: 220, background: "var(--bg-elevated)", border: "1px solid var(--border-md)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, color: "var(--text-primary)", outline: "none" }} />
+                </SettingRow>
+                <SettingRow label="Scopes" sub={GOOGLE_WORKSPACE_SCOPES.join("  ")}>
+                  <span style={{ fontSize: 12.5, color: googleToken ? "var(--success)" : "var(--text-hint)" }}>
+                    {googleToken ? "Configured" : "Missing auth"}
+                  </span>
+                </SettingRow>
+                <div style={{ display: "flex", gap: 8, padding: "12px 0", borderBottom: "1px solid var(--border)" }}>
+                  <button onClick={handleSaveGoogleWorkspace} className="btn btn-primary" style={{ height: 30, fontSize: 12 }}>Save</button>
+                  <button onClick={handleTestGoogleWorkspace} className="btn btn-ghost" style={{ height: 30, fontSize: 12 }}>Test connection</button>
+                  <button onClick={handleDisconnectGoogleWorkspace} className="btn btn-ghost" style={{ height: 30, fontSize: 12, color: "var(--danger)" }}>Disconnect</button>
+                </div>
+                {googleStatus && (
+                  <div style={{ fontSize: 12, color: "var(--text-hint)", padding: "8px 0 12px", lineHeight: 1.5 }}>{googleStatus}</div>
+                )}
+                <div style={{ paddingTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+                  {listConnections().map(c => (
+                    <div key={c.id} style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: 9, padding: "10px 12px", display: "flex", gap: 10, alignItems: "center" }}>
+                      <Icon name="globe" size={14} stroke={1.5} style={{ color: c.status === "configured" ? "var(--success)" : "var(--text-hint)" }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, color: "var(--text-primary)", fontWeight: 600 }}>{c.name}</div>
+                        <div style={{ fontSize: 11.5, color: "var(--text-hint)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.description}</div>
+                      </div>
+                      <span style={{ fontSize: 11, color: "var(--text-hint)", background: "rgba(255,255,255,.06)", borderRadius: 6, padding: "3px 7px" }}>{c.status}</span>
+                    </div>
+                  ))}
                 </div>
               </>
             )}

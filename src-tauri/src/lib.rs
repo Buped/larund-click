@@ -33,6 +33,10 @@ pub fn run() {
             // ── data (spreadsheets) ──────────────────────────────────────────
             commands::agent::sheet_read,
             commands::agent::sheet_write,
+            commands::documents::document_extract_text,
+            commands::documents::docx_write,
+            commands::documents::file_write_bytes,
+            commands::documents::file_read_bytes,
             // ── clipboard ────────────────────────────────────────────────────
             commands::agent::clipboard_get,
             commands::agent::clipboard_set,

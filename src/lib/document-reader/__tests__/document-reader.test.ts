@@ -7,6 +7,9 @@ const files: Record<string, string> = {
   'C:\\docs\\szamla_001.txt': 'Szamlaszam: 001\nKibocsato: Larund\nVegosszeg: 12000 HUF',
   'C:\\docs\\szamla_002.txt': 'Szamlaszam: 002\nKibocsato: Larund\nVegosszeg: 8000 HUF',
   'C:\\docs\\data.csv': 'name,total\nA,10\nB,20',
+  'C:\\docs\\szamla_001.docx': 'Szamla 001, Larund Kft, 50 000 Ft',
+  'C:\\docs\\szamla_001.pdf': 'Szamla 001, Larund Kft, 50 000 Ft',
+  'C:\\docs\\deck.pptx': 'Quarterly invoice summary Larund Kft',
 };
 
 const io: DocumentIO = {
@@ -18,8 +21,13 @@ const io: DocumentIO = {
   async readSheet() {
     return { sheet: 'Sheet1', rows: [['A', 'B'], ['1', '2']], row_count: 2 };
   },
+  async extractText(path) {
+    const value = files[path];
+    if (value == null) throw new Error(`not found ${path}`);
+    return value;
+  },
   async listDir(path) {
-    if (path === 'C:\\docs') return ['szamla_001.txt', 'szamla_002.txt', 'data.csv'];
+    if (path === 'C:\\docs') return ['szamla_001.txt', 'szamla_002.txt', 'data.csv', 'szamla_001.docx', 'szamla_001.pdf'];
     return [];
   },
   async metadata(path) {
@@ -54,6 +62,30 @@ describe('document reader', () => {
     const result = await readDocument(ref('C:\\docs\\data.csv'), { io });
     expect(result.metadata.rowCount).toBe(3);
     expect(result.structured).toEqual({ rows: [['name', 'total'], ['A', '10'], ['B', '20']] });
+  });
+
+  it('reads real extracted DOCX content through the native extractor hook', async () => {
+    const result = await readDocument(ref('C:\\docs\\szamla_001.docx'), { io });
+    expect(result.ok).toBe(true);
+    expect(result.contentText).toContain('Szamla 001, Larund Kft, 50 000 Ft');
+  });
+
+  it('reads real extracted PDF content through the native extractor hook', async () => {
+    const result = await readDocument(ref('C:\\docs\\szamla_001.pdf'), { io });
+    expect(result.ok).toBe(true);
+    expect(result.contentText).toContain('Larund Kft');
+  });
+
+  it('reads PPTX extracted slide text through the native extractor hook', async () => {
+    const result = await readDocument(ref('C:\\docs\\deck.pptx'), { io });
+    expect(result.ok).toBe(true);
+    expect(result.contentText).toContain('Quarterly invoice summary');
+  });
+
+  it('rejects legacy DOC explicitly instead of pretending metadata is content', async () => {
+    const result = await readDocument(ref('C:\\docs\\legacy.doc'), { io });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/unsupported_legacy_doc/i);
   });
 
   it('scans folder inventory', async () => {

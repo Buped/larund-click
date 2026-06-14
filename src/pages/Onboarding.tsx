@@ -65,9 +65,9 @@ function ProgressBar({ step }: { step: number }) {
 // ─── Step 1 — Welcome ────────────────────────────────────────────────────────
 
 const FEATURES = [
-  { icon: 'zap',      bg: 'rgba(245,165,36,.13)', color: '#F5A524', title: 'Automates anything',  desc: 'Opens apps, fills forms, clicks buttons' },
+  { icon: 'zap',      bg: 'rgba(245,165,36,.13)', color: '#F5A524', title: 'Structured tools',    desc: 'Uses files, CLI, browser DOM and skills' },
   { icon: 'calendar', bg: 'rgba(74,158,255,.13)',  color: 'var(--accent)',  title: 'Scheduled tasks',    desc: 'Runs tasks automatically while you sleep' },
-  { icon: 'eye',      bg: 'rgba(62,207,142,.13)',  color: 'var(--success)', title: 'Sees your screen',   desc: 'Understands what\'s on your display' },
+  { icon: 'eye',      bg: 'rgba(62,207,142,.13)',  color: 'var(--success)', title: 'No mouse control',   desc: 'Works without cursor or pixel control' },
   { icon: 'lock',     bg: 'rgba(139,92,246,.13)',  color: '#8B5CF6',       title: 'Always in control',  desc: 'Pauses and asks before risky actions' },
 ];
 
@@ -78,7 +78,7 @@ function StepWelcome({ onNext }: { onNext: () => void }) {
         Meet Larund Click
       </h2>
       <p style={{ fontSize: 13.5, color: 'var(--text-muted)', marginBottom: 24, textAlign: 'center', lineHeight: 1.5 }}>
-        Your AI that actually does things on your computer.
+        Your AI operator for files, browser DOM, CLI, connections and skills.
       </p>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 28 }}>
         {FEATURES.map(f => (
@@ -136,11 +136,11 @@ function PermCard({ icon, title, desc, granted, onGrant }: {
           fontSize: 11.5, fontWeight: 600, color: 'var(--success)',
           background: 'rgba(62,207,142,.12)', border: '1px solid rgba(62,207,142,.28)',
           borderRadius: 6, padding: '5px 11px', flex: 'none', whiteSpace: 'nowrap',
-        }}>✓ Granted</span>
+        }}>Ready</span>
       ) : (
         <button onClick={onGrant} className="btn btn-primary"
           style={{ height: 32, fontSize: 12, padding: '0 14px', flex: 'none' }}>
-          Grant
+          Enable
         </button>
       )}
     </div>
@@ -155,21 +155,21 @@ function StepPermissions({ onNext, screenGranted, accessGranted, setScreenGrante
   return (
     <div>
       <h2 style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 6 }}>
-        Grant permissions
+        Connect tools
       </h2>
       <p style={{ fontSize: 13.5, color: 'var(--text-muted)', marginBottom: 22, lineHeight: 1.5 }}>
-        Click needs these to automate tasks on your computer.
+        Click works through structured tools. No mouse or cursor control is needed.
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
         <PermCard
-          icon="monitor" title="Screen Recording"
-          desc="Allows Click to see your screen and understand what's happening."
+          icon="monitor" title="Browser DOM and local files"
+          desc="Lets Click read pages through browser state and work with selected local files."
           granted={screenGranted}
           onGrant={() => setScreenGranted(true)}
         />
         <PermCard
-          icon="pointer" title="Mouse & Keyboard (Accessibility)"
-          desc="Allows Click to control your cursor and keyboard to complete tasks."
+          icon="globe" title="Connections and skills"
+          desc="Connect Google Workspace, GitHub, Notion and other structured providers."
           granted={accessGranted}
           onGrant={() => setAccessGranted(true)}
         />
@@ -188,17 +188,17 @@ const MODES: { id: AutonomyMode; iconBg: string; iconColor: string; icon: string
   {
     id: 'full', icon: 'zap', iconBg: 'rgba(245,165,36,.15)', iconColor: '#F5A524',
     title: 'Full Autonomous',
-    desc: 'Click executes everything without asking. Best for trusted, repetitive tasks.',
+    desc: 'Runs trusted local and configured external actions automatically; still asks for destructive, send or credential actions.',
   },
   {
     id: 'semi', icon: 'shield', iconBg: 'rgba(74,158,255,.15)', iconColor: 'var(--accent)',
     title: 'Semi-Autonomous', badge: 'Recommended',
-    desc: 'Click pauses before irreversible actions like sending emails or deleting files.',
+    desc: 'Read-only and safe local writes run automatically; external writes and risky actions ask first.',
   },
   {
-    id: 'manual', icon: 'pointer', iconBg: 'rgba(139,92,246,.15)', iconColor: '#8B5CF6',
+    id: 'manual', icon: 'shield', iconBg: 'rgba(139,92,246,.15)', iconColor: '#8B5CF6',
     title: 'Manual',
-    desc: 'Click pauses and asks your approval at every single step.',
+    desc: 'Click asks for approval before every tool call.',
   },
 ];
 
@@ -275,7 +275,7 @@ const HOW_STEPS = [
   },
   {
     title: 'Click plans and executes',
-    desc: 'Click sees your screen, moves the mouse, types, clicks — exactly like a human would. It works across any app on your computer.',
+    desc: 'Click uses structured tools: files, CLI, browser DOM, connections and skills. No mouse or cursor control.',
   },
   {
     title: 'You stay in control',
@@ -315,8 +315,8 @@ function StepHowItWorks({ onNext }: { onNext: () => void }) {
       }}>
         <Icon name="alert" size={15} stroke={1.5} style={{ color: 'var(--warning)', flex: 'none', marginTop: 2 }} />
         <span style={{ fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-          <strong style={{ color: 'var(--text-primary)' }}>Tip:</strong> Start with simple tasks like "Open Notion and create a new page"
-          to see how Click works before trusting it with important workflows.
+          <strong style={{ color: 'var(--text-primary)' }}>Tip:</strong> Start with simple tasks like "Create a local summary file"
+          or connect Google Workspace before using important cloud workflows.
         </span>
       </div>
       <button onClick={onNext} className="btn btn-primary"
@@ -351,8 +351,8 @@ function StepAllSet({ user, mode, screenGranted, accessGranted, onComplete }: {
 
   const firstName = user.email.split('@')[0];
   const checkItems = [
-    { label: `Screen Recording — ${screenGranted ? 'Granted' : 'Skipped'}`, ok: screenGranted },
-    { label: `Mouse & Keyboard — ${accessGranted ? 'Granted' : 'Skipped'}`, ok: accessGranted },
+    { label: `Browser DOM and local files - ${screenGranted ? 'Ready' : 'Skipped'}`, ok: screenGranted },
+    { label: `Connections and skills - ${accessGranted ? 'Ready' : 'Skipped'}`, ok: accessGranted },
     { label: `Autonomy mode — ${MODE_NAMES[mode]}`, ok: true },
   ];
 

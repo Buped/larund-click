@@ -24,16 +24,6 @@ function refFromAction(
   };
 }
 
-function docxPlaceholder(content: string): string {
-  return [
-    'DOCX generation scaffold',
-    '',
-    'This file was requested as .docx, but native OOXML packaging is not enabled in this build yet.',
-    'The verified document content follows:',
-    '',
-    content,
-  ].join('\n');
-}
 
 async function tryInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
   try {
@@ -238,10 +228,13 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
       return r.ok ? { success: true, output: `Wrote text document ${action.path}` } : ERR(r.error);
     }
     case 'doc.write_docx': {
-      const r = await tryInvoke<void>('file_write', { path: action.path, content: docxPlaceholder(action.content) });
-      return r.ok
-        ? { success: true, output: `Wrote DOCX scaffold ${action.path}. Native OOXML packaging is not enabled; content is preserved as text.` }
-        : ERR(r.error);
+      const r = await tryInvoke<string>('docx_write', {
+        path: action.path,
+        content: action.content,
+        title: action.title ?? null,
+        tables: action.tables ?? null,
+      });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
     }
 
     // ── clipboard ──────────────────────────────────────────────────────────

@@ -72,6 +72,9 @@ function defaultIo(): DocumentIO {
         return raw;
       }
     },
+    async extractText(path: string) {
+      return invoke<string>('document_extract_text', { path });
+    },
     async listDir(path: string) {
       return invoke<string[]>('dir_list', { path });
     },
@@ -147,14 +150,25 @@ export async function readDocument(ref: DocumentReference, options: DocumentRead
       const structured = await io.readSheet(target, limits.maxRows);
       result = sheetResult(ref, md, structured);
     } else if (OFFICE_EXT.has(ext)) {
-      result = {
-        ref,
-        ok: true,
-        contentText: '',
-        structured: { extraction: 'metadata_only', format: ext.slice(1) },
-        metadata: normalizeMetadata(md),
-        summary: `${ext.slice(1).toUpperCase()} metadata read. Text extraction is scaffolded for the native reader.`,
-      };
+      if (ext === '.doc') {
+        result = {
+          ref,
+          ok: false,
+          structured: { extraction: 'unsupported', format: 'doc' },
+          metadata: normalizeMetadata(md),
+          error: 'unsupported_legacy_doc: convert .doc to .docx first',
+        };
+      } else {
+        const raw = await (io.extractText ? io.extractText(target) : invoke<string>('document_extract_text', { path: target }));
+        const cut = truncate(raw, limits.maxTextChars);
+        result = {
+          ref,
+          ok: true,
+          contentText: cut.text,
+          structured: { extraction: 'text', format: ext.slice(1) },
+          metadata: { ...normalizeMetadata(md), truncated: cut.truncated },
+        };
+      }
     } else if (IMAGE_EXT.has(ext)) {
       result = {
         ref,

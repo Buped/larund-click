@@ -53,7 +53,7 @@ export type ControlAction =
   // Local documents. GUI Office automation is optional; file output is primary.
   | { action: 'doc.read'; path: string }
   | { action: 'doc.write_txt'; path: string; content: string }
-  | { action: 'doc.write_docx'; path: string; content: string }
+  | { action: 'doc.write_docx'; path: string; content: string; title?: string; tables?: string[][][] }
 
   // ── Clipboard ─────────────────────────────────────────────────────────
   | { action: 'clipboard.get' }

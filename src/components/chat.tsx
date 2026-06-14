@@ -12,7 +12,8 @@ import type { UserCredits } from '../lib/supabase';
 import { ReferenceChip } from './chat/ReferenceChip';
 import { ReferencePicker } from './chat/ReferencePicker';
 import type { DocumentReference } from '../lib/references/types';
-import { appendReferenceSummary } from '../lib/references/serialize';
+import { appendReferenceSummary, deserializeReferences, serializeReferences } from '../lib/references/serialize';
+import { referenceFromPath, referenceFromUrl } from '../lib/references/local-picker';
 import { policyForAutonomyMode, type AutonomyMode as PolicyAutonomyMode } from '../lib/tools/policy';
 
 // ─── Model picker ─────────────────────────────────────────────────────────────
@@ -480,6 +481,7 @@ interface AgentMsgContentProps {
   askAnswer: string;
   onAskAnswerChange: (v: string) => void;
   onAskSubmit: () => void;
+  onAskQuickAnswer: (answer: string) => void;
   onStop: () => void;
   finalText?: string;
   isError?: boolean;
@@ -488,11 +490,12 @@ interface AgentMsgContentProps {
 function AgentMsgContent({
   steps, status,
   askQuestion, askAnswer, onAskAnswerChange, onAskSubmit,
-  onStop, finalText, isError,
+  onAskQuickAnswer, onStop, finalText, isError,
 }: AgentMsgContentProps) {
   const [stepsOpen, setStepsOpen] = useState(true);
   const isRunning = status !== 'complete' && status !== 'error';
   const callCount = steps.filter(s => s.type === 'tool_call').length;
+  const isApprovalPrompt = Boolean(askQuestion && /Approval needed|Approve action/i.test(askQuestion));
 
   const headerLabel = isRunning
     ? ({ idle: 'Starting…', planning: 'Planning…', executing: 'Executing…', waiting_user: 'Waiting for input…' }[status] ?? 'Working…')
@@ -594,30 +597,40 @@ function AgentMsgContent({
             {askQuestion}
           </div>
           <div style={{ display: 'flex', gap: 7 }}>
-            <input
-              autoFocus
-              value={askAnswer}
-              onChange={e => onAskAnswerChange(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && askAnswer.trim()) onAskSubmit(); }}
-              placeholder="Your answer…"
-              style={{
-                flex: 1, padding: '7px 11px', borderRadius: 7,
-                border: '1px solid var(--border-md)',
-                background: 'rgba(0,0,0,.35)',
-                color: 'var(--text-primary)',
-                fontSize: 13, fontFamily: 'inherit', outline: 'none',
-              }}
-              onFocus={e => { (e.currentTarget as HTMLElement).style.borderColor = 'rgba(74,158,255,.4)'; }}
-              onBlur={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-md)'; }}
-            />
-            <button
-              className="btn btn-primary"
-              onClick={onAskSubmit}
-              disabled={!askAnswer.trim()}
-              style={{ opacity: askAnswer.trim() ? 1 : 0.38, fontSize: 12.5, height: 34 }}
-            >
-              Send
-            </button>
+            {isApprovalPrompt ? (
+              <>
+                <button className="btn btn-primary" onClick={() => onAskQuickAnswer('allow_once')} style={{ fontSize: 12.5, height: 34 }}>Allow once</button>
+                <button className="btn btn-ghost" onClick={() => onAskQuickAnswer('allow_always')} style={{ fontSize: 12.5, height: 34 }}>Always</button>
+                <button className="btn btn-ghost" onClick={() => onAskQuickAnswer('deny')} style={{ fontSize: 12.5, height: 34, color: 'var(--danger)' }}>Deny</button>
+              </>
+            ) : (
+              <>
+                <input
+                  autoFocus
+                  value={askAnswer}
+                  onChange={e => onAskAnswerChange(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && askAnswer.trim()) onAskSubmit(); }}
+                  placeholder="Your answer..."
+                  style={{
+                    flex: 1, padding: '7px 11px', borderRadius: 7,
+                    border: '1px solid var(--border-md)',
+                    background: 'rgba(0,0,0,.35)',
+                    color: 'var(--text-primary)',
+                    fontSize: 13, fontFamily: 'inherit', outline: 'none',
+                  }}
+                  onFocus={e => { (e.currentTarget as HTMLElement).style.borderColor = 'rgba(74,158,255,.4)'; }}
+                  onBlur={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-md)'; }}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={onAskSubmit}
+                  disabled={!askAnswer.trim()}
+                  style={{ opacity: askAnswer.trim() ? 1 : 0.38, fontSize: 12.5, height: 34 }}
+                >
+                  Send
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -651,6 +664,7 @@ type Message = {
   agent_status?: string | null;
   agent_steps_json?: string | null;
   agent_ask_question?: string | null;
+  references_json?: string | null;
   _loading?: boolean;
   _usage?: string;
   _error?: boolean;
@@ -660,6 +674,7 @@ type Message = {
   _agentStatus?: AgentStatus;
   _agentSteps?: AgentStep[];
   _agentAskQuestion?: string | null;
+  _references?: DocumentReference[];
 };
 
 type RunningTask = {
@@ -690,6 +705,7 @@ function parseAgentSteps(raw?: string | null): AgentStep[] {
 function hydrateMessage(row: any): Message {
   const isAgent = row.message_type === 'agent'
     || Boolean(row.agent_status || row.agent_steps_json || row.agent_ask_question);
+  const references = deserializeReferences(row.references_json || undefined);
 
   return {
     ...row,
@@ -698,6 +714,7 @@ function hydrateMessage(row: any): Message {
     _agentSteps: parseAgentSteps(row.agent_steps_json),
     _agentAskQuestion: row.agent_ask_question ?? null,
     _error: Boolean(row._error) || (isAgent && row.agent_status === 'error'),
+    _references: references,
   };
 }
 
@@ -758,6 +775,30 @@ export function ChatScreen({
     setInput(e.target.value);
     growTextarea();
     if (e.target.value.endsWith('@')) setReferencePickerOpen(true);
+  }
+
+  function handleReferencesPicked(picked: DocumentReference[]) {
+    setReferences((current) => [...current, ...picked]);
+    setInput((value) => value.endsWith('@') ? value.slice(0, -1).trimEnd() : value);
+    setReferencePickerOpen(false);
+    setTimeout(growTextarea, 0);
+  }
+
+  function handleReferenceDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    const refs: DocumentReference[] = [];
+    for (const file of Array.from(e.dataTransfer.files || [])) {
+      const path = (file as File & { path?: string }).path;
+      if (path) refs.push(referenceFromPath(path, 'file'));
+    }
+    const text = e.dataTransfer.getData('text/plain')?.trim();
+    if (text) {
+      for (const line of text.split(/\r?\n/).map((v) => v.trim()).filter(Boolean)) {
+        if (/^https?:\/\//i.test(line)) refs.push(referenceFromUrl(line));
+        else if (/^[a-zA-Z]:[\\/]/.test(line) || line.startsWith('/') || line.startsWith('\\\\')) refs.push(referenceFromPath(line, 'file'));
+      }
+    }
+    if (refs.length > 0) setReferences((current) => [...current, ...refs]);
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
@@ -834,6 +875,13 @@ export function ChatScreen({
   function handleAskSubmit() {
     if (!agentAskAnswer.trim() || !askResolveRef.current) return;
     askResolveRef.current(agentAskAnswer.trim());
+    askResolveRef.current = null;
+    setAgentAskAnswer('');
+  }
+
+  function handleAskQuickAnswer(answer: string) {
+    if (!askResolveRef.current) return;
+    askResolveRef.current(answer);
     askResolveRef.current = null;
     setAgentAskAnswer('');
   }
@@ -930,6 +978,24 @@ export function ChatScreen({
           };
         }),
 
+        onApproval: (req) => new Promise<'allow_once' | 'allow_always' | 'deny'>(resolve => {
+          appendStep({
+            id: `approval-${Date.now()}`,
+            type: 'approval',
+            tool: req.action,
+            risk: req.risk,
+            output: req.reason,
+            timestamp: new Date().toISOString(),
+          });
+          const question = `Approve action: ${req.action} (${req.risk})\n${req.reason}\nArgs: ${req.argsSummary}`;
+          syncAgentState({ askQuestion: question, status: 'waiting_user' }, { _agentAskQuestion: question, _agentStatus: 'waiting_user' });
+          askResolveRef.current = (answer: string) => {
+            syncAgentState({ askQuestion: null, status: 'executing' }, { _agentAskQuestion: null, _agentStatus: 'executing' });
+            const normalized = answer === 'allow_always' || answer === 'deny' ? answer : 'allow_once';
+            resolve(normalized);
+          };
+        }),
+
         onComplete: (summary) => {
           syncAgentState(
             { content: summary, status: 'complete', askQuestion: null },
@@ -986,8 +1052,12 @@ export function ChatScreen({
     setMessages(prev => [...prev, {
       id: userMsgId, session_id: sessionId!,
       role: 'user', content: messageText, created_at: new Date().toISOString(),
+      references_json: serializeReferences(taskReferences),
+      _references: taskReferences,
     }]);
-    addMessage(userMsgId, sessionId, 'user', messageText).catch(err =>
+    addMessage(userMsgId, sessionId, 'user', messageText, {
+      references_json: serializeReferences(taskReferences),
+    }).catch(err =>
       console.warn('Failed to save user message:', err),
     );
 
@@ -1126,7 +1196,16 @@ export function ChatScreen({
                 {messages.map(msg => {
                   // ── User bubble ──
                   if (msg.role === 'user') {
-                    return <UserMsg key={msg.id}>{msg.content}</UserMsg>;
+                    return (
+                      <UserMsg key={msg.id}>
+                        <div>{msg.content}</div>
+                        {(msg._references?.length ?? 0) > 0 && (
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8, justifyContent: 'flex-end' }}>
+                            {msg._references!.map((ref) => <ReferenceChip key={ref.id} refItem={ref} />)}
+                          </div>
+                        )}
+                      </UserMsg>
+                    );
                   }
 
                   // ── Agent execution bubble ──
@@ -1146,6 +1225,7 @@ export function ChatScreen({
                               askAnswer={agentAskAnswer}
                               onAskAnswerChange={setAgentAskAnswer}
                               onAskSubmit={handleAskSubmit}
+                              onAskQuickAnswer={handleAskQuickAnswer}
                               onStop={handleAgentStop}
                               finalText={msg.content || undefined}
                               isError={msg._error}
@@ -1211,6 +1291,8 @@ export function ChatScreen({
           <div className="chat-col">
             <div
               className={`chat-input-box${agentMode ? ' chat-input-box--agent' : ''}${runningTask ? ' chat-input-box--working' : ''}`}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={handleReferenceDrop}
             >
 
               {/* Attachment previews */}
@@ -1261,7 +1343,7 @@ export function ChatScreen({
               )}
               <ReferencePicker
                 open={referencePickerOpen}
-                onPicked={(picked) => setReferences((current) => [...current, ...picked])}
+                onPicked={handleReferencesPicked}
                 onClose={() => setReferencePickerOpen(false)}
               />
 

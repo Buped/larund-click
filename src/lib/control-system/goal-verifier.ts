@@ -32,8 +32,39 @@ function lastSuccess(recent: RecentAction[], actions: Set<string>): number {
   return -1;
 }
 
+function normalizeText(value: string): string {
+  return value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function expectedValues(state: ActiveTaskState): string[] {
+  const direct = state.expectedData?.values ?? state.expectedData?.rows?.flat() ?? [];
+  const fromArtifacts = state.expectedArtifacts?.flatMap((a) => a.values ?? a.rows?.flat() ?? []) ?? [];
+  return [...direct, ...fromArtifacts].map((v) => String(v).trim()).filter(Boolean);
+}
+
+function outputContainsExpected(output: string | undefined, expected: string[], minMatches: number): boolean {
+  if (!output || expected.length === 0) return false;
+  const hay = normalizeText(output);
+  const values = [...new Set(expected.map(normalizeText).filter(Boolean))];
+  const matches = values.filter((v) => hay.includes(v)).length;
+  return matches >= Math.min(minMatches, values.length);
+}
+
+function readbackHasRows(output: string | undefined): boolean {
+  if (!output) return false;
+  try {
+    const parsed = JSON.parse(output) as { values?: unknown[]; rowCount?: number; row_count?: number };
+    if (typeof parsed.rowCount === 'number' && parsed.rowCount > 0) return true;
+    if (typeof parsed.row_count === 'number' && parsed.row_count > 0) return true;
+    if (Array.isArray(parsed.values) && parsed.values.length > 0) return true;
+  } catch {
+    // Plain text is handled below.
+  }
+  return output.trim().length > 8 && !/^\s*(ok|true|success)\s*$/i.test(output);
+}
+
 /** A cloud Google Sheet is only done with real, verified data in the online grid. */
-function verifyCloudSheet(recent: RecentAction[]): Verification {
+function verifyCloudSheet(state: ActiveTaskState, recent: RecentAction[]): Verification {
   // A local sheet.write NEVER satisfies a cloud sheet task.
   const onlyLocal = succeeded(recent, 'sheet.write') &&
     !anySucceeded(recent, new Set(['browser.paste', 'browser.shortcut', 'browser.type', 'connection.call']));
@@ -45,25 +76,45 @@ function verifyCloudSheet(recent: RecentAction[]): Verification {
     };
   }
 
-  // Connection path: a successful Google Sheets write through a connection.
+  // Connection path: a write must be followed by a values read-back.
   const connWrite = recent.some(
-    (a) => a.action === 'connection.call' && a.success && /sheets?\.(write|append|update|create)/i.test(a.argsSummary ?? ''),
+    (a) => a.action === 'connection.call' && a.success && /google\.sheets\.(write_values|append_values)/i.test(a.argsSummary ?? ''),
   );
-  const connRead = recent.some(
-    (a) => a.action === 'connection.call' && a.success && /sheets?\.(read|get_metadata|read_values)/i.test(a.argsSummary ?? ''),
+  const connRead = [...recent].reverse().find(
+    (a) => a.action === 'connection.call' && a.success && /google\.sheets\.read_values/i.test(a.argsSummary ?? ''),
   );
-  if (connWrite && connRead) return { ok: true, reason: 'Google Sheets connection wrote and read back the sheet.', nextStepHint: '' };
+  const expected = expectedValues(state);
+  if (connWrite && connRead) {
+    if (expected.length > 0 && !outputContainsExpected(connRead.output, expected, 2)) {
+      return {
+        ok: false,
+        reason: 'Google Sheets read-back does not contain the expected written values.',
+        nextStepHint: 'Read the sheet values again and compare them with the rows you wrote.',
+      };
+    }
+    if (expected.length === 0 && !readbackHasRows(connRead.output)) {
+      return {
+        ok: false,
+        reason: 'Google Sheets read-back did not prove that rows are present.',
+        nextStepHint: 'Read a populated range with google.sheets.read_values.',
+      };
+    }
+    return { ok: true, reason: 'Google Sheets connection wrote and read back matching values.', nextStepHint: '' };
+  }
   if (connWrite && !connRead) {
     return {
       ok: false,
       reason: 'Google Sheets was written through the connection but not read back.',
-      nextStepHint: 'Call google.sheets.read_values or get_metadata to verify rows/header presence.',
+      nextStepHint: 'Call google.sheets.read_values to verify rows/header presence.',
     };
   }
 
-  // Browser path: a paste/type into the grid + a read-back that is not a login wall.
+  // Browser path: paste/type is not proof. Require concrete cell evidence.
   const wrote = anySucceeded(recent, new Set(['browser.paste', 'browser.shortcut', 'browser.type']));
-  const read = lastSuccess(recent, new Set(['browser.read', 'browser.get_state', 'browser.assert_text']));
+  const read = lastSuccess(recent, new Set(['browser.read', 'browser.get_state']));
+  const contentProof = [...recent].reverse().find(
+    (a) => a.success && ['browser.assert_text', 'browser.extract_table', 'browser.download', 'sheet.read', 'file.read'].includes(a.action),
+  );
   if (!succeeded(recent, 'browser.open')) {
     return { ok: false, reason: 'The Google Sheet was never opened.', nextStepHint: 'browser.open https://sheets.new' };
   }
@@ -76,10 +127,21 @@ function verifyCloudSheet(recent: RecentAction[]): Verification {
   if (!wrote) {
     return { ok: false, reason: 'The online sheet is still empty — no paste/type into the grid succeeded.', nextStepHint: 'Set the clipboard to TSV and browser.paste into A1, then read back.' };
   }
-  if (read < 0) {
-    return { ok: false, reason: 'Data was sent but never verified in the online sheet.', nextStepHint: 'browser.read / browser.assert_text to confirm the rows are present.' };
+  if (!contentProof) {
+    return {
+      ok: false,
+      reason: 'Data was sent to the browser, but no reliable cell-content proof was captured.',
+      nextStepHint: 'Use browser.assert_text for concrete cell values, browser.extract_table, export/read a file, or connect Google Workspace.',
+    };
   }
-  return { ok: true, reason: 'Data pasted into the online sheet and confirmed by read-back.', nextStepHint: '' };
+  if (expected.length > 0 && !outputContainsExpected(contentProof.output, expected, 2)) {
+    return {
+      ok: false,
+      reason: 'Browser verification did not contain enough expected cell values.',
+      nextStepHint: 'Assert at least 2-3 concrete values from the rows you wrote, or use Google Sheets API read-back.',
+    };
+  }
+  return { ok: true, reason: 'Online Google Sheet contents were verified with concrete cell evidence.', nextStepHint: '' };
 }
 
 function verifyLocalSheet(recent: RecentAction[]): Verification {
@@ -92,7 +154,7 @@ function verifyLocalSheet(recent: RecentAction[]): Verification {
   return { ok: true, reason: 'Local spreadsheet written and confirmed by read-back.', nextStepHint: '' };
 }
 
-function verifyDocumentAccounting(recent: RecentAction[], cloudTarget: boolean): Verification {
+function verifyDocumentAccounting(state: ActiveTaskState, recent: RecentAction[], cloudTarget: boolean): Verification {
   if (!anySucceeded(recent, DOCUMENT_READS) && !succeeded(recent, 'file.read')) {
     return {
       ok: false,
@@ -100,7 +162,7 @@ function verifyDocumentAccounting(recent: RecentAction[], cloudTarget: boolean):
       nextStepHint: 'Use document.read/read_many or folder.read_relevant on the referenced invoices first.',
     };
   }
-  return cloudTarget ? verifyCloudSheet(recent) : verifyLocalSheet(recent);
+  return cloudTarget ? verifyCloudSheet(state, recent) : verifyLocalSheet(recent);
 }
 
 function verifyFileOps(recent: RecentAction[]): Verification {
@@ -129,15 +191,15 @@ export function verifyCompletion(state: ActiveTaskState, recent: RecentAction[])
 
   const wantsAccounting = /invoice|sz[áa]mla|accounting|k[oö]nyvel/i.test(`${state.originalUserGoal} ${state.currentGoal}`);
   if (wantsAccounting && (state.intent === 'spreadsheet_cloud' || state.targetDocument?.type === 'google_sheet')) {
-    return verifyDocumentAccounting(recent, true);
+    return verifyDocumentAccounting(state, recent, true);
   }
   if (wantsAccounting && (state.intent === 'spreadsheet_local' || /xlsx|excel|csv/i.test(state.originalUserGoal))) {
-    return verifyDocumentAccounting(recent, false);
+    return verifyDocumentAccounting(state, recent, false);
   }
 
   switch (state.intent) {
     case 'spreadsheet_cloud':
-      return verifyCloudSheet(recent);
+      return verifyCloudSheet(state, recent);
     case 'spreadsheet_local':
       return verifyLocalSheet(recent);
     case 'file_ops':
