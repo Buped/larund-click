@@ -56,6 +56,14 @@ export function parseSkillFile(text: string): ParsedSkillFile {
     requires_connections: parseList(fields.requires_connections ?? '[]'),
     risk,
     trigger: fields.trigger ? parseScalar(fields.trigger) : undefined,
+    // Optional rich metadata — only set when present in the frontmatter.
+    version: fields.version ? parseScalar(fields.version) : undefined,
+    categories: fields.categories ? parseList(fields.categories) : undefined,
+    verification_checklist: fields.verification_checklist ? parseList(fields.verification_checklist) : undefined,
+    when_to_use: fields.when_to_use ? parseList(fields.when_to_use) : undefined,
+    when_not_to_use: fields.when_not_to_use ? parseList(fields.when_not_to_use) : undefined,
+    required_mcp_servers: fields.required_mcp_servers ? parseList(fields.required_mcp_servers) : undefined,
+    enabled_by_default: fields.enabled_by_default ? /^(true|yes|1)$/i.test(parseScalar(fields.enabled_by_default)) : undefined,
   };
   return { manifest, body: body.trim() };
 }

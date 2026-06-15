@@ -48,3 +48,36 @@ prompt when it is run (`skill.run`) or relevant (`findRelevantSkill`).
 `{"action":"skill.run","skill":"file-organizer","input":{}}` loads the skill's
 allowed-tools and body so the model follows the workflow. Invalid frontmatter
 leaves the skill listed but disabled with an `error`.
+
+## Phase 1 — Rich manifests, ranking & workspace scoping
+
+The legacy bundled `SKILL.md` files (name/description/allowed_tools/
+requires_connections/risk/trigger) are unchanged and still load. A purely additive
+**rich-manifest layer** (`src/lib/skills/manifest.ts`) derives a product-grade view:
+
+```ts
+RichSkillManifest {
+  id;            // `${source}:${name}`, e.g. "bundled:file-organizer"
+  name; version; // version defaults to 1.0.0 when absent
+  description; trigger[]; categories[];      // categories inferred when undeclared
+  allowedTools[]; requiredConnections[]; requiredMcpServers[];
+  risk;
+  verificationChecklist[];                    // sensible default by risk when absent
+  whenToUse[]; whenNotToUse[];
+  enabledByDefault; source;                   // bundled | workspace | user | marketplace
+}
+```
+
+Optional frontmatter fields are now parsed too: `version`, `categories`,
+`verification_checklist`, `when_to_use`, `when_not_to_use`, `required_mcp_servers`,
+`enabled_by_default`.
+
+**Ranking** (`src/lib/skills/ranking.ts`) is workspace-aware:
+- `isSkillEnabled` respects a workspace's `enabledSkillIds` (empty = `enabledByDefault`).
+- `rankSkillsForTask` scores by trigger/name/category/description overlap and
+  **flags + de-prioritizes** skills whose required connection is not available.
+- `renderRelevantSkills` emits a compact "Relevant skills" prompt block (top 4) — only
+  relevant, workspace-enabled skills, never the whole library.
+
+`skill.run` behavior is unchanged. UI: Coworker → **Skills** tab lists every skill with
+risk, version, categories, allowed tools and required connections.

@@ -22,6 +22,13 @@ import { manualHandoffMessage } from '../browser-workflows/manual-blockers';
 import { sanitizeArgs } from '../tools/audit';
 import type { DocumentReference } from '../references/types';
 import { ingestReferences, buildReferenceMessageContent } from '../references/ingest';
+import {
+  buildCoworkerPromptContext,
+  recordMemoryUsage,
+  startTaskTracker,
+  type TaskTracker,
+} from '../coworker/run-context';
+import { blockedStatusFor } from '../tasks/evidence';
 
 export type AgentStatus = 'idle' | 'planning' | 'executing' | 'waiting_user' | 'complete' | 'error';
 export type AutonomyMode = 'full' | 'semi' | 'manual';
@@ -56,6 +63,12 @@ export interface AgentAbortSignal {
 export interface RunOptions {
   policy?: RiskPolicy;
   sessionId?: string;
+  /** Active workspace for this run. Falls back to the user's default workspace. */
+  workspaceId?: string;
+  /** Optional role template id shaping the prompt + skill ranking. */
+  roleId?: string;
+  /** Optional workflow template id whose steps/verification guide the run. */
+  workflowTemplateId?: string;
   workspaceRoot?: string;
   connections?: ConnectionRegistry;
   skills?: SkillRunner;
@@ -153,7 +166,9 @@ async function finalDeduct(userId: string, costUsd: number): Promise<void> {
 async function completeStopped(
   onStatus: AgentLoopCallbacks['onStatus'],
   onComplete: AgentLoopCallbacks['onComplete'],
+  tracker?: TaskTracker,
 ): Promise<void> {
+  await tracker?.setStatus('cancelled');
   await updateOverlay({ active: false, status: 'complete' });
   onStatus('complete');
   onComplete('Stopped.');
@@ -169,13 +184,39 @@ export async function runControlLoop(
 ): Promise<void> {
   const { onStatus, onStep, onAskUser, onComplete, onError } = callbacks;
   const steps: AgentStep[] = [];
-  const emitStep = (step: AgentStep) => { steps.push(step); onStep(step); };
+  // Mutable task tracker: starts as a no-op and is replaced once the persistent
+  // TaskRun is created. emitStep persists each step as evidence (best-effort).
+  let tracker: TaskTracker = { taskRunId: undefined, async recordStep() {}, async setStatus() {} };
+  const emitStep = (step: AgentStep) => {
+    steps.push(step);
+    onStep(step);
+    void tracker.recordStep(step);
+  };
 
   let totalCostUsd = 0;
   const policy = opts.policy ?? DEFAULT_POLICY;
   const sessionId = opts.sessionId ?? `sess-${Date.now()}`;
-  const workspaceRoot = opts.workspaceRoot ?? '~';
   const references = opts.references ?? [];
+
+  // Resolve workspace context (workspace summary + relevant memory + skills) and
+  // start persistent task tracking. All best-effort: failures never block the run.
+  const coworker = await buildCoworkerPromptContext({
+    userId, sessionId, task,
+    workspaceId: opts.workspaceId,
+    roleId: opts.roleId,
+    workflowTemplateId: opts.workflowTemplateId,
+  });
+  const workspaceRoot = opts.workspaceRoot ?? coworker.workspaceRoot ?? '~';
+  tracker = await startTaskTracker({
+    userId,
+    workspaceId: coworker.workspace?.id ?? opts.workspaceId,
+    sessionId,
+    task,
+    modelId,
+    autonomyMode: coworker.workspace?.autonomyMode ?? 'semi',
+    roleId: coworker.roleId,
+    workflowTemplateId: coworker.workflowTemplateId,
+  });
 
   const audit = new MemoryAuditLogger((entry) => callbacks.onAudit?.(entry));
   const approvals = new PromptApprovalService(async (req) => {
@@ -185,10 +226,16 @@ export async function runControlLoop(
     emitStep({ id: nowStepId('approval'), type: 'approval', tool: req.action.action, risk: req.risk, output: req.reason, timestamp: new Date().toISOString() });
     const answer = await onAskUser(`Approval needed for ${req.action.action} (${req.risk}). ${req.reason}\nArgs: ${req.argsSummary}\nReply "yes" to allow.`);
     return /^\s*(y|yes|allow|ok)/i.test(answer) ? 'allow_once' : 'deny';
+  }, 'deny', {
+    userId,
+    workspaceId: coworker.workspace?.id ?? opts.workspaceId,
+    taskRunId: tracker.taskRunId,
   });
 
   const connections = opts.connections ?? createConnectionRegistry(userId);
-  const skills = opts.skills ?? createSkillRunner();
+  // Scope the skill runner to the resolved workspace so enabled user/workspace
+  // builder skills (Phase 2) are runnable alongside the bundled ones.
+  const skills = opts.skills ?? createSkillRunner({ userId, workspaceId: coworker.workspace?.id ?? opts.workspaceId });
   const workflows = opts.workflows ?? createWorkflowRunner();
 
   const ctx = { userId, sessionId, workspaceRoot, task, references, audit, approvals, connections, skills, workflows, onAskUser, addCost: (usd: number) => { totalCostUsd += usd; } };
@@ -260,9 +307,13 @@ export async function runControlLoop(
     ? `\n\n## Recent conversation\n${history.map((m) => `${m.role}: ${m.content}`).join('\n')}`
     : '';
 
+  const coworkerBlock = coworker.promptBlock ? `\n\n${coworker.promptBlock}` : '';
   const systemPrompt =
-    `${CONTROL_SYSTEM_PROMPT}\n\n## Tool catalog\n${toolCatalogSummary()}\n\n## Workspace\n${workspaceRoot}` +
+    `${CONTROL_SYSTEM_PROMPT}\n\n## Tool catalog\n${toolCatalogSummary()}\n\n## Workspace\n${workspaceRoot}${coworkerBlock}` +
     `${historyBlock}\n\n${renderTaskStatePrompt(taskState)}\n\n## Current message\n${task}`;
+
+  // Surfaced memory counts as used (drives recency boost), fire-and-forget.
+  void recordMemoryUsage(coworker.usedMemoryIds);
 
   const messages: { role: 'user' | 'assistant' | 'system'; content: MessageContent }[] = [
     { role: 'system', content: systemPrompt },
@@ -279,7 +330,7 @@ export async function runControlLoop(
   // Rolling record of executed actions — the evidence the completion guard checks.
   for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     if (signal?.aborted) {
-      await completeStopped(onStatus, onComplete);
+      await completeStopped(onStatus, onComplete, tracker);
       return;
     }
 
@@ -305,10 +356,10 @@ export async function runControlLoop(
       globalThis.clearInterval(abortPoll);
     }
     if (signal?.aborted) {
-      await completeStopped(onStatus, onComplete);
+      await completeStopped(onStatus, onComplete, tracker);
       return;
     }
-    if (streamError) { onError(streamError); await updateOverlay({ active: false }); return; }
+    if (streamError) { await tracker.setStatus('failed', { error: streamError }); onError(streamError); await updateOverlay({ active: false }); return; }
 
     // Reject any retired mouse/cursor/visual action by name before parsing.
     const attempted = aiResponse.match(/"(?:action|tool)"\s*:\s*"([^"]+)"/)?.[1] ?? '';
@@ -334,13 +385,15 @@ export async function runControlLoop(
       onStatus('waiting_user');
       taskState.status = 'waiting_user';
       setActiveTask(sessionId, taskState);
+      await tracker.setStatus('needs_input');
       const answer = await onAskUser(action.question);
       if (signal?.aborted) {
-        await completeStopped(onStatus, onComplete);
+        await completeStopped(onStatus, onComplete, tracker);
         return;
       }
       taskState.status = 'running';
       setActiveTask(sessionId, taskState);
+      await tracker.setStatus('running');
       messages.push({ role: 'assistant', content: aiResponse });
       messages.push({ role: 'user', content: `User answered: ${answer}\nResume the SAME active task with the same goal.` });
       continue;
@@ -381,6 +434,7 @@ export async function runControlLoop(
       taskState.completedChecks = [...taskState.pendingChecks];
       taskState.pendingChecks = [];
       setActiveTask(sessionId, taskState);
+      await tracker.setStatus('completed', { summary: action.summary });
       await finalDeduct(userId, totalCostUsd);
       emitStep({ id: nowStepId('complete'), type: 'complete', output: action.summary, timestamp: new Date().toISOString() });
       await updateOverlay({ active: false, status: 'complete', task, steps });
@@ -391,7 +445,7 @@ export async function runControlLoop(
 
     const result = await runControlAction(action as ControlAction, ctx, policy);
     if (signal?.aborted) {
-      await completeStopped(onStatus, onComplete);
+      await completeStopped(onStatus, onComplete, tracker);
       return;
     }
 
@@ -425,6 +479,8 @@ export async function runControlLoop(
       taskState.lastKnownState = `${pageState.kind}${pageState.url ? ` @ ${pageState.url}` : ''}`;
       if (pageState.isManualBlocker) {
         taskState.status = 'blocked';
+        const blocker = pageState.kind === 'login_required' ? 'login' : pageState.kind === 'captcha' ? 'captcha' : 'permission';
+        await tracker.setStatus(blockedStatusFor(blocker));
         blockerNote = `\nMANUAL BLOCKER (${pageState.kind}). Do NOT complete. ask_user: "${manualHandoffMessage(pageState.kind === 'login_required' ? 'login_required' : pageState.kind === 'captcha' ? 'captcha' : 'permission_required')}" Then resume the same task.`;
       }
       setActiveTask(sessionId, taskState);
@@ -439,6 +495,7 @@ export async function runControlLoop(
     });
   }
 
+  await tracker.setStatus('failed', { error: `Reached maximum iterations (${MAX_ITERATIONS})` });
   await finalDeduct(userId, totalCostUsd);
   await updateOverlay({ active: false });
   onError(`Reached maximum iterations (${MAX_ITERATIONS})`);

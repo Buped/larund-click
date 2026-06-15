@@ -34,6 +34,11 @@ export interface AuditEntry {
   approvalId?: string;
   skill?: string;
   workflowId?: string;
+  toolSource?: 'builtin' | 'connection' | 'mcp' | 'custom_api' | 'workflow' | 'skill';
+  sourceId?: string;
+  metadataHash?: string;
+  sandboxDecision?: string;
+  promptToolSnapshot?: string;
 }
 
 export interface AuditLogger {

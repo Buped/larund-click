@@ -18,6 +18,13 @@ import { referenceFromPath } from '../lib/references/local-picker';
 import { ingestReferences } from '../lib/references/ingest';
 import { policyForAutonomyMode, type AutonomyMode as PolicyAutonomyMode } from '../lib/tools/policy';
 
+/** Read and clear the one-shot workflow template armed on the Workflows page. */
+function consumeActiveWorkflowTemplate(): string | undefined {
+  const id = localStorage.getItem('active_workflow_template_id');
+  if (id) localStorage.removeItem('active_workflow_template_id');
+  return id ?? undefined;
+}
+
 // ─── Model picker ─────────────────────────────────────────────────────────────
 
 function InlineModelPicker({ model, setModel }: { model: string; setModel: (m: string) => void }) {
@@ -1010,7 +1017,18 @@ export function ChatScreen({
         },
       },
       abortRef.current,
-      { sessionId, history, references: taskReferences, policy: policyForAutonomyMode(autonomyMode) },
+      {
+        sessionId,
+        history,
+        references: taskReferences,
+        policy: policyForAutonomyMode(autonomyMode),
+        // Active workspace/role/workflow chosen on the Coworker pages. All fall
+        // back gracefully inside the loop when unset. A workflow template is
+        // one-shot: it is consumed (cleared) once a run starts.
+        workspaceId: localStorage.getItem('active_workspace_id') ?? undefined,
+        roleId: localStorage.getItem('active_role_id') ?? undefined,
+        workflowTemplateId: consumeActiveWorkflowTemplate(),
+      },
     );
 
     await persistQueue;

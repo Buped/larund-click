@@ -308,6 +308,10 @@ export function Sidebar({ nav, activeChat, onChatChange, userEmail, refreshKey, 
 
       {/* ── Bottom nav ── */}
       <div className="sidebar-footer">
+        <button className="sidebar-nav-btn" onClick={() => nav('coworker')} title="Coworker Core">
+          <Icon name="grid" size={15} stroke={1.5} style={{ color: 'var(--text-hint)', flex: 'none' }} />
+          <span style={{ fontSize: 13, color: 'var(--text-muted)', flex: 1, textAlign: 'left' }}>Coworker</span>
+        </button>
         <button className="sidebar-nav-btn" onClick={() => nav('scheduler')} title="Scheduler">
           <Icon name="calendar" size={15} stroke={1.5} style={{ color: 'var(--text-hint)', flex: 'none' }} />
           <span style={{ fontSize: 13, color: 'var(--text-muted)', flex: 1, textAlign: 'left' }}>Scheduler</span>

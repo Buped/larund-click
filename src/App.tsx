@@ -3,11 +3,14 @@ import { ChatScreen }      from './components/chat';
 import { SchedulerScreen } from './components/scheduler';
 import { LiveScreen }      from './components/live';
 import { SettingsScreen }  from './components/settings';
+import { CoworkerScreen }  from './components/coworker';
 import { LoginScreen }     from './pages/Login';
 import { OnboardingScreen } from './pages/Onboarding';
 import { restoreSession, signOut } from './lib/auth';
 import { getUserCredits } from './lib/supabase';
 import { initDatabase } from './lib/database';
+import { installSqlCoworkerBackend } from './lib/coworker/sql-backend';
+import { restoreAutomationScheduler } from './lib/automations/scheduler';
 import type { AuthUser } from './lib/auth';
 import type { UserCredits } from './lib/supabase';
 
@@ -16,7 +19,13 @@ declare global {
 }
 
 type AppState = 'loading' | 'login' | 'onboarding' | 'app';
-type Screen   = 'chat' | 'scheduler' | 'overlay';
+type Screen   = 'chat' | 'scheduler' | 'overlay' | 'coworker';
+
+async function initStores(userId: string): Promise<void> {
+  await initDatabase(userId);
+  await installSqlCoworkerBackend();
+  await restoreAutomationScheduler(userId);
+}
 
 async function getOnboardingComplete(): Promise<boolean> {
   if (localStorage.getItem('onboarding_complete') === 'true') return true;
@@ -48,7 +57,7 @@ export default function App() {
       const [fetchedCredits, onboardingDone] = await Promise.all([
         getUserCredits(restoredUser.id),
         getOnboardingComplete(),
-        initDatabase(restoredUser.id),
+        initStores(restoredUser.id),
       ]);
       setUser(restoredUser);
       setCredits(fetchedCredits);
@@ -60,7 +69,7 @@ export default function App() {
     const [fetchedCredits, onboardingDone] = await Promise.all([
       getUserCredits(loggedInUser.id),
       getOnboardingComplete(),
-      initDatabase(loggedInUser.id),
+      initStores(loggedInUser.id),
     ]);
     setUser(loggedInUser);
     setCredits(fetchedCredits);
@@ -126,6 +135,7 @@ export default function App() {
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {screen === 'chat'      && <ChatScreen nav={nav} model={model} setModel={setModel} userEmail={user?.email ?? null} userId={user?.id ?? null} credits={credits} onCreditsRefresh={refreshCredits} />}
         {screen === 'scheduler' && <SchedulerScreen nav={nav} />}
+        {screen === 'coworker'  && <CoworkerScreen nav={nav} userId={user?.id ?? null} />}
         {screen === 'overlay'   && <LiveScreen nav={nav} />}
       </div>
       {showSettings && (
