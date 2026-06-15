@@ -79,6 +79,34 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'audit', label: 'Audit' },
 ];
 
+const TAB_ICONS: Record<Tab, string> = {
+  workspaces: 'folder',
+  memory: 'fileText',
+  skills: 'sparkle',
+  workflows: 'play',
+  roles: 'user',
+  connections: 'link',
+  tasks: 'check',
+  automations: 'zap',
+  queue: 'clock',
+  approvals: 'shield',
+  notifications: 'alert',
+  gateway: 'message',
+  mcp: 'cpu',
+  customApi: 'globe',
+  catalog: 'diamond',
+  sandbox: 'lock',
+  audit: 'search',
+};
+
+const TAB_GROUPS: Array<{ label: string; tabs: Tab[] }> = [
+  { label: 'Setup', tabs: ['workspaces', 'roles'] },
+  { label: 'Knowledge', tabs: ['memory', 'skills', 'workflows'] },
+  { label: 'Execution', tabs: ['tasks', 'automations', 'queue', 'approvals', 'notifications'] },
+  { label: 'Integrations', tabs: ['connections', 'gateway', 'mcp', 'customApi', 'catalog'] },
+  { label: 'Safety', tabs: ['sandbox', 'audit'] },
+];
+
 const EXPLANATIONS: Record<Tab, string> = {
   workspaces: 'Workspaces shape Larund around one context (its roots, connections, skills, autonomy).',
   memory: 'Durable knowledge Larund uses. Review suggestions before they become active. Only active memory reaches the agent.',
@@ -99,10 +127,10 @@ const EXPLANATIONS: Record<Tab, string> = {
   audit: 'Diagnostics for the no-mouse coworker core and all Phase 1/2 systems.',
 };
 
-const card: React.CSSProperties = { background: 'var(--bg-elevated)', border: '1px solid var(--border-md)', borderRadius: 10, padding: 14, marginBottom: 10 };
-const btn: React.CSSProperties = { background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '7px 12px', fontSize: 12.5, cursor: 'pointer', fontFamily: 'inherit' };
-const ghostBtn: React.CSSProperties = { background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 7, padding: '6px 10px', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' };
-const input: React.CSSProperties = { background: 'var(--bg-input)', border: '1px solid var(--border-md)', borderRadius: 6, padding: '7px 9px', fontSize: 12.5, color: 'var(--text-primary)', fontFamily: 'inherit', outline: 'none', width: '100%' };
+const card: React.CSSProperties = { background: 'rgba(22,22,20,0.72)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 8, padding: 14, marginBottom: 10, boxShadow: '0 14px 34px rgba(0,0,0,0.18)' };
+const btn: React.CSSProperties = { background: 'var(--accent)', color: '#04122a', border: 'none', borderRadius: 8, padding: '7px 12px', fontSize: 12.5, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 650, display: 'inline-flex', alignItems: 'center', gap: 6 };
+const ghostBtn: React.CSSProperties = { background: 'rgba(255,255,255,0.045)', color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 8, padding: '6px 10px', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 6 };
+const input: React.CSSProperties = { background: 'rgba(10,10,8,0.46)', border: '1px solid rgba(255,255,255,0.10)', borderRadius: 8, padding: '8px 10px', fontSize: 12.5, color: 'var(--text-primary)', fontFamily: 'inherit', outline: 'none', width: '100%' };
 const labelStyle: React.CSSProperties = { fontSize: 11, color: 'var(--text-hint)', textTransform: 'uppercase', letterSpacing: '.05em' };
 
 function statusColor(s: string): string {
@@ -113,16 +141,21 @@ function statusColor(s: string): string {
 }
 
 function Explain({ tab }: { tab: Tab }) {
-  return <div style={{ fontSize: 12, color: 'var(--text-hint)', marginBottom: 12, lineHeight: 1.5 }}>{EXPLANATIONS[tab]}</div>;
+  return <div className="core-explain">{EXPLANATIONS[tab]}</div>;
 }
 function Empty({ text }: { text: string }) {
-  return <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-hint)', fontSize: 12.5 }}>{text}</div>;
+  return (
+    <div className="core-empty">
+      <span className="core-empty-icon"><Icon name="sparkle" size={16} stroke={1.6} /></span>
+      <span>{text}</span>
+    </div>
+  );
 }
 function Loading() {
-  return <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-hint)', fontSize: 12.5 }}>Loading…</div>;
+  return <div className="core-empty">Loading...</div>;
 }
 function ErrorBox({ text }: { text: string }) {
-  return <div style={{ ...card, borderColor: 'var(--danger)', color: 'var(--danger)', fontSize: 12.5 }}>Error: {text}</div>;
+  return <div className="core-card core-card--danger" style={{ fontSize: 12.5 }}>Error: {text}</div>;
 }
 
 /** Hook: async list loader with loading/error states. */
@@ -168,16 +201,30 @@ function WorkspacesTab({ userId }: { userId: string }) {
   return (
     <div>
       <Explain tab="workspaces" />
-      <div style={{ ...card, display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 160 }}>
-          <div style={labelStyle}>New workspace</div>
-          <input style={input} value={name} placeholder="e.g. Marketing Client" onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} />
+      <div className="core-panel">
+        <div className="core-panel-heading">
+          <span className="core-panel-icon"><Icon name="folder" size={15} stroke={1.6} /></span>
+          <div>
+            <strong>New workspace</strong>
+            <span>Give Larund one focused context for tools, memory, skills, and autonomy.</span>
+          </div>
         </div>
-        <select style={{ ...input, width: 120 }} value={kind} onChange={e => setKind(e.target.value as WorkspaceKind)}>
-          {['personal', 'company', 'client', 'project', 'custom'].map(k => <option key={k} value={k}>{k}</option>)}
-        </select>
-        <button style={btn} onClick={add}>Create</button>
-        <button style={ghostBtn} onClick={() => setOnboarding(true)}>Guided setup →</button>
+        <div className="core-workspace-form">
+          <div className="core-field">
+            <div style={labelStyle}>Workspace name</div>
+            <input style={input} value={name} placeholder="e.g. Marketing Client" onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} />
+          </div>
+          <div className="core-field">
+            <div style={labelStyle}>Kind</div>
+            <select style={input} value={kind} onChange={e => setKind(e.target.value as WorkspaceKind)}>
+              {['personal', 'company', 'client', 'project', 'custom'].map(k => <option key={k} value={k}>{k}</option>)}
+            </select>
+          </div>
+          <div className="core-actions">
+            <button style={btn} onClick={add}><Icon name="plus" size={13} stroke={2} /> Create</button>
+            <button style={ghostBtn} onClick={() => setOnboarding(true)}>Guided setup</button>
+          </div>
+        </div>
       </div>
 
       {loading && <Loading />}
@@ -187,8 +234,8 @@ function WorkspacesTab({ userId }: { userId: string }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <strong style={{ fontSize: 14 }}>{ws.name}</strong>
-              <span style={{ fontSize: 10.5, color: 'var(--text-hint)', border: '1px solid var(--border)', borderRadius: 5, padding: '1px 6px' }}>{ws.kind}</span>
-              {activeId === ws.id && <span style={{ fontSize: 10.5, color: 'var(--success)' }}>● active</span>}
+              <span className="core-badge">{ws.kind}</span>
+              {activeId === ws.id && <span className="core-badge core-badge--success"><span className="dot dot-green" /> active</span>}
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
               {activeId !== ws.id && <button style={ghostBtn} onClick={() => setActive(ws.id)}>Set active</button>}
@@ -700,40 +747,73 @@ function AuditTab() {
 export function CoworkerScreen({ nav, userId }: { nav: (s: string) => void; userId: string | null }) {
   const [tab, setTab] = useState<Tab>('workspaces');
   const uid = userId ?? 'local';
+  const activeTab = TABS.find(t => t.id === tab) ?? TABS[0];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-app)', color: 'var(--text-primary)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-        <button style={ghostBtn} onClick={() => nav('chat')}><Icon name="chevron" size={13} stroke={1.5} /> Chat</button>
-        <strong style={{ fontSize: 15 }}>Coworker Core</strong>
-        <span style={{ fontSize: 11, color: 'var(--text-hint)', marginLeft: 'auto' }}>Customizable AI coworker · tools · skills · memory · verified · no mouse</span>
-      </div>
-      <div style={{ display: 'flex', gap: 4, padding: '8px 16px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
-        {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            style={{ ...ghostBtn, ...(tab === t.id ? { background: 'var(--accent)', color: '#fff', borderColor: 'var(--accent)' } : {}) }}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-      <div className="scroll" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 16 }}>
-        {tab === 'workspaces' && <WorkspacesTab userId={uid} />}
-        {tab === 'memory' && <MemoryTab userId={uid} />}
-        {tab === 'skills' && <SkillsTab userId={uid} />}
-        {tab === 'workflows' && <WorkflowsTab userId={uid} />}
-        {tab === 'roles' && <RolesTab />}
-        {tab === 'connections' && <ConnectionsTab />}
-        {tab === 'tasks' && <TasksTab userId={uid} />}
-        {tab === 'automations' && <AutomationsTab userId={uid} />}
-        {tab === 'queue' && <TaskQueueTab userId={uid} />}
-        {tab === 'approvals' && <ApprovalInboxTab userId={uid} />}
-        {tab === 'notifications' && <NotificationsTab userId={uid} />}
-        {tab === 'gateway' && <GatewayTab userId={uid} />}
-        {tab === 'mcp' && <McpHubTab userId={uid} />}
-        {tab === 'customApi' && <CustomApiTab userId={uid} />}
-        {tab === 'catalog' && <LocalCatalogTab userId={uid} />}
-        {tab === 'sandbox' && <SandboxTab />}
-        {tab === 'audit' && <AuditTab />}
+    <div className="core-main">
+      <header className="core-header">
+        <button className="core-back-btn" onClick={() => nav('chat')} title="Back to Chat">
+          <Icon name="arrowLeft" size={14} stroke={1.8} />
+          <span>Chat</span>
+        </button>
+        <div className="core-title-wrap">
+          <span className="core-title-icon"><Icon name="cpu" size={17} stroke={1.7} /></span>
+          <div>
+            <h1>Coworker Core</h1>
+            <p>{activeTab.label}</p>
+          </div>
+        </div>
+        <div className="core-header-chips">
+          <span className="core-badge core-badge--success"><span className="dot dot-green" /> verified</span>
+          <span className="core-badge"><Icon name="shield" size={11} stroke={1.8} /> no mouse</span>
+          <span className="core-badge"><Icon name="sparkle" size={11} stroke={1.8} /> customizable</span>
+        </div>
+      </header>
+
+      <div className="core-shell">
+        <nav className="core-rail" aria-label="Coworker Core sections">
+          {TAB_GROUPS.map(group => (
+            <div className="core-rail-group" key={group.label}>
+              <div className="core-rail-label">{group.label}</div>
+              {group.tabs.map(tabId => {
+                const t = TABS.find(item => item.id === tabId)!;
+                const active = tab === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    className={`core-tab${active ? ' core-tab--active' : ''}`}
+                    onClick={() => setTab(t.id)}
+                  >
+                    <Icon name={TAB_ICONS[t.id]} size={14} stroke={1.7} />
+                    <span>{t.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </nav>
+
+        <main className="core-content scroll">
+          <div className="core-content-inner">
+            {tab === 'workspaces' && <WorkspacesTab userId={uid} />}
+            {tab === 'memory' && <MemoryTab userId={uid} />}
+            {tab === 'skills' && <SkillsTab userId={uid} />}
+            {tab === 'workflows' && <WorkflowsTab userId={uid} />}
+            {tab === 'roles' && <RolesTab />}
+            {tab === 'connections' && <ConnectionsTab />}
+            {tab === 'tasks' && <TasksTab userId={uid} />}
+            {tab === 'automations' && <AutomationsTab userId={uid} />}
+            {tab === 'queue' && <TaskQueueTab userId={uid} />}
+            {tab === 'approvals' && <ApprovalInboxTab userId={uid} />}
+            {tab === 'notifications' && <NotificationsTab userId={uid} />}
+            {tab === 'gateway' && <GatewayTab userId={uid} />}
+            {tab === 'mcp' && <McpHubTab userId={uid} />}
+            {tab === 'customApi' && <CustomApiTab userId={uid} />}
+            {tab === 'catalog' && <LocalCatalogTab userId={uid} />}
+            {tab === 'sandbox' && <SandboxTab />}
+            {tab === 'audit' && <AuditTab />}
+          </div>
+        </main>
       </div>
     </div>
   );

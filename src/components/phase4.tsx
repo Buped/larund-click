@@ -13,11 +13,11 @@ import type { SkillPackage } from '../lib/skill-packages/types';
 import { listBuilderSkills } from '../lib/skills/builder/store';
 import type { SkillBuilderSkill } from '../lib/skills/builder/types';
 
-const card: React.CSSProperties = { background: 'var(--bg-elevated)', border: '1px solid var(--border-md)', borderRadius: 8, padding: 14, marginBottom: 10 };
-const btn: React.CSSProperties = { background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '7px 12px', fontSize: 12.5, cursor: 'pointer', fontFamily: 'inherit' };
-const ghostBtn: React.CSSProperties = { background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 7, padding: '6px 10px', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' };
+const card: React.CSSProperties = { background: 'rgba(22,22,20,0.72)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 8, padding: 14, marginBottom: 10, boxShadow: '0 14px 34px rgba(0,0,0,0.18)' };
+const btn: React.CSSProperties = { background: 'var(--accent)', color: '#04122a', border: 'none', borderRadius: 8, padding: '7px 12px', fontSize: 12.5, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 650 };
+const ghostBtn: React.CSSProperties = { background: 'rgba(255,255,255,0.045)', color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 8, padding: '6px 10px', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' };
 const dangerBtn: React.CSSProperties = { ...ghostBtn, color: 'var(--danger)' };
-const input: React.CSSProperties = { background: 'var(--bg-input)', border: '1px solid var(--border-md)', borderRadius: 6, padding: '7px 9px', fontSize: 12.5, color: 'var(--text-primary)', fontFamily: 'inherit', outline: 'none', width: '100%' };
+const input: React.CSSProperties = { background: 'rgba(10,10,8,0.46)', border: '1px solid rgba(255,255,255,0.10)', borderRadius: 8, padding: '8px 10px', fontSize: 12.5, color: 'var(--text-primary)', fontFamily: 'inherit', outline: 'none', width: '100%' };
 
 function tone(status: string): string {
   if (/approved|enabled|connected|verified|read_only/.test(status)) return 'var(--success)';
