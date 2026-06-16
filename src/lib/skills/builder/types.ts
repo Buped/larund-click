@@ -43,6 +43,8 @@ export interface SkillBuilderSkill {
   userId: string;
   workspaceId?: string;
   source: SkillBuilderSource;
+  /** Long-form markdown instructions the agent loads in full via skill.run. */
+  instructionBody?: string;
   triggerPhrases: string[];
   categories: string[];
   whenToUse: string[];
@@ -69,6 +71,7 @@ export interface CreateSkillBuilderInput {
   name: string;
   description: string;
   source?: SkillBuilderSource;
+  instructionBody?: string;
   triggerPhrases?: string[];
   categories?: string[];
   whenToUse?: string[];

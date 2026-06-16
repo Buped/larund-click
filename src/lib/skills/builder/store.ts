@@ -44,6 +44,7 @@ export async function createBuilderSkill(input: CreateSkillBuilderInput): Promis
     version: '1.0.0',
     description: input.description.trim(),
     source: input.source ?? (input.workspaceId ? 'workspace' : 'user'),
+    instructionBody: input.instructionBody?.trim() || undefined,
     triggerPhrases: input.triggerPhrases ?? [],
     categories: input.categories ?? ['general'],
     whenToUse: input.whenToUse ?? [],

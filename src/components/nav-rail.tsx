@@ -30,10 +30,32 @@ function emailInitials(email: string): string {
   return local.slice(0, 2).toUpperCase();
 }
 
+function NewWorkspaceModal({ onCreate, onClose }: { onCreate: (name: string) => void; onClose: () => void }) {
+  const [name, setName] = useState('');
+  return (
+    <div className="scrim" style={{ position: 'fixed', inset: 0, display: 'grid', placeItems: 'center', zIndex: 200, background: 'rgba(0,0,0,.6)' }}>
+      <div className="modal-pop" style={{ width: 360, background: 'var(--bg-elevated)', border: '1px solid var(--border-md)', borderRadius: 14, padding: 20 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>New workspace</div>
+        <input
+          autoFocus value={name} onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) onCreate(name.trim()); if (e.key === 'Escape') onClose(); }}
+          placeholder="e.g. Marketing Client"
+          style={{ width: '100%', background: 'rgba(10,10,8,0.46)', border: '1px solid var(--border-md)', borderRadius: 8, padding: '9px 11px', fontSize: 13, color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box' }}
+        />
+        <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
+          <button className="btn btn-ghost" style={{ height: 32, fontSize: 12.5 }} onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" style={{ height: 32, fontSize: 12.5 }} disabled={!name.trim()} onClick={() => onCreate(name.trim())}>Create</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WorkspaceSelector({ userId }: { userId: string }) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [activeId, setActiveId] = useState<string | null>(localStorage.getItem('active_workspace_id'));
   const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   async function load() {
@@ -65,9 +87,8 @@ function WorkspaceSelector({ userId }: { userId: string }) {
     setOpen(false);
   }
 
-  async function addWorkspace() {
-    const name = prompt('New workspace name')?.trim();
-    if (!name) return;
+  async function addWorkspace(name: string) {
+    setCreating(false);
     const ws = await createWorkspace({ userId, name, kind: 'project' });
     await load();
     pick(ws.id);
@@ -96,11 +117,12 @@ function WorkspaceSelector({ userId }: { userId: string }) {
             </button>
           ))}
           <div style={{ height: 1, background: 'var(--border)', margin: '3px 4px' }} />
-          <button onClick={addWorkspace} className="nav-ws-item" style={{ color: 'var(--text-muted)' }}>
+          <button onClick={() => { setOpen(false); setCreating(true); }} className="nav-ws-item" style={{ color: 'var(--text-muted)' }}>
             <Icon name="plus" size={12} stroke={2} style={{ color: 'var(--text-hint)' }} /> New workspace
           </button>
         </div>
       )}
+      {creating && <NewWorkspaceModal onCreate={addWorkspace} onClose={() => setCreating(false)} />}
     </div>
   );
 }

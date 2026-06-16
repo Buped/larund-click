@@ -74,6 +74,17 @@ describe('skill builder compiler', () => {
     expect(v.ok).toBe(true);
     expect(v.warnings.join(' ')).toMatch(/made\.up/);
   });
+
+  it('embeds long-form instructionBody so skill.run returns it verbatim', () => {
+    const longText = '## Goal\nProduce a weekly client report.\n\n## Style\nConcise, specific, no filler.';
+    const md = compileToMarkdown(sampleSkill({ instructionBody: longText }));
+    expect(md).toContain('## Instructions');
+    expect(md).toContain('Produce a weekly client report.');
+    expect(md).toContain('Concise, specific, no filler.');
+    // The compiled runtime body (what skill.run returns) carries the instructions.
+    const skill = compileToSkill(sampleSkill({ instructionBody: longText }));
+    expect(skill.body).toContain('## Style');
+  });
 });
 
 describe('skill builder store', () => {

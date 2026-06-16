@@ -62,6 +62,9 @@ export function compileToMarkdown(skill: SkillBuilderSkill): string {
     `# ${skill.name}`,
     skill.description,
     '',
+    // The long-form instruction body (if provided) is the heart of the skill —
+    // skill.run returns the full body so the agent follows it verbatim.
+    ...(skill.instructionBody?.trim() ? ['## Instructions', skill.instructionBody.trim(), ''] : []),
     '## Steps',
     stepLines,
     '',

@@ -69,7 +69,54 @@ export class MockMcpClient implements McpClient {
   }
 }
 
-let activeClient: McpClient = new MockMcpClient();
+/**
+ * Routes each MCP call to the right transport: real Streamable-HTTP servers go to
+ * the live client; stdio servers (only offered under Developer Mode) use the
+ * mock. Real remote servers therefore use a genuine MCP client path, while the
+ * mock stays available for local/dev validation. Transport is resolved from the
+ * config on connect and cached; other methods fall back to the store.
+ */
+export class RoutingMcpClient implements McpClient {
+  private mock = new MockMcpClient();
+  private route = new Map<string, 'http' | 'mock'>();
+  private http: McpClient | null = null;
+
+  private async httpClient(): Promise<McpClient> {
+    if (!this.http) {
+      const mod = await import('./http-client');
+      this.http = new mod.StreamableHttpMcpClient();
+    }
+    return this.http;
+  }
+
+  private async pick(serverId: string): Promise<McpClient> {
+    let which = this.route.get(serverId);
+    if (!which) {
+      // Resolve lazily for calls that skip connect (e.g. callMcpTool).
+      const { getMcpServer } = await import('./store');
+      const server = await getMcpServer(serverId);
+      which = server && server.transport === 'streamable_http' && server.url ? 'http' : 'mock';
+      this.route.set(serverId, which);
+    }
+    return which === 'http' ? this.httpClient() : this.mock;
+  }
+
+  async connect(config: McpServerConfig): Promise<void> {
+    const which = config.transport === 'streamable_http' && config.url ? 'http' : 'mock';
+    this.route.set(config.id, which);
+    return (which === 'http' ? this.httpClient() : Promise.resolve(this.mock)).then((c) => c.connect(config));
+  }
+  async disconnect(serverId: string) { return (await this.pick(serverId)).disconnect(serverId); }
+  async listTools(serverId: string) { return (await this.pick(serverId)).listTools(serverId); }
+  async listResources(serverId: string) { return (await this.pick(serverId)).listResources(serverId); }
+  async listPrompts(serverId: string) { return (await this.pick(serverId)).listPrompts(serverId); }
+  async callTool(serverId: string, toolName: string, args: Record<string, unknown>) { return (await this.pick(serverId)).callTool(serverId, toolName, args); }
+  async readResource(serverId: string, uri: string) { return (await this.pick(serverId)).readResource(serverId, uri); }
+  async getPrompt(serverId: string, name: string, args?: Record<string, unknown>) { return (await this.pick(serverId)).getPrompt(serverId, name, args); }
+  async healthCheck(serverId: string) { return (await this.pick(serverId)).healthCheck(serverId); }
+}
+
+let activeClient: McpClient = new RoutingMcpClient();
 
 export function setMcpClient(client: McpClient): void {
   activeClient = client;

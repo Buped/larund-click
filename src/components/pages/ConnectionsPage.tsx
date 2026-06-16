@@ -6,6 +6,7 @@
 
 import { useState } from 'react';
 import { Icon } from '../icons';
+import { BrandIcon } from '../BrandIcon';
 import { listProviders, planConnectionTest } from '../../lib/connections/hub/status';
 import type { ConnectionProvider, ProviderCategory } from '../../lib/connections/hub/types';
 import type { ToolRisk } from '../../lib/control-system/types';
@@ -28,12 +29,7 @@ const COMING_SOON: Array<{ id: string; name: string; category: ProviderCategory;
   { id: 'linear', name: 'Linear', category: 'productivity', description: 'Track issues and project work.' },
 ];
 
-const CATEGORY_ICON: Record<string, string> = {
-  productivity: 'folder', development: 'command', marketing: 'sparkle',
-  communication: 'message', data: 'fileText', custom: 'globe',
-};
-
-const CATEGORIES = ['All', 'Productivity', 'Development', 'Marketing', 'Communication', 'Data', 'Popular'] as const;
+const CATEGORIES = ['All', 'Connected', 'Productivity', 'Development', 'Marketing', 'Communication', 'Data'] as const;
 type Cat = typeof CATEGORIES[number];
 
 const RISK_GROUPS: Array<{ label: string; risks: ToolRisk[] }> = [
@@ -59,12 +55,8 @@ function statusLabel(p: ConnectionProvider): { text: string; color: string } {
   return { text: 'Not connected', color: 'var(--text-hint)' };
 }
 
-function ProviderIcon({ category, size = 18 }: { category: string; size?: number }) {
-  return (
-    <span style={{ width: size + 18, height: size + 18, borderRadius: 10, background: 'rgba(74,158,255,0.12)', display: 'grid', placeItems: 'center', flex: 'none' }}>
-      <Icon name={CATEGORY_ICON[category] ?? 'globe'} size={size} stroke={1.6} style={{ color: 'var(--accent)' }} />
-    </span>
-  );
+function ProviderIcon({ providerId, size = 38 }: { providerId: string; size?: number }) {
+  return <BrandIcon providerId={providerId} size={size} />;
 }
 
 function SetupModal({ provider, onClose, onSaved }: { provider: ConnectionProvider; onClose: () => void; onSaved: () => void }) {
@@ -100,7 +92,7 @@ function SetupModal({ provider, onClose, onSaved }: { provider: ConnectionProvid
     <div className="scrim" style={{ position: 'fixed', inset: 0, display: 'grid', placeItems: 'center', zIndex: 90, background: 'rgba(0,0,0,.65)' }}>
       <div className="modal-pop" style={{ width: 440, background: 'var(--bg-elevated)', border: '1px solid var(--border-md)', borderRadius: 14, padding: 22 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-          <ProviderIcon category={provider.category} />
+          <ProviderIcon providerId={provider.id} />
           <div><div style={{ fontSize: 15, fontWeight: 700 }}>Connect {provider.name}</div><div style={{ fontSize: 12, color: 'var(--text-hint)' }}>{isGoogle ? 'OAuth access token' : 'API key'}</div></div>
         </div>
         {isGoogle && (
@@ -137,7 +129,7 @@ function ProviderDetail({ provider, onBack, onChanged }: { provider: ConnectionP
     <PageFrame>
       <button style={{ ...ghostBtn, marginBottom: 14 }} onClick={onBack}><Icon name="arrowLeft" size={13} stroke={1.8} /> Connections</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
-        <ProviderIcon category={provider.category} size={26} />
+        <ProviderIcon providerId={provider.id} size={52} />
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <h1 style={{ fontSize: 21, fontWeight: 700, margin: 0 }}>{provider.name}</h1>
@@ -203,58 +195,84 @@ export function ConnectionsPage() {
   const [cat, setCat] = useState<Cat>('All');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<ConnectionProvider | null>(null);
+  const [showUpcoming, setShowUpcoming] = useState(false);
 
   function refresh() { setProviders(listProviders()); if (selected) setSelected(listProviders().find((p) => p.id === selected.id) ?? null); }
 
   if (selected) return <ProviderDetail provider={selected} onBack={() => setSelected(null)} onChanged={refresh} />;
 
-  // Synthesize coming-soon cards as read-only provider-shaped records.
+  // Real, runnable providers (registry) are "implemented". Everything else —
+  // registry scaffolds + aspirational entries — is "upcoming" and hidden by
+  // default behind the toggle so the default page only shows usable connectors.
+  const implemented = providers.filter((p) => !p.scaffold);
+  const registryUpcoming = providers.filter((p) => p.scaffold);
   const comingSoon: ConnectionProvider[] = COMING_SOON.map((c) => ({
     id: c.id, name: c.name, category: c.category, description: c.description,
     authType: 'oauth', tools: [], status: 'available', scaffold: true, envVars: [], scopes: [],
   }));
-  const all = [...providers, ...comingSoon];
+  const upcoming = [...registryUpcoming, ...comingSoon];
 
-  const filtered = all.filter((p) => {
-    if (query && !`${p.name} ${p.description}`.toLowerCase().includes(query.toLowerCase())) return false;
-    if (cat === 'All') return true;
-    if (cat === 'Popular') return !p.scaffold && p.status === 'configured';
-    return p.category === cat.toLowerCase();
-  });
+  function applyFilters(list: ConnectionProvider[]) {
+    return list.filter((p) => {
+      if (query && !`${p.name} ${p.description}`.toLowerCase().includes(query.toLowerCase())) return false;
+      if (cat === 'All') return true;
+      if (cat === 'Connected') return !p.scaffold && p.status === 'configured';
+      return p.category === cat.toLowerCase();
+    });
+  }
+  const filtered = applyFilters(implemented);
+  const filteredUpcoming = showUpcoming && cat !== 'Connected' ? applyFilters(upcoming) : [];
+
+  const Grid = ({ items }: { items: ConnectionProvider[] }) => (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
+      {items.map((p) => renderCard(p))}
+    </div>
+  );
+
+  function renderCard(p: ConnectionProvider) {
+    const st = statusLabel(p);
+    const isReal = providers.some((x) => x.id === p.id) && !p.scaffold;
+    return (
+      <button key={p.id} onClick={() => { if (isReal) setSelected(p); }} className="conn-card" style={{ cursor: isReal ? 'pointer' : 'default', opacity: isReal ? 1 : 0.72 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <ProviderIcon providerId={p.id} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
+            <div style={{ fontSize: 10.5, color: 'var(--text-hint)', textTransform: 'capitalize' }}>{p.category}</div>
+          </div>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45, minHeight: 34 }}>{p.description}</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
+          <span style={{ fontSize: 11, color: st.color, display: 'inline-flex', alignItems: 'center', gap: 5 }}><span className="dot" style={{ background: st.color }} /> {st.text}</span>
+          <span style={{ fontSize: 11.5, color: 'var(--accent)' }}>{p.scaffold ? '' : p.status === 'configured' ? 'Manage' : 'Connect'}</span>
+        </div>
+      </button>
+    );
+  }
 
   return (
     <PageFrame>
       <PageHeader title="Connections" subtitle="Connect Larund to the tools you already use." />
       <SearchInput value={query} onChange={setQuery} placeholder="Search connections…" />
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16, alignItems: 'center' }}>
         {CATEGORIES.map((c) => (
           <button key={c} onClick={() => setCat(c)} style={{ ...ghostBtn, ...(cat === c ? { background: 'var(--accent)', color: '#04122a', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }}>{c}</button>
         ))}
+        <div style={{ flex: 1 }} />
+        <button onClick={() => setShowUpcoming((v) => !v)} style={{ ...ghostBtn, ...(showUpcoming ? { color: 'var(--accent)', borderColor: 'rgba(74,158,255,.4)' } : {}) }}>
+          {showUpcoming ? 'Hide upcoming' : 'Show upcoming'}
+        </button>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
-        {filtered.map((p) => {
-          const st = statusLabel(p);
-          const isReal = providers.some((x) => x.id === p.id);
-          return (
-            <button key={p.id} onClick={() => { if (isReal) setSelected(p); }} className="conn-card" style={{ cursor: isReal ? 'pointer' : 'default', opacity: isReal ? 1 : 0.7 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                <ProviderIcon category={p.category} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
-                  <div style={{ fontSize: 10.5, color: 'var(--text-hint)', textTransform: 'capitalize' }}>{p.category}</div>
-                </div>
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45, minHeight: 34 }}>{p.description}</div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
-                <span style={{ fontSize: 11, color: st.color, display: 'inline-flex', alignItems: 'center', gap: 5 }}><span className="dot" style={{ background: st.color }} /> {st.text}</span>
-                <span style={{ fontSize: 11.5, color: 'var(--accent)' }}>{p.scaffold ? '' : p.status === 'configured' ? 'Manage' : 'Connect'}</span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+      <Grid items={filtered} />
       {filtered.length === 0 && <Empty text="No connections match your search." icon="link" />}
+
+      {filteredUpcoming.length > 0 && (
+        <>
+          <div style={{ ...labelStyle, margin: '22px 0 10px' }}>Available soon · not yet runnable</div>
+          <Grid items={filteredUpcoming} />
+        </>
+      )}
     </PageFrame>
   );
 }

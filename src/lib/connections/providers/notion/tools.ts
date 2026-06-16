@@ -1,8 +1,10 @@
 import type { ConnectionToolDefinition, ConnectionCallResult } from '../../types';
+import { mockOrMissingAuth } from '../../mock-guard';
 
 const API = 'https://api.notion.com/v1';
 const TOKEN_KEY = 'NOTION_TOKEN';
 const VERSION = '2022-06-28';
+const SETUP = 'Add a Notion internal integration token in Connections → Notion, and share the pages/databases with it.';
 
 function ok(output: string, details?: Record<string, unknown>): ConnectionCallResult {
   return { success: true, output, details };
@@ -39,7 +41,7 @@ export const notionTools: ConnectionToolDefinition[] = [
     risk: 'external_read',
     async run(args, secrets) {
       const token = secrets[TOKEN_KEY];
-      if (!token) return ok(`[mock] notion.search "${str(args.query)}" → 1 page`, { mock: true });
+      if (!token) return mockOrMissingAuth('Notion', 'notion.search', `notion.search "${str(args.query)}"`, SETUP);
       return nFetch('/search', token, { method: 'POST', body: JSON.stringify({ query: str(args.query) }) });
     },
   },
@@ -49,7 +51,7 @@ export const notionTools: ConnectionToolDefinition[] = [
     risk: 'external_read',
     async run(args, secrets) {
       const token = secrets[TOKEN_KEY];
-      if (!token) return ok(`[mock] notion.read_page ${str(args.pageId)}`, { mock: true });
+      if (!token) return mockOrMissingAuth('Notion', 'notion.read_page', `notion.read_page ${str(args.pageId)}`, SETUP);
       return nFetch(`/pages/${str(args.pageId)}`, token);
     },
   },
@@ -59,7 +61,7 @@ export const notionTools: ConnectionToolDefinition[] = [
     risk: 'external_read',
     async run(args, secrets) {
       const token = secrets[TOKEN_KEY];
-      if (!token) return ok(`[mock] notion.query_database ${str(args.databaseId)}`, { mock: true });
+      if (!token) return mockOrMissingAuth('Notion', 'notion.query_database', `notion.query_database ${str(args.databaseId)}`, SETUP);
       return nFetch(`/databases/${str(args.databaseId)}/query`, token, {
         method: 'POST', body: JSON.stringify({ filter: args.filter ?? undefined }),
       });
@@ -71,7 +73,7 @@ export const notionTools: ConnectionToolDefinition[] = [
     risk: 'external_write',
     async run(args, secrets) {
       const token = secrets[TOKEN_KEY];
-      if (!token) return ok(`[mock] notion.create_page (would create under ${JSON.stringify(args.parent)})`, { mock: true });
+      if (!token) return mockOrMissingAuth('Notion', 'notion.create_page', `notion.create_page`, SETUP);
       return nFetch('/pages', token, {
         method: 'POST',
         body: JSON.stringify({ parent: args.parent, properties: args.properties, children: args.children }),
@@ -84,7 +86,7 @@ export const notionTools: ConnectionToolDefinition[] = [
     risk: 'external_write',
     async run(args, secrets) {
       const token = secrets[TOKEN_KEY];
-      if (!token) return ok(`[mock] notion.update_page ${str(args.pageId)}`, { mock: true });
+      if (!token) return mockOrMissingAuth('Notion', 'notion.update_page', `notion.update_page ${str(args.pageId)}`, SETUP);
       return nFetch(`/pages/${str(args.pageId)}`, token, { method: 'PATCH', body: JSON.stringify({ properties: args.properties }) });
     },
   },
@@ -94,7 +96,7 @@ export const notionTools: ConnectionToolDefinition[] = [
     risk: 'external_write',
     async run(args, secrets) {
       const token = secrets[TOKEN_KEY];
-      if (!token) return ok(`[mock] notion.create_database_row in ${str(args.databaseId)}`, { mock: true });
+      if (!token) return mockOrMissingAuth('Notion', 'notion.create_database_row', `notion.create_database_row ${str(args.databaseId)}`, SETUP);
       return nFetch('/pages', token, {
         method: 'POST',
         body: JSON.stringify({ parent: { database_id: str(args.databaseId) }, properties: args.properties }),
@@ -107,7 +109,7 @@ export const notionTools: ConnectionToolDefinition[] = [
     risk: 'external_write',
     async run(args, secrets) {
       const token = secrets[TOKEN_KEY];
-      if (!token) return ok(`[mock] notion.update_database_row ${str(args.pageId)}`, { mock: true });
+      if (!token) return mockOrMissingAuth('Notion', 'notion.update_database_row', `notion.update_database_row ${str(args.pageId)}`, SETUP);
       return nFetch(`/pages/${str(args.pageId)}`, token, { method: 'PATCH', body: JSON.stringify({ properties: args.properties }) });
     },
   },

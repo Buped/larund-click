@@ -30,7 +30,11 @@
       "Bash(cargo fetch *)",
       "Bash(cd /d/Larund-click/src-tauri && cat .cargo/config.toml 2>/dev/null | head -30; echo \"=== exists? ===\"; ls -la .cargo/ 2>/dev/null)",
       "Read(//d/d/Larund-click/src-tauri/.cargo/**)",
-      "PowerShell(npx vitest run src/lib/document-reader 2>&1)"
+      "PowerShell(npx vitest run src/lib/document-reader 2>&1)",
+      "Bash(grep -rln \"mock\\\\|\\\\\\\\[mock\\\\\\\\]\" src/lib/connections/**/__tests__)",
+      "Bash(node -e \"const s=require\\('simple-icons'\\); console.log\\('siGithub' in s, Object.keys\\(s.siGithub||{}\\)\\); const g=s.siGithub; console.log\\(g.title, g.hex, g.slug, \\(g.path||''\\).slice\\(0,30\\)\\);\")",
+      "Bash(node -e ' *)",
+      "Bash(python -)"
     ]
   }
 }

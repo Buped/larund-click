@@ -1,7 +1,9 @@
 import type { ConnectionToolDefinition, ConnectionCallResult } from '../../types';
+import { mockOrMissingAuth } from '../../mock-guard';
 
 const API = 'https://api.github.com';
 const TOKEN_KEY = 'GITHUB_TOKEN';
+const SETUP = 'Add a GitHub personal access token (repo scope) in Connections → GitHub.';
 
 function ok(output: string, details?: Record<string, unknown>): ConnectionCallResult {
   return { success: true, output, details };
@@ -39,7 +41,7 @@ export const githubTools: ConnectionToolDefinition[] = [
     async run(args, secrets) {
       const token = secrets[TOKEN_KEY];
       const { owner, repo, path } = args as Record<string, string>;
-      if (!token) return ok(`[mock] github.read_file ${owner}/${repo}:${path}\n# ${repo}\nMock README content for ${owner}/${repo}.`, { mock: true });
+      if (!token) return mockOrMissingAuth('GitHub', 'github.read_file', `github.read_file ${owner}/${repo}:${path}`, SETUP);
       const ref = args.ref ? `?ref=${encodeURIComponent(str(args.ref))}` : '';
       const r = await ghFetch(`/repos/${owner}/${repo}/contents/${path}${ref}`, token);
       if (!r.success) return r;
@@ -59,7 +61,7 @@ export const githubTools: ConnectionToolDefinition[] = [
     async run(args, secrets) {
       const token = secrets[TOKEN_KEY];
       const q = str(args.q ?? args.query);
-      if (!token) return ok(`[mock] github.search_repos "${q}" → 1 result: example/${q || 'repo'}`, { mock: true });
+      if (!token) return mockOrMissingAuth('GitHub', 'github.search_repos', `github.search_repos "${q}"`, SETUP);
       return ghFetch(`/search/repositories?q=${encodeURIComponent(q)}`, token);
     },
   },
@@ -70,7 +72,7 @@ export const githubTools: ConnectionToolDefinition[] = [
     async run(args, secrets) {
       const token = secrets[TOKEN_KEY];
       const { owner, repo } = args as Record<string, string>;
-      if (!token) return ok(`[mock] github.list_issues ${owner}/${repo} → #1 Example issue (open)`, { mock: true });
+      if (!token) return mockOrMissingAuth('GitHub', 'github.list_issues', `github.list_issues ${owner}/${repo}`, SETUP);
       const state = str(args.state) || 'open';
       return ghFetch(`/repos/${owner}/${repo}/issues?state=${state}`, token);
     },
@@ -82,7 +84,7 @@ export const githubTools: ConnectionToolDefinition[] = [
     async run(args, secrets) {
       const token = secrets[TOKEN_KEY];
       const { owner, repo, path } = args as Record<string, string>;
-      if (!token) return ok(`[mock] github.write_file ${owner}/${repo}:${path} (would commit)`, { mock: true });
+      if (!token) return mockOrMissingAuth('GitHub', 'github.write_file', `github.write_file ${owner}/${repo}:${path}`, SETUP);
       const body = JSON.stringify({
         message: str(args.message) || `Update ${path}`,
         content: btoa(str(args.content)),
@@ -99,7 +101,7 @@ export const githubTools: ConnectionToolDefinition[] = [
     async run(args, secrets) {
       const token = secrets[TOKEN_KEY];
       const { owner, repo } = args as Record<string, string>;
-      if (!token) return ok(`[mock] github.create_branch ${owner}/${repo}:${str(args.branch)}`, { mock: true });
+      if (!token) return mockOrMissingAuth('GitHub', 'github.create_branch', `github.create_branch ${owner}/${repo}:${str(args.branch)}`, SETUP);
       const body = JSON.stringify({ ref: `refs/heads/${str(args.branch)}`, sha: str(args.from_sha) });
       return ghFetch(`/repos/${owner}/${repo}/git/refs`, token, { method: 'POST', body });
     },
@@ -111,7 +113,7 @@ export const githubTools: ConnectionToolDefinition[] = [
     async run(args, secrets) {
       const token = secrets[TOKEN_KEY];
       const { owner, repo } = args as Record<string, string>;
-      if (!token) return ok(`[mock] github.open_pr ${owner}/${repo}: "${str(args.title)}" ${str(args.head)}→${str(args.base)}`, { mock: true });
+      if (!token) return mockOrMissingAuth('GitHub', 'github.open_pr', `github.open_pr ${owner}/${repo}`, SETUP);
       const body = JSON.stringify({ title: str(args.title), head: str(args.head), base: str(args.base), body: str(args.body) });
       return ghFetch(`/repos/${owner}/${repo}/pulls`, token, { method: 'POST', body });
     },
@@ -123,7 +125,7 @@ export const githubTools: ConnectionToolDefinition[] = [
     async run(args, secrets) {
       const token = secrets[TOKEN_KEY];
       const { owner, repo } = args as Record<string, string>;
-      if (!token) return ok(`[mock] github.comment_issue ${owner}/${repo}#${str(args.number)}`, { mock: true });
+      if (!token) return mockOrMissingAuth('GitHub', 'github.comment_issue', `github.comment_issue ${owner}/${repo}#${str(args.number)}`, SETUP);
       const body = JSON.stringify({ body: str(args.body) });
       return ghFetch(`/repos/${owner}/${repo}/issues/${str(args.number)}/comments`, token, { method: 'POST', body });
     },

@@ -12,6 +12,7 @@ import type { ToolRisk } from '../../lib/control-system/types';
 import { BUILT_IN_ROLES } from '../../lib/roles/templates';
 import { listWorkflowTemplates } from '../../lib/workflows/templates/store';
 import type { WorkflowTemplate } from '../../lib/workflows/templates/types';
+import { listProviders } from '../../lib/connections/hub/status';
 import {
   PageFrame, PageHeader, Empty, Tabs, SearchInput, Badge,
   card, btn, ghostBtn, dangerBtn, input, labelStyle, statusColor, useAsyncList, getActiveWorkspaceId,
@@ -25,6 +26,7 @@ function CreateSkill({ userId, onDone, onCancel }: { userId: string; onDone: () 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [triggers, setTriggers] = useState('');
+  const [instructionBody, setInstructionBody] = useState('');
   const [steps, setSteps] = useState('');
   const [tools, setTools] = useState('');
   const [connections, setConnections] = useState('');
@@ -39,6 +41,7 @@ function CreateSkill({ userId, onDone, onCancel }: { userId: string; onDone: () 
     try {
       await createBuilderSkill({
         userId, workspaceId: getActiveWorkspaceId(), name, description,
+        instructionBody,
         triggerPhrases: triggers.split(',').map((s) => s.trim()).filter(Boolean),
         allowedTools: tools.split(',').map((s) => s.trim()).filter(Boolean),
         requiredConnections: connections.split(',').map((s) => s.trim()).filter(Boolean),
@@ -68,7 +71,10 @@ function CreateSkill({ userId, onDone, onCancel }: { userId: string; onDone: () 
       <Q q="What should this skill help with?"><input style={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Weekly client report" /></Q>
       <Q q="Describe it in one line"><input style={input} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Compile a weekly client report from a spreadsheet" /></Q>
       <Q q="When should Larund use it?" hint="Comma-separated phrases that should trigger this skill."><input style={input} value={triggers} onChange={(e) => setTriggers(e.target.value)} placeholder="weekly report, client report" /></Q>
-      <Q q="What steps should Larund follow?" hint='One per line, as "Title: instruction".'><textarea style={{ ...input, minHeight: 80, resize: 'vertical' }} value={steps} onChange={(e) => setSteps(e.target.value)} placeholder={'Read data: read the sales sheet\nWrite report: write a markdown report'} /></Q>
+      <Q q="Write the full instructions Larund should follow" hint="Long-form markdown. This is the heart of the skill — Larund loads it verbatim when the skill is selected.">
+        <textarea style={{ ...input, minHeight: 180, resize: 'vertical', fontFamily: 'var(--font-mono)', lineHeight: 1.55 }} value={instructionBody} onChange={(e) => setInstructionBody(e.target.value)} placeholder={'## Goal\nProduce a weekly client report.\n\n## Approach\n1. Pull the latest numbers from the source sheet.\n2. Summarize wins, risks, and next steps in clear prose.\n3. Save the report and read it back to verify.\n\n## Style\nConcise, specific, no filler.'} />
+      </Q>
+      <Q q="Optional: short step checklist" hint='One per line, as "Title: instruction". Larund uses these alongside the instructions above.'><textarea style={{ ...input, minHeight: 70, resize: 'vertical' }} value={steps} onChange={(e) => setSteps(e.target.value)} placeholder={'Read data: read the sales sheet\nWrite report: write a markdown report'} /></Q>
       <Q q="What tools & connections may it use?" hint="Optional. Comma-separated.">
         <input style={{ ...input, marginBottom: 8 }} value={tools} onChange={(e) => setTools(e.target.value)} placeholder="tools: sheet.read, file.write" />
         <input style={input} value={connections} onChange={(e) => setConnections(e.target.value)} placeholder="connections: google-workspace" />
@@ -80,6 +86,55 @@ function CreateSkill({ userId, onDone, onCancel }: { userId: string; onDone: () 
       {err && <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 10 }}>{err}</div>}
       <button style={btn} onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save skill'}</button>
     </PageFrame>
+  );
+}
+
+// Which required connections of a skill are not configured yet, so the card can
+// surface a "Needs connection" blocker (Connections + Skills integration).
+function missingConnections(required: string[]): string[] {
+  if (required.length === 0) return [];
+  const providers = listProviders();
+  return required.filter((id) => {
+    const p = providers.find((x) => x.id === id);
+    return !p || p.status !== 'configured';
+  });
+}
+
+function UserSkillCard({ skill: s, onChange }: { skill: SkillBuilderSkill; onChange: () => void }) {
+  const [open, setOpen] = useState(false);
+  const missing = missingConnections(s.requiredConnections);
+  return (
+    <div style={card}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <strong style={{ fontSize: 13 }}>{s.name}</strong>
+          <Badge text={s.enabled ? 'Enabled' : 'Disabled'} color={statusColor(s.enabled ? 'enabled' : 'disabled')} />
+          {missing.length > 0 && <Badge text={`Needs ${missing.join(', ')}`} color="var(--warning)" />}
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button style={ghostBtn} onClick={() => setOpen((v) => !v)}>{open ? 'Hide' : 'View'}</button>
+          <button style={ghostBtn} onClick={() => setBuilderSkillEnabled(s.id, !s.enabled).then(onChange)}>{s.enabled ? 'Disable' : 'Enable'}</button>
+          <button style={dangerBtn} onClick={() => deleteBuilderSkill(s.id).then(onChange)}>Delete</button>
+        </div>
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{s.description}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-hint)', marginTop: 6 }}>{s.riskLevel}{s.requiredConnections.length ? ` · needs: ${s.requiredConnections.join(', ')}` : ''}</div>
+      {open && (
+        <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+          {s.triggerPhrases.length > 0 && <div style={{ fontSize: 11.5, color: 'var(--text-hint)', marginBottom: 8 }}><strong style={{ color: 'var(--text-muted)' }}>Triggers:</strong> {s.triggerPhrases.join(', ')}</div>}
+          <div style={{ ...labelStyle, marginBottom: 5 }}>Instructions</div>
+          <pre style={{ fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.55, background: 'rgba(0,0,0,.25)', borderRadius: 7, padding: '10px 12px', margin: 0, fontFamily: 'var(--font-mono)', maxHeight: 320, overflow: 'auto' }}>
+            {s.instructionBody?.trim() || '(No long-form instructions — this skill relies on its steps + verification.)'}
+          </pre>
+          {s.verificationChecklist.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ ...labelStyle, marginBottom: 5 }}>Verification</div>
+              {s.verificationChecklist.map((v) => <div key={v.id} style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>• {v.title}</div>)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -125,20 +180,7 @@ function SkillsTab({ userId }: { userId: string }) {
 
       {installed.length > 0 && <div style={{ ...labelStyle, margin: '8px 0' }}>Created by you</div>}
       {installed.filter((s) => match(s.name)).map((s) => (
-        <div key={s.id} style={card}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <strong style={{ fontSize: 13 }}>{s.name}</strong>
-              <Badge text={s.enabled ? 'Enabled' : 'Disabled'} color={statusColor(s.enabled ? 'enabled' : 'disabled')} />
-            </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button style={ghostBtn} onClick={() => setBuilderSkillEnabled(s.id, !s.enabled).then(custom.reload)}>{s.enabled ? 'Disable' : 'Enable'}</button>
-              <button style={dangerBtn} onClick={() => deleteBuilderSkill(s.id).then(custom.reload)}>Delete</button>
-            </div>
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{s.description}</div>
-          <div style={{ fontSize: 11, color: 'var(--text-hint)', marginTop: 6 }}>{s.riskLevel}{s.requiredConnections.length ? ` · needs: ${s.requiredConnections.join(', ')}` : ''}</div>
-        </div>
+        <UserSkillCard key={s.id} skill={s} onChange={custom.reload} />
       ))}
 
       <div style={{ ...labelStyle, margin: '12px 0 8px' }}>Built-in</div>
