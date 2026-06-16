@@ -34,7 +34,8 @@
       "Bash(grep -rln \"mock\\\\|\\\\\\\\[mock\\\\\\\\]\" src/lib/connections/**/__tests__)",
       "Bash(node -e \"const s=require\\('simple-icons'\\); console.log\\('siGithub' in s, Object.keys\\(s.siGithub||{}\\)\\); const g=s.siGithub; console.log\\(g.title, g.hex, g.slug, \\(g.path||''\\).slice\\(0,30\\)\\);\")",
       "Bash(node -e ' *)",
-      "Bash(python -)"
+      "Bash(python -)",
+      "Bash(node -e \"const s=require\\('simple-icons'\\); for\\(const w of ['siBrevo','siHiggsfield','siMicrosoftoffice','siMicrosoft','siOpenai','siLangchain']\\) process.stdout.write\\(w.replace\\('si',''\\)+'='+\\(w in s?'OK':'MISS'\\)+'  '\\); console.log\\(\\);\")"
     ]
   }
 }

@@ -1,5 +1,6 @@
 import { createNotification } from '../notifications/store';
 import { enqueueTask } from '../queue/store';
+import { normalizeAutomation, referencedConnectionIds, referencedSkillIds, referencedMcpIds, type NormalizedAutomation } from './migrate';
 import {
   createAutomationRun,
   getAutomation,
@@ -24,7 +25,8 @@ export async function runAutomation(
 
   const run = await createAutomationRun({ automationId, status: 'queued', triggerPayload });
   try {
-    const prompt = renderAutomationPrompt(automation.name, automation.taskTemplate.prompt, triggerPayload);
+    const norm = normalizeAutomation(automation);
+    const prompt = renderAutomationPrompt(norm, triggerPayload);
     const queueItem = await enqueueTask({
       userId: automation.userId,
       workspaceId: automation.workspaceId,
@@ -36,10 +38,16 @@ export async function runAutomation(
         automationRunId: run.id,
         autonomyMode: automation.autonomyMode,
         approvalPolicy: automation.approvalPolicy,
-        skillIds: automation.taskTemplate.skillIds,
+        // Reference connections from both legacy template and new mention chips.
+        skillIds: referencedSkillIds(norm),
         workflowTemplateId: automation.taskTemplate.workflowTemplateId,
         roleTemplateId: automation.taskTemplate.roleTemplateId,
-        requiredConnectionIds: automation.taskTemplate.requiredConnectionIds,
+        requiredConnectionIds: referencedConnectionIds(norm),
+        mcpServerIds: referencedMcpIds(norm),
+        referencedContext: norm.referencedContext,
+        steps: norm.steps,
+        verificationChecklist: norm.verificationChecklist,
+        safetyPolicy: norm.safetyPolicy,
       },
     });
     await updateAutomationRun(run.id, { status: 'running', queueItemId: queueItem.id });
@@ -61,9 +69,36 @@ export async function runAutomation(
   }
 }
 
-function renderAutomationPrompt(name: string, prompt: string, payload: Record<string, unknown>): string {
-  const payloadText = Object.keys(payload).length
-    ? `\n\nAutomation trigger payload:\n${JSON.stringify(payload, null, 2)}`
-    : '';
-  return `Automation: ${name}\n\n${prompt}${payloadText}`;
+/**
+ * Builds the agent prompt from the full workflow definition: goal, referenced
+ * context, ordered steps, verification checklist and safety policy. The agent
+ * receives the plan and must not complete without satisfying verification.
+ */
+function renderAutomationPrompt(a: NormalizedAutomation, payload: Record<string, unknown>): string {
+  const lines: string[] = [`Automation: ${a.name}`, '', a.prompt || a.taskTemplate.prompt];
+
+  if (a.referencedContext.length) {
+    lines.push('', 'Referenced context:');
+    for (const r of a.referencedContext) {
+      const meta = r.kind === 'memory' && typeof r.metadata?.content === 'string' ? ` — ${r.metadata.content}` : '';
+      lines.push(`- [${r.kind}] ${r.label}${meta}`);
+    }
+  }
+
+  if (a.steps.length) {
+    lines.push('', 'Follow these steps in order (do not skip required steps):');
+    for (const s of [...a.steps].sort((x, y) => x.order - y.order)) {
+      lines.push(`${s.order + 1}. ${s.title}${s.required ? '' : ' (optional)'}: ${s.instruction}${s.verificationHint ? ` [verify: ${s.verificationHint}]` : ''}`);
+    }
+  }
+
+  if (a.verificationChecklist.length) {
+    lines.push('', 'Verification — ALL required checks must pass before task.complete:');
+    for (const v of a.verificationChecklist) lines.push(`- [${v.required ? 'required' : 'optional'}] ${v.title} (${v.kind})`);
+  }
+
+  lines.push('', `Safety: autonomy=${a.safetyPolicy.autonomyMode}, external_write=${a.safetyPolicy.externalWrite}, external_send=${a.safetyPolicy.externalSend}, destructive=${a.safetyPolicy.destructive}. Never use a mouse; act through tools, files, browser DOM/CDP, connections and MCP only.`);
+
+  if (Object.keys(payload).length) lines.push('', `Automation trigger payload:\n${JSON.stringify(payload, null, 2)}`);
+  return lines.join('\n');
 }

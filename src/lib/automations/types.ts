@@ -1,3 +1,6 @@
+import type { ReferencedContext } from '../mentions/types';
+export type { ReferencedContext } from '../mentions/types';
+
 export type AutomationStatus = 'active' | 'paused' | 'error' | 'disabled';
 export type AutomationRunStatus =
   | 'queued'
@@ -24,6 +27,47 @@ export interface AutomationTaskTemplate {
   inputMapping?: Record<string, unknown>;
 }
 
+// ── Workflow-builder model (additive; old automations migrate, see migrate.ts) ──
+
+export interface AutomationStep {
+  id: string;
+  title: string;
+  instruction: string;
+  referencedContext: ReferencedContext[];
+  required: boolean;
+  order: number;
+  verificationHint?: string;
+}
+
+export type VerificationKind =
+  | 'file_exists'
+  | 'file_read_back'
+  | 'connection_read_back'
+  | 'sheet_values_match'
+  | 'doc_read_back'
+  | 'contains_text'
+  | 'manual_review'
+  | 'custom';
+
+export interface VerificationCheck {
+  id: string;
+  title: string;
+  description?: string;
+  kind: VerificationKind;
+  required: boolean;
+  config?: Record<string, unknown>;
+}
+
+export interface AutomationSafetyPolicy {
+  autonomyMode: 'manual' | 'safe_reads' | 'semi';
+  externalWrite: 'ask' | 'allow' | 'block';
+  externalSend: 'ask' | 'block';
+  destructive: 'ask_strong' | 'block';
+  processExec: 'ask' | 'block';
+  maxRuntimeMinutes?: number;
+  maxToolCalls?: number;
+}
+
 export interface AutomationApprovalPolicy {
   requireApprovalFor?: string[];
   allowAlwaysSafeActions?: boolean;
@@ -43,6 +87,12 @@ export interface Automation {
   autonomyMode: 'manual' | 'semi' | 'full';
   approvalPolicy: AutomationApprovalPolicy;
   status: AutomationStatus;
+  // ── workflow-builder fields (optional for back-compat) ──
+  prompt?: string;
+  referencedContext?: ReferencedContext[];
+  steps?: AutomationStep[];
+  verificationChecklist?: VerificationCheck[];
+  safetyPolicy?: AutomationSafetyPolicy;
   lastRunAt?: string;
   nextRunAt?: string;
   createdAt: string;
@@ -72,5 +122,10 @@ export interface CreateAutomationInput {
   taskTemplate: AutomationTaskTemplate;
   autonomyMode?: 'manual' | 'semi' | 'full';
   approvalPolicy?: AutomationApprovalPolicy;
+  prompt?: string;
+  referencedContext?: ReferencedContext[];
+  steps?: AutomationStep[];
+  verificationChecklist?: VerificationCheck[];
+  safetyPolicy?: AutomationSafetyPolicy;
   metadata?: Record<string, unknown>;
 }
