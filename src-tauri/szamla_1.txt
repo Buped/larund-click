@@ -1,5 +1,0 @@
-SZÁMLA #001
-Kiállító: Larund Kft.
-Vevő: Teszt Elek
-Tétel: Szolgáltatás - 50.000 Ft
-Összesen: 50.000 Ft

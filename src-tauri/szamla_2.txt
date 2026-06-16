@@ -1,5 +1,0 @@
-SZÁMLA #002
-Kiállító: Larund Kft.
-Vevő: Minta János
-Tétel: Tanácsadás - 75.000 Ft
-Összesen: 75.000 Ft
