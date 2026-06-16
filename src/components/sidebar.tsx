@@ -179,8 +179,7 @@ function ChatRow({ chat, active, onSelect, onRename, onDelete }: {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-export function Sidebar({ nav, activeChat, onChatChange, userEmail, refreshKey, credits }: {
-  nav: (s: string) => void;
+export function Sidebar({ activeChat, onChatChange, userEmail, refreshKey, credits }: {
   activeChat: string | null;
   onChatChange: (id: string | null) => void;
   userEmail?: string | null;
@@ -304,23 +303,6 @@ export function Sidebar({ nav, activeChat, onChatChange, userEmail, refreshKey, 
         ) : (
           <span className="dot dot-green dot-pulse" />
         )}
-      </div>
-
-      {/* ── Bottom nav ── */}
-      <div className="sidebar-footer">
-        <button className="sidebar-nav-btn" onClick={() => nav('coworker')} title="Coworker Core">
-          <Icon name="grid" size={15} stroke={1.5} style={{ color: 'var(--text-hint)', flex: 'none' }} />
-          <span style={{ fontSize: 13, color: 'var(--text-muted)', flex: 1, textAlign: 'left' }}>Coworker</span>
-        </button>
-        <button className="sidebar-nav-btn" onClick={() => nav('scheduler')} title="Scheduler">
-          <Icon name="calendar" size={15} stroke={1.5} style={{ color: 'var(--text-hint)', flex: 'none' }} />
-          <span style={{ fontSize: 13, color: 'var(--text-muted)', flex: 1, textAlign: 'left' }}>Scheduler</span>
-        </button>
-        <button className="sidebar-nav-btn" onClick={() => nav('settings')} title="Settings">
-          <Icon name="settings" size={15} stroke={1.5} style={{ color: 'var(--text-hint)', flex: 'none' }} />
-          <span style={{ fontSize: 13, color: 'var(--text-muted)', flex: 1, textAlign: 'left' }}>Settings</span>
-          <span style={{ fontSize: 10.5, color: 'var(--text-hint)', fontFamily: 'var(--font-mono)' }}>v1.8.2</span>
-        </button>
       </div>
 
     </aside>

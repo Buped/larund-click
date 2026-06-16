@@ -17,6 +17,7 @@ import { deserializeReferences, serializeReferences } from '../lib/references/se
 import { referenceFromPath } from '../lib/references/local-picker';
 import { ingestReferences } from '../lib/references/ingest';
 import { policyForAutonomyMode, type AutonomyMode as PolicyAutonomyMode } from '../lib/tools/policy';
+import { classifyIntent } from '../lib/intent/classify';
 
 /** Read and clear the one-shot workflow template armed on the Workflows page. */
 function consumeActiveWorkflowTemplate(): string | undefined {
@@ -684,6 +685,8 @@ type Message = {
   _agentSteps?: AgentStep[];
   _agentAskQuestion?: string | null;
   _references?: DocumentReference[];
+  // Subtle routing label shown after send ("Answering" / "Needs confirmation").
+  _intentLabel?: string;
 };
 
 type RunningTask = {
@@ -730,9 +733,8 @@ function hydrateMessage(row: any): Message {
 // ─── Main ChatScreen ──────────────────────────────────────────────────────────
 
 export function ChatScreen({
-  nav, model, setModel, userEmail, userId, credits, onCreditsRefresh,
+  model, setModel, userEmail, userId, credits, onCreditsRefresh,
 }: {
-  nav: (s: string) => void;
   model: string;
   setModel: (m: string) => void;
   userEmail?: string | null;
@@ -747,7 +749,7 @@ export function ChatScreen({
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
   const [attachments,       setAttachments      ] = useState<{ name: string; src: string }[]>([]);
   const [copiedId,          setCopiedId         ] = useState<string | null>(null);
-  const [agentMode,         setAgentMode        ] = useState(false);
+  const [routing,           setRouting          ] = useState(false);
   const [agentAskAnswer,    setAgentAskAnswer   ] = useState('');
   const [runningTask,       setRunningTask      ] = useState<RunningTask | null>(null);
   const [references,        setReferences       ] = useState<DocumentReference[]>([]);
@@ -1076,8 +1078,27 @@ export function ChatScreen({
 
     const modelDef = MODELS.find(m => m.id === model) ?? MODELS[1];
 
-    // ── Agent mode path ──
-    if (agentMode) {
+    // ── Intent routing ──
+    // Larund decides automatically whether to answer (chat), act (agent), or ask
+    // a clarifying question. There is no manual "Agent mode" toggle anymore.
+    setRouting(true);
+    let intent;
+    try {
+      intent = await classifyIntent(
+        { text: text || messageText, hasReferences: taskReferences.length > 0 },
+        modelDef.openrouter_id,
+        userId,
+      );
+    } catch {
+      intent = { mode: 'chat' as const, confidence: 0.3, reason: 'fallback', requiredCapabilities: [] };
+    } finally {
+      setRouting(false);
+    }
+    const runAsAgent = intent.mode === 'agent';
+    const clarify = intent.mode === 'clarify';
+
+    // ── Agent path ──
+    if (runAsAgent) {
       // Prior conversation for the agent loop: user messages and any agent/AI
       // final summaries, oldest first. Gives the operator real context so a
       // correction continues the previous task instead of restarting it.
@@ -1103,18 +1124,28 @@ export function ChatScreen({
       return;
     }
 
-    // ── Normal chat path ──
+    // ── Normal chat / clarify path ──
     const asstMsgId = uuidv4();
     currentTaskId = asstMsgId;
     setMessages(prev => [...prev, {
       id: asstMsgId, session_id: sessionId!, role: 'assistant',
       content: '', created_at: new Date().toISOString(), streaming: true,
+      _intentLabel: clarify ? 'Needs confirmation' : 'Answering',
     }]);
     setRunningTask({ kind: 'chat', assistantMessageId: asstMsgId, sessionId: sessionId! });
 
     const history: ChatMessage[] = messages
       .filter(m => !m._loading && !m.streaming && !m._agent && m.content)
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+
+    // When the request is ambiguous, ask one concise clarifying question instead
+    // of silently guessing whether the user wanted an answer or an action.
+    if (clarify) {
+      history.unshift({
+        role: 'system',
+        content: 'The user\'s request is ambiguous — it is unclear whether they want you to simply answer/explain, or to actually perform an action (create/modify files, use the browser, send something, schedule, etc.). Ask ONE short, friendly clarifying question to find out what they want before doing anything. Do not perform any action yet.',
+      });
+    }
 
     // Send the actual contents of attached references (text + images) so the
     // model can analyze them — not just their filenames. Stored/displayed
@@ -1192,7 +1223,6 @@ export function ChatScreen({
   return (
     <div style={{ display: 'flex', width: '100%', height: '100%', background: 'var(--bg-app)' }}>
       <Sidebar
-        nav={nav}
         activeChat={activeChat}
         onChatChange={setActiveChat}
         userEmail={userEmail}
@@ -1266,6 +1296,12 @@ export function ChatScreen({
                   // ── Normal AI bubble ──
                   return (
                     <div key={msg.id} className="msg-group">
+                      {msg._intentLabel && !msg._error && (
+                        <div style={{ paddingLeft: 36, marginBottom: 4, fontSize: 10.5, color: 'var(--text-hint)', display: 'flex', alignItems: 'center', gap: 5 }}>
+                          <span className="dot" style={{ width: 4, height: 4, background: msg._intentLabel === 'Needs confirmation' ? 'var(--warning)' : 'var(--accent)' }} />
+                          {msg._intentLabel}
+                        </div>
+                      )}
                       <AgentMsg
                         rich={msg._error ? undefined : msg.content}
                         streaming={msg.streaming}
@@ -1317,7 +1353,7 @@ export function ChatScreen({
         <div className="chat-footer">
           <div className="chat-col">
             <div
-              className={`chat-input-box${agentMode ? ' chat-input-box--agent' : ''}${runningTask ? ' chat-input-box--working' : ''}`}
+              className={`chat-input-box${runningTask ? ' chat-input-box--working' : ''}`}
               onDragOver={(e) => e.preventDefault()}
               onDrop={handleReferenceDrop}
             >
@@ -1353,7 +1389,7 @@ export function ChatScreen({
                 onChange={handleEditorChange}
                 onTriggerPicker={() => setReferencePickerOpen(true)}
                 onKeyDown={onKeyDown}
-                placeholder={agentMode ? 'Describe a task for the agent…' : 'Tell Click what to do…'}
+                placeholder="Ask Larund anything, or describe a task…"
               />
               <ReferencePicker
                 open={referencePickerOpen}
@@ -1365,21 +1401,6 @@ export function ChatScreen({
               {/* Toolbar */}
               <div className="chat-toolbar">
                 <InlineModelPicker model={model} setModel={setModel} />
-
-                {/* Agent mode toggle — ⚡ zap icon */}
-                <button
-                  className="toolbar-btn"
-                  onClick={() => setAgentMode(v => !v)}
-                  title={agentMode ? 'Agent mode ON — click to turn off' : 'Turn on Agent mode'}
-                  style={{
-                    color: agentMode ? 'var(--accent)' : undefined,
-                    background: agentMode ? 'rgba(74,158,255,.12)' : undefined,
-                    boxShadow: agentMode ? '0 0 0 1px rgba(74,158,255,.25)' : undefined,
-                    borderRadius: 8,
-                  }}
-                >
-                  <Icon name="zap" size={15} stroke={1.5} />
-                </button>
 
                 <button
                   ref={referencePickerTriggerRef}
@@ -1408,8 +1429,6 @@ export function ChatScreen({
                 >
                   {runningTask
                     ? <Icon name="stop" size={12} stroke={2.4} />
-                    : agentMode
-                    ? <Icon name="zap" size={14} stroke={2} />
                     : <Icon name="arrowUp" size={15} stroke={2.2} />
                   }
                 </button>
@@ -1418,14 +1437,13 @@ export function ChatScreen({
 
             {/* Hint */}
             <div style={{ textAlign: 'center', marginTop: 8, fontSize: 11, color: 'var(--text-hint)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-              {agentMode ? (
+              {routing ? (
                 <>
-                  <span className="dot dot-blue" style={{ width: 5, height: 5 }} />
-                  <span style={{ color: 'rgba(74,158,255,.7)', fontWeight: 500 }}>Agent mode</span>
-                  <span>— AI uses tools to complete tasks on your computer</span>
+                  <span className="dot dot-blue dot-pulse" style={{ width: 5, height: 5 }} />
+                  <span style={{ color: 'rgba(74,158,255,.75)', fontWeight: 500 }}>Larund is deciding how to help…</span>
                 </>
               ) : (
-                'Enter to send · Shift+Enter for new line'
+                'Larund answers questions and runs tasks automatically · Enter to send'
               )}
             </div>
           </div>

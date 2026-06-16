@@ -12,6 +12,13 @@ import { OperatorPanel } from './operator-panel';
 import { GOOGLE_WORKSPACE_SCOPES } from '../lib/connections/providers/google-workspace/auth';
 import { listConnections } from '../lib/connections/registry';
 import { loadPersistentSecret, setPersistentSecret } from '../lib/connections/secrets';
+import { listWorkspaces, createWorkspace, archiveWorkspace } from '../lib/workspaces/store';
+import type { Workspace } from '../lib/workspaces/types';
+import { runDoctor } from '../lib/doctor/run';
+import type { DoctorReport } from '../lib/doctor/types';
+import { BUILTIN_SANDBOX_PROFILES } from '../lib/sandbox/profiles';
+import { GatewayTab } from './phase3';
+import { McpHubTab, CustomApiTab, LocalCatalogTab } from './phase4';
 
 function emailInitials(email: string): string {
   const local = email.split('@')[0];
@@ -38,16 +45,21 @@ type MemEntry = {
   created_at: string;
 };
 
-const SECTIONS = [
+type SectionDef = { id: string; icon: string; label: string; dev?: boolean };
+const ALL_SECTIONS: SectionDef[] = [
   { id: "general",    icon: "settings",  label: "General"    },
   { id: "appearance", icon: "eye",       label: "Appearance" },
+  { id: "account",    icon: "user",      label: "Account"    },
+  { id: "workspaces", icon: "folder",    label: "Workspaces" },
   { id: "automation", icon: "zap",       label: "Automation" },
   { id: "behavior",   icon: "sparkle",   label: "Behavior"   },
   { id: "memory",     icon: "cpu",       label: "Memory"     },
   { id: "connections", icon: "globe",    label: "Connections"},
   { id: "apps",       icon: "globe",     label: "Apps"       },
-  { id: "operator",   icon: "cpu",       label: "Operator"   },
-  { id: "account",    icon: "user",      label: "Account"    },
+  { id: "safety",     icon: "shield",    label: "Safety"     },
+  { id: "diagnostics", icon: "search",   label: "Diagnostics"},
+  { id: "developer",  icon: "command",   label: "Developer", dev: true },
+  { id: "operator",   icon: "cpu",       label: "Operator", dev: true },
   { id: "danger",     icon: "alert",     label: "Danger zone"},
 ];
 
@@ -235,6 +247,27 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
   const [googleToken, setGoogleToken] = useState("");
   const [googleEmail, setGoogleEmail] = useState("");
   const [googleStatus, setGoogleStatus] = useState("");
+  const [devMode, setDevMode] = useState(localStorage.getItem('developer_mode') === 'true');
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [newWsName, setNewWsName] = useState("");
+  const [activeWsId, setActiveWsId] = useState<string | null>(localStorage.getItem('active_workspace_id'));
+  const [doctor, setDoctor] = useState<DoctorReport | null>(null);
+  const [doctorRunning, setDoctorRunning] = useState(false);
+  const [devTool, setDevTool] = useState<'mcp' | 'gateway' | 'customApi' | 'catalog'>('mcp');
+  const uid = user?.id ?? 'local';
+
+  const SECTIONS = ALL_SECTIONS.filter(s => !s.dev || devMode);
+
+  function toggleDevMode(v: boolean) { setDevMode(v); localStorage.setItem('developer_mode', String(v)); }
+
+  async function loadWorkspaces() { setWorkspaces(await listWorkspaces(uid)); }
+  async function addWorkspace() {
+    if (!newWsName.trim()) return;
+    await createWorkspace({ userId: uid, name: newWsName.trim(), kind: 'project' });
+    setNewWsName(''); loadWorkspaces();
+  }
+  function setActiveWorkspace(id: string) { localStorage.setItem('active_workspace_id', id); setActiveWsId(id); }
+  async function runDiagnostics() { setDoctorRunning(true); try { setDoctor(await runDoctor('unknown')); } finally { setDoctorRunning(false); } }
 
   useEffect(() => {
     getSettings().then(s => {
@@ -248,6 +281,7 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
     });
     getApps().then(setApps);
     getMemoryEntries().then(setMemories);
+    loadWorkspaces();
     Promise.all([
       loadPersistentSecret('GOOGLE_WORKSPACE_ACCESS_TOKEN'),
       loadPersistentSecret('GOOGLE_WORKSPACE_ACCOUNT_EMAIL'),
@@ -392,11 +426,12 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
           <div className="scroll" style={{ flex: 1, minHeight: 0, padding: "6px 20px 20px" }}>
             {section === "general" && (
               <>
-                <SettingRow label="Startup screen" sub="Screen to show when the app launches"><Select value={startupApp} options={["Last chat","New chat","Scheduler"]} onChange={setStartupApp} /></SettingRow>
+                <SettingRow label="Startup screen" sub="Screen to show when the app launches"><Select value={startupApp} options={["Last chat","New chat","Tasks"]} onChange={setStartupApp} /></SettingRow>
                 <SettingRow label="Pause automation" sub="Temporarily suspend all tasks"><Select value={pauseHrs} options={["1 hour","4 hours","8 hours","Until tomorrow"]} onChange={setPauseHrs} /></SettingRow>
                 <SettingRow label="Launch at startup" sub="Start Click when you log in"><Toggle checked={autoStart} onChange={handleToggleAutoStart} /></SettingRow>
                 <SettingRow label="Notification sound" sub="Play a sound when tasks complete"><Toggle checked={notifSound} onChange={setNotifSound} /></SettingRow>
-                <SettingRow label="Version" sub="Current installed build"><span style={{ fontSize: 12.5, color: "var(--text-hint)", fontFamily: "var(--font-mono)" }}>v1.8.2</span></SettingRow>
+                <SettingRow label="Developer mode" sub="Show diagnostics, mock MCP/gateway, custom APIs and the raw tool registry"><Toggle checked={devMode} onChange={toggleDevMode} /></SettingRow>
+                <SettingRow label="Version" sub="Current installed build"><span style={{ fontSize: 12.5, color: "var(--text-hint)", fontFamily: "var(--font-mono)" }}>v1.9.0</span></SettingRow>
               </>
             )}
 
@@ -542,6 +577,93 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
                       onDelete={() => setDelModal({ open: true, app: a })} />
                   ))}
                 </div>
+              </>
+            )}
+
+            {section === "workspaces" && (
+              <>
+                <div style={{ fontSize: 12.5, color: "var(--text-hint)", padding: "12px 0", lineHeight: 1.5 }}>
+                  Workspaces give Larund one focused context — its own memory, connections, skills and autonomy. A default workspace always exists; switch the active one from the sidebar.
+                </div>
+                <div style={{ display: "flex", gap: 8, padding: "0 0 14px", borderBottom: "1px solid var(--border)" }}>
+                  <input value={newWsName} onChange={e => setNewWsName(e.target.value)} placeholder="New workspace name" onKeyDown={e => e.key === 'Enter' && addWorkspace()}
+                    style={{ flex: 1, background: "var(--bg-elevated)", border: "1px solid var(--border-md)", borderRadius: 8, padding: "8px 10px", fontSize: 13, color: "var(--text-primary)", outline: "none" }} />
+                  <button onClick={addWorkspace} className="btn btn-primary" style={{ height: 34, fontSize: 12 }}>Create</button>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 10 }}>
+                  {workspaces.map(w => (
+                    <div key={w.id} style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: 9, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+                      <Icon name="folder" size={14} stroke={1.5} style={{ color: activeWsId === w.id ? "var(--accent)" : "var(--text-hint)" }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, color: "var(--text-primary)", fontWeight: 600 }}>{w.name}</div>
+                        <div style={{ fontSize: 11, color: "var(--text-hint)" }}>{w.kind} · autonomy: {w.autonomyMode}</div>
+                      </div>
+                      {activeWsId === w.id
+                        ? <span className="pill pill-blue" style={{ fontSize: 11 }}>Active</span>
+                        : <button onClick={() => setActiveWorkspace(w.id)} className="btn btn-ghost" style={{ height: 28, fontSize: 11.5 }}>Set active</button>}
+                      <button onClick={() => archiveWorkspace(w.id).then(loadWorkspaces)} className="btn btn-ghost" style={{ height: 28, fontSize: 11.5, color: "var(--text-hint)" }}>Archive</button>
+                    </div>
+                  ))}
+                  {workspaces.length === 0 && <div style={{ fontSize: 12.5, color: "var(--text-hint)", padding: 12 }}>No workspaces yet.</div>}
+                </div>
+              </>
+            )}
+
+            {section === "safety" && (
+              <>
+                <SettingRow label="Autonomy mode" sub="Controls when Larund asks before tool calls"><Select value={autonomyMode} options={["Semi-automatic","Manual","Full autonomous"]} onChange={handleAutonomyChange} /></SettingRow>
+                <SettingRow label="No-mouse guarantee" sub="Larund never controls mouse/pixels; it acts through structured tools only"><span style={{ fontSize: 12.5, color: "var(--success)" }}>Enforced</span></SettingRow>
+                <div style={{ padding: "14px 0 8px", fontSize: 12.5, color: "var(--text-hint)" }}>Sandbox profiles constrain filesystem, network, risk, credential, process and send access.</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {BUILTIN_SANDBOX_PROFILES.map(p => (
+                    <div key={p.id} style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: 9, padding: "10px 12px" }}>
+                      <div style={{ fontSize: 12.5, color: "var(--text-primary)", fontWeight: 600 }}>{p.name}</div>
+                      <div style={{ fontSize: 11.5, color: "var(--text-hint)", marginTop: 3 }}>{p.description}</div>
+                      <div style={{ fontSize: 11, color: "var(--text-hint)", marginTop: 4 }}>Allowed risk: {p.allowedRiskLevels.join(', ')}</div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {section === "diagnostics" && (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 0" }}>
+                  <div>
+                    <div style={{ fontSize: 13.5, color: "var(--text-primary)", fontWeight: 450 }}>Larund Doctor</div>
+                    <div style={{ fontSize: 12, color: "var(--text-hint)", marginTop: 2 }}>{doctor ? `${doctor.summary.pass} pass · ${doctor.summary.warn} warn · ${doctor.summary.fail} fail` : "Run a health check across all coworker systems"}</div>
+                  </div>
+                  <button onClick={runDiagnostics} disabled={doctorRunning} className="btn btn-primary" style={{ height: 30, fontSize: 12 }}>{doctorRunning ? "Running…" : "Run diagnostics"}</button>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                  {doctor?.checks.map(c => (
+                    <div key={c.id} style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: 9, padding: "10px 12px", borderLeft: `3px solid ${c.status === 'pass' ? 'var(--success)' : c.status === 'fail' ? 'var(--danger)' : 'var(--warning)'}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span style={{ fontSize: 12.5, color: "var(--text-primary)", fontWeight: 600 }}>{c.label}</span>
+                        <span style={{ fontSize: 11, textTransform: "uppercase", color: c.status === 'pass' ? 'var(--success)' : c.status === 'fail' ? 'var(--danger)' : 'var(--warning)' }}>{c.status}</span>
+                      </div>
+                      <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 3 }}>{c.detail}</div>
+                      {c.remedy && c.status !== 'pass' && <div style={{ fontSize: 11, color: "var(--warning)", marginTop: 3 }}>→ {c.remedy}</div>}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {section === "developer" && (
+              <>
+                <div style={{ background: "rgba(245,165,36,.06)", border: "1px solid rgba(245,165,36,.25)", borderRadius: 10, padding: "12px 14px", margin: "12px 0", fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
+                  Advanced developer surfaces — mock servers and raw registries for testing. These never run in normal product flows.
+                </div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+                  {([["mcp","Mock MCP"],["gateway","Channels (gateway)"],["customApi","Custom API"],["catalog","Tool registry"]] as const).map(([id, label]) => (
+                    <button key={id} onClick={() => setDevTool(id)} className="btn btn-ghost" style={{ height: 28, fontSize: 11.5, ...(devTool === id ? { background: "var(--accent)", color: "#04122a", borderColor: "var(--accent)" } : {}) }}>{label}</button>
+                  ))}
+                </div>
+                {devTool === "mcp" && <McpHubTab userId={uid} />}
+                {devTool === "gateway" && <GatewayTab userId={uid} />}
+                {devTool === "customApi" && <CustomApiTab userId={uid} />}
+                {devTool === "catalog" && <LocalCatalogTab userId={uid} />}
               </>
             )}
 

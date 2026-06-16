@@ -1,9 +1,13 @@
 import { useState, useEffect } from 'react';
 import { ChatScreen }      from './components/chat';
-import { SchedulerScreen } from './components/scheduler';
-import { LiveScreen }      from './components/live';
 import { SettingsScreen }  from './components/settings';
-import { CoworkerScreen }  from './components/coworker';
+import { NavRail, type Route } from './components/nav-rail';
+import { TasksPage }       from './components/pages/TasksPage';
+import { AutomationsPage } from './components/pages/AutomationsPage';
+import { ConnectionsPage } from './components/pages/ConnectionsPage';
+import { McpPage }         from './components/pages/McpPage';
+import { SkillsPage }      from './components/pages/SkillsPage';
+import { MemoryPage }      from './components/pages/MemoryPage';
 import { LoginScreen }     from './pages/Login';
 import { OnboardingScreen } from './pages/Onboarding';
 import { restoreSession, signOut } from './lib/auth';
@@ -19,7 +23,6 @@ declare global {
 }
 
 type AppState = 'loading' | 'login' | 'onboarding' | 'app';
-type Screen   = 'chat' | 'scheduler' | 'overlay' | 'coworker';
 
 async function initStores(userId: string): Promise<void> {
   await initDatabase(userId);
@@ -43,7 +46,7 @@ export default function App() {
   const [appState,     setAppState    ] = useState<AppState>('loading');
   const [user,         setUser        ] = useState<AuthUser | null>(null);
   const [credits,      setCredits     ] = useState<UserCredits | null>(null);
-  const [screen,       setScreen      ] = useState<Screen>('chat');
+  const [route,        setRoute       ] = useState<Route>('chat');
   const [model,        setModel       ] = useState('core');
   const [showSettings, setShowSettings] = useState(false);
 
@@ -98,12 +101,6 @@ export default function App() {
     setAppState('login');
   }
 
-  function nav(s: string) {
-    if (s === 'settings') { setShowSettings(true); return; }
-    setShowSettings(false);
-    setScreen(s as Screen);
-  }
-
   if (appState === 'loading') {
     return (
       <div style={{ width: '100%', height: '100%', background: 'var(--bg-app)', display: 'grid', placeItems: 'center' }}>
@@ -130,13 +127,25 @@ export default function App() {
     );
   }
 
+  const uid = user?.id ?? 'local';
+
   return (
-    <div id="app-shell" style={{ width: '100%', height: '100%', background: 'var(--bg-app)', color: 'var(--text-primary)', fontFamily: 'var(--font)', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        {screen === 'chat'      && <ChatScreen nav={nav} model={model} setModel={setModel} userEmail={user?.email ?? null} userId={user?.id ?? null} credits={credits} onCreditsRefresh={refreshCredits} />}
-        {screen === 'scheduler' && <SchedulerScreen nav={nav} />}
-        {screen === 'coworker'  && <CoworkerScreen nav={nav} userId={user?.id ?? null} />}
-        {screen === 'overlay'   && <LiveScreen nav={nav} />}
+    <div id="app-shell" style={{ width: '100%', height: '100%', background: 'var(--bg-app)', color: 'var(--text-primary)', fontFamily: 'var(--font)', display: 'flex', flexDirection: 'row', overflow: 'hidden', position: 'relative' }}>
+      <NavRail
+        route={route}
+        onNavigate={(r) => { setShowSettings(false); setRoute(r); }}
+        onOpenSettings={() => setShowSettings(true)}
+        userId={uid}
+        userEmail={user?.email ?? null}
+      />
+      <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        {route === 'chat'        && <ChatScreen model={model} setModel={setModel} userEmail={user?.email ?? null} userId={user?.id ?? null} credits={credits} onCreditsRefresh={refreshCredits} />}
+        {route === 'tasks'       && <TasksPage userId={uid} />}
+        {route === 'automations' && <AutomationsPage userId={uid} />}
+        {route === 'skills'      && <SkillsPage userId={uid} />}
+        {route === 'memory'      && <MemoryPage userId={uid} />}
+        {route === 'connections' && <ConnectionsPage />}
+        {route === 'mcp'         && <McpPage userId={uid} />}
       </div>
       {showSettings && (
         <SettingsScreen
