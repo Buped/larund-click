@@ -7,6 +7,10 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // Loopback OAuth: starts a localhost server that captures the provider
+        // redirect (http://localhost:<port>/) so a user can connect their own
+        // account with one click. See src/lib/connections/oauth/loopback.ts.
+        .plugin(tauri_plugin_oauth::init())
         // NO-MOUSE CORE: the agent tool surface below deliberately excludes every
         // mouse / cursor / screenshot / SOC / OCR / UIA-click / grid / border /
         // virtual-desktop / input-guard command. Those Rust functions still exist

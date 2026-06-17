@@ -1,6 +1,7 @@
 import { createNotification } from '../notifications/store';
 import { enqueueTask } from '../queue/store';
 import { normalizeAutomation, referencedConnectionIds, referencedSkillIds, referencedMcpIds, type NormalizedAutomation } from './migrate';
+import { resolveReferencedContext } from '../mentions/resolve';
 import {
   createAutomationRun,
   getAutomation,
@@ -26,7 +27,17 @@ export async function runAutomation(
   const run = await createAutomationRun({ automationId, status: 'queued', triggerPayload });
   try {
     const norm = normalizeAutomation(automation);
-    const prompt = renderAutomationPrompt(norm, triggerPayload);
+    const allReferences = [
+      ...norm.referencedContext,
+      ...norm.steps.flatMap((s) => s.referencedContext),
+    ];
+    const resolved = await resolveReferencedContext({
+      references: allReferences,
+      userId: automation.userId,
+      workspaceId: automation.workspaceId,
+    });
+    if (resolved.blockers.length) throw new Error(`Referenced context is not ready:\n${resolved.blockers.map((b) => `- ${b}`).join('\n')}`);
+    const prompt = renderAutomationPrompt(norm, triggerPayload, resolved.promptBlock);
     const queueItem = await enqueueTask({
       userId: automation.userId,
       workspaceId: automation.workspaceId,
@@ -44,7 +55,7 @@ export async function runAutomation(
         roleTemplateId: automation.taskTemplate.roleTemplateId,
         requiredConnectionIds: referencedConnectionIds(norm),
         mcpServerIds: referencedMcpIds(norm),
-        referencedContext: norm.referencedContext,
+        referencedContext: allReferences,
         steps: norm.steps,
         verificationChecklist: norm.verificationChecklist,
         safetyPolicy: norm.safetyPolicy,
@@ -74,7 +85,7 @@ export async function runAutomation(
  * context, ordered steps, verification checklist and safety policy. The agent
  * receives the plan and must not complete without satisfying verification.
  */
-function renderAutomationPrompt(a: NormalizedAutomation, payload: Record<string, unknown>): string {
+function renderAutomationPrompt(a: NormalizedAutomation, payload: Record<string, unknown>, resolvedContext = ''): string {
   const lines: string[] = [`Automation: ${a.name}`, '', a.prompt || a.taskTemplate.prompt];
 
   if (a.referencedContext.length) {
@@ -84,6 +95,8 @@ function renderAutomationPrompt(a: NormalizedAutomation, payload: Record<string,
       lines.push(`- [${r.kind}] ${r.label}${meta}`);
     }
   }
+
+  if (resolvedContext) lines.push('', resolvedContext);
 
   if (a.steps.length) {
     lines.push('', 'Follow these steps in order (do not skip required steps):');

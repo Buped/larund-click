@@ -6,6 +6,8 @@
   "permissions": [
     "core:default",
     "opener:default",
+    "oauth:allow-start",
+    "oauth:allow-cancel",
     "store:default",
     "dialog:default",
     "dialog:allow-open",

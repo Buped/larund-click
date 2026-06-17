@@ -11,7 +11,7 @@ describe('connections', () => {
   it('lists all providers with statuses', () => {
     const list = listConnections();
     const ids = list.map((c) => c.id);
-    expect(ids).toEqual(expect.arrayContaining(['github', 'notion', 'google-workspace', 'slack', 'hubspot', 'airtable', 'wordpress']));
+    expect(ids).toEqual(expect.arrayContaining(['github', 'notion', 'google-workspace', 'x', 'slack', 'hubspot', 'airtable', 'wordpress']));
   });
 
   it('reports missing_auth for api_key connections without a token', () => {
@@ -36,6 +36,13 @@ describe('connections', () => {
   it('notion query tool returns missing_auth (not mock) by default', async () => {
     const reg = createConnectionRegistry();
     const res = await reg.call('notion', 'query_database', { databaseId: 'db1' });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('missing_auth');
+  });
+
+  it('x read tool returns missing_auth by default', async () => {
+    const reg = createConnectionRegistry();
+    const res = await reg.call('x', 'search_recent_posts', { query: 'larund' });
     expect(res.success).toBe(false);
     expect(res.error).toContain('missing_auth');
   });

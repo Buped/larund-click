@@ -53,11 +53,13 @@ export function referencedConnectionIds(a: NormalizedAutomation): string[] {
 export function referencedSkillIds(a: NormalizedAutomation): string[] {
   const ids = new Set<string>(a.taskTemplate?.skillIds ?? []);
   for (const r of a.referencedContext) if (r.kind === 'skill') ids.add(r.refId);
+  for (const s of a.steps) for (const r of s.referencedContext) if (r.kind === 'skill') ids.add(r.refId);
   return [...ids];
 }
 
 export function referencedMcpIds(a: NormalizedAutomation): string[] {
   const ids = new Set<string>();
   for (const r of a.referencedContext) if (r.kind === 'mcp') ids.add(r.refId);
+  for (const s of a.steps) for (const r of s.referencedContext) if (r.kind === 'mcp') ids.add(r.refId);
   return [...ids];
 }

@@ -20,6 +20,7 @@ export async function createMcpServer(input: CreateMcpServerInput): Promise<McpS
   const now = new Date().toISOString();
   const server: McpServerConfig = {
     id: id('mcp'),
+    providerId: input.providerId,
     userId: input.userId,
     workspaceId: input.workspaceId,
     name: input.name,
@@ -30,6 +31,7 @@ export async function createMcpServer(input: CreateMcpServerInput): Promise<McpS
     env: input.env,
     url: input.url,
     headers: input.headers,
+    authType: input.authType,
     enabled: input.enabled ?? true,
     trustLevel: input.trustLevel ?? 'untrusted',
     status: input.enabled === false ? 'disabled' : 'not_connected',

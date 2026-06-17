@@ -5,6 +5,51 @@
 
 import type { CatalogProvider, ConnectionImplementation } from './types';
 import { deriveFlags } from './types';
+import { envSchemaForProvider } from '../env/schema';
+
+const DOCS: Record<string, string> = {
+  'google-workspace': 'https://developers.google.com/workspace',
+  'google-drive': 'https://developers.google.com/workspace/drive/api/guides/about-sdk',
+  'google-docs': 'https://developers.google.com/docs/api',
+  'google-sheets': 'https://developers.google.com/sheets/api',
+  gmail: 'https://developers.google.com/gmail/api',
+  'google-calendar': 'https://developers.google.com/calendar/api',
+  github: 'https://docs.github.com/en/rest',
+  notion: 'https://developers.notion.com/docs/getting-started',
+  slack: 'https://api.slack.com/web',
+  discord: 'https://discord.com/developers/docs/intro',
+  x: 'https://docs.x.com/x-api/introduction',
+  'meta-ads': 'https://developers.facebook.com/',
+  'instagram-business': 'https://developers.facebook.com/docs/instagram-platform',
+  'facebook-pages': 'https://developers.facebook.com/docs/pages-api',
+  'google-ads': 'https://developers.google.com/google-ads/api/docs/start',
+  ga4: 'https://developers.google.com/analytics/devguides/reporting/data/v1',
+  'search-console': 'https://developers.google.com/webmaster-tools',
+  airtable: 'https://airtable.com/developers/web/api/introduction',
+  linear: 'https://developers.linear.app/docs/graphql/working-with-the-graphql-api',
+  jira: 'https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/',
+  trello: 'https://developer.atlassian.com/cloud/trello/rest/',
+  hubspot: 'https://developers.hubspot.com/docs/api/overview',
+  wordpress: 'https://developer.wordpress.org/rest-api/',
+  mailchimp: 'https://mailchimp.com/developer/marketing/docs/fundamentals/',
+  brevo: 'https://developers.brevo.com/docs',
+  shopify: 'https://shopify.dev/docs/api/admin-graphql',
+  stripe: 'https://docs.stripe.com/api',
+  supabase: 'https://supabase.com/docs/reference/api',
+  vercel: 'https://vercel.com/docs/rest-api',
+  netlify: 'https://docs.netlify.com/api-and-cli-guides/api-guides/get-started-with-api/',
+  cloudflare: 'https://developers.cloudflare.com/api/',
+  sentry: 'https://docs.sentry.io/api/',
+  langsmith: 'https://docs.smith.langchain.com/',
+  figma: 'https://www.figma.com/developers/api',
+  canva: 'https://www.canva.dev/docs/connect/',
+  webflow: 'https://developers.webflow.com/data/reference/rest-introduction',
+  framer: 'https://www.framer.com/developers/',
+  higgsfield: 'https://higgsfield.ai/',
+  resend: 'https://resend.com/docs/api-reference/introduction',
+  sendgrid: 'https://www.twilio.com/docs/sendgrid/api-reference/how-to-use-the-sendgrid-v3-api',
+  'microsoft-365': 'https://learn.microsoft.com/en-us/graph/overview',
+};
 
 function p(
   id: string,
@@ -13,17 +58,20 @@ function p(
   description: string,
   status: CatalogProvider['status'],
   implementations: ConnectionImplementation[],
-  extra: Partial<Pick<CatalogProvider, 'nativeToolCount' | 'setupInstructions' | 'docsUrl'>> = {},
+  extra: Partial<Pick<CatalogProvider, 'nativeToolCount' | 'setupInstructions' | 'docsUrl' | 'parentProviderId'>> = {},
 ): CatalogProvider {
   const flags = deriveFlags(implementations);
+  const env = envSchemaForProvider(extra.parentProviderId ?? id);
   return {
     id, name, category, description, status, implementations,
     supportsNativeApi: flags.native,
     supportsMcp: flags.mcp,
     userEditableMcpUrl: flags.editableUrl,
     nativeToolCount: extra.nativeToolCount ?? 0,
+    env: { required: env.required, optional: env.optional, advanced: env.advanced },
+    parentProviderId: extra.parentProviderId,
     setupInstructions: extra.setupInstructions,
-    docsUrl: extra.docsUrl,
+    docsUrl: extra.docsUrl ?? DOCS[id],
   };
 }
 
@@ -39,15 +87,15 @@ export const CATALOG: CatalogProvider[] = [
     [nativePat('github'), remoteMcp()], { nativeToolCount: 7, setupInstructions: 'Add a GitHub personal access token (repo scope).', docsUrl: 'https://github.com/settings/tokens' }),
   p('notion', 'Notion', 'productivity', 'Search, read and write Notion pages and databases.', 'working',
     [nativePat('notion'), remoteMcp()], { nativeToolCount: 7, setupInstructions: 'Create an internal integration token and share pages with it.', docsUrl: 'https://www.notion.so/my-integrations' }),
-  p('google-workspace', 'Google Workspace', 'productivity', 'Drive, Docs, Sheets, Gmail and Calendar via Google APIs.', 'working',
-    [nativeToken('google-workspace')], { nativeToolCount: 20, setupInstructions: 'Connect with a Google OAuth access token (Drive/Docs/Sheets/Gmail/Calendar scopes).' }),
+  p('google-workspace', 'Google Workspace', 'productivity', 'Drive, Docs, Sheets, Gmail, Calendar and Google marketing APIs through one OAuth connection.', 'working',
+    [nativeToken('google-workspace')], { nativeToolCount: 21, setupInstructions: 'Connect once with Google OAuth. Drive, Docs, Sheets, Gmail and Calendar share this auth; Ads/GA4/Search Console may need extra IDs/tokens.' }),
 
   // Google sub-apps — surfaced as their own cards but powered by Google Workspace.
-  p('google-drive', 'Google Drive', 'productivity', 'Search, read and create files and folders in Drive.', 'working', [nativeToken('google-workspace')], { nativeToolCount: 5 }),
-  p('google-docs', 'Google Docs', 'productivity', 'Create, read and edit Google Docs.', 'working', [nativeToken('google-workspace')], { nativeToolCount: 5 }),
-  p('google-sheets', 'Google Sheets', 'data', 'Create sheets, read and write values, append rows.', 'working', [nativeToken('google-workspace')], { nativeToolCount: 6 }),
-  p('gmail', 'Gmail', 'communication', 'Search and read threads, draft and send email (send needs approval).', 'partial', [nativeToken('google-workspace')], { nativeToolCount: 4 }),
-  p('google-calendar', 'Google Calendar', 'productivity', 'Search events and create events (create needs approval).', 'partial', [nativeToken('google-workspace')], { nativeToolCount: 2 }),
+  p('google-drive', 'Google Drive', 'productivity', 'Available through Google Workspace.', 'working', [nativeToken('google-workspace')], { nativeToolCount: 5, parentProviderId: 'google-workspace' }),
+  p('google-docs', 'Google Docs', 'productivity', 'Available through Google Workspace.', 'working', [nativeToken('google-workspace')], { nativeToolCount: 5, parentProviderId: 'google-workspace' }),
+  p('google-sheets', 'Google Sheets', 'data', 'Available through Google Workspace.', 'working', [nativeToken('google-workspace')], { nativeToolCount: 6, parentProviderId: 'google-workspace' }),
+  p('gmail', 'Gmail', 'communication', 'Available through Google Workspace. Sending requires approval.', 'partial', [nativeToken('google-workspace')], { nativeToolCount: 4, parentProviderId: 'google-workspace' }),
+  p('google-calendar', 'Google Calendar', 'productivity', 'Available through Google Workspace. Event writes require approval.', 'partial', [nativeToken('google-workspace')], { nativeToolCount: 2, parentProviderId: 'google-workspace' }),
 
   // ── Communication ───────────────────────────────────────────────────────────
   p('slack', 'Slack', 'communication', 'Search messages, read channels, post messages (post needs approval).', 'coming_soon',
@@ -72,9 +120,10 @@ export const CATALOG: CatalogProvider[] = [
   p('stripe', 'Stripe', 'finance', 'List customers/invoices, create invoice drafts. No payments without explicit approval.', 'coming_soon', [nativeApiKey('stripe'), remoteMcp()]),
 
   // ── Social / ads ────────────────────────────────────────────────────────────
-  p('twitter', 'X (Twitter)', 'marketing', 'Search posts, get users/posts, create posts (post needs approval).', 'coming_soon', [nativeOauth('x'), remoteMcp()]),
+  p('x', 'X / Twitter', 'marketing', 'Search posts, get users/posts, and create/reply/delete posts with approval.', 'working',
+    [nativeOauth('x'), remoteMcp()], { nativeToolCount: 14, setupInstructions: 'Use X_BEARER_TOKEN for read-only API access. Add X_WRITE_ACCESS_TOKEN and X_WRITE_ACCESS_TOKEN_SECRET for approval-gated posting/replies/deletes.' }),
   p('meta-ads', 'Meta Ads', 'marketing', 'Ad accounts, campaigns and insights; create drafts. Publish only with approval.', 'coming_soon', [nativeOauth('meta')]),
-  p('instagram', 'Instagram Business', 'marketing', 'Media, insights and publishing (publish needs approval).', 'coming_soon', [nativeOauth('meta')]),
+  p('instagram-business', 'Instagram Business', 'marketing', 'Media, insights and publishing (publish needs approval).', 'coming_soon', [nativeOauth('meta')]),
   p('facebook-pages', 'Facebook Pages', 'marketing', 'Page posts and insights.', 'coming_soon', [nativeOauth('meta')]),
   p('google-ads', 'Google Ads', 'marketing', 'Campaigns, ad groups and performance.', 'coming_soon', [nativeOauth('google')]),
 
@@ -95,7 +144,9 @@ export const CATALOG: CatalogProvider[] = [
   p('canva', 'Canva', 'creative', 'Generate and edit visual designs.', 'mcp_available', [remoteMcp()]),
   p('webflow', 'Webflow', 'creative', 'CMS items, collections and site publishing.', 'coming_soon', [nativeApiKey('webflow'), remoteMcp()]),
   p('framer', 'Framer', 'creative', 'Sites and CMS.', 'coming_soon', [nativeApiKey('framer')]),
-  p('higgsfield', 'Higgsfield', 'creative', 'Generate images, video and audio via MCP.', 'mcp_available', [remoteMcp()]),
+  p('higgsfield', 'Higgsfield', 'creative', 'Generate images, video and audio. Connect with the Higgsfield CLI or a remote MCP server — no API key.', 'mcp_available',
+    [remoteMcp('https://higgsfield.ai/mcp'), { kind: 'manual_setup', instructions: 'Higgsfield CLI: install, run `higgsfield auth login`, then Connect & inspect.' }],
+    { nativeToolCount: 16, setupInstructions: 'Sign in with your Higgsfield account via the CLI (no API key), then approve the discovered tools.' }),
 
   // ── Email delivery ──────────────────────────────────────────────────────────
   p('resend', 'Resend', 'communication', 'Transactional email API.', 'coming_soon', [nativeApiKey('resend')]),

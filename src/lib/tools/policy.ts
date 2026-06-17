@@ -182,8 +182,10 @@ export function assessRisk(action: ControlAction): ToolRisk {
 
 function connectionToolRisk(tool: string): ToolRisk {
   const t = tool.toLowerCase();
-  if (/(send|email|message|publish|post)/.test(t)) return 'external_send';
-  if (/(create|update|write|delete|comment|merge|open_pr|draft)/.test(t)) return 'external_write';
+  if (/(^|\.)(search|get|list|read|query|inspect|retrieve|run_report|realtime|analyze|extract|generate)_/.test(t)) return 'external_read';
+  if (/(delete|remove|destroy)/.test(t)) return 'destructive';
+  if (/(send|email|message|publish|create_post|reply_to_post|schedule_post|post_message|send_message)/.test(t)) return 'external_send';
+  if (/(create|update|write|comment|merge|open_pr|draft|append|deploy|set_env|apply_mutation)/.test(t)) return 'external_write';
   return 'external_read';
 }
 

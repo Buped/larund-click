@@ -35,6 +35,23 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 
 export const githubTools: ConnectionToolDefinition[] = [
   {
+    name: 'github.test_connection',
+    description: 'Verify the GitHub token and return the authenticated account.',
+    risk: 'external_read',
+    async run(_args, secrets) {
+      const token = secrets[TOKEN_KEY];
+      if (!token) return mockOrMissingAuth('GitHub', 'github.test_connection', 'github.test_connection', SETUP);
+      const r = await ghFetch('/user', token);
+      if (!r.success) return r;
+      try {
+        const data = JSON.parse(r.output) as { login?: string; id?: number };
+        return ok(`Connected to GitHub as ${data.login ?? data.id ?? 'authenticated user'}.`, { account: data.login, id: data.id });
+      } catch {
+        return ok('Connected to GitHub.', { raw: true });
+      }
+    },
+  },
+  {
     name: 'github.read_file',
     description: 'Read a file from a repo (owner, repo, path, ref?).',
     risk: 'external_read',

@@ -49,6 +49,13 @@ export interface CatalogProvider {
   userEditableMcpUrl: boolean;
   /** Number of native tools when implemented (0 for MCP-only / coming soon). */
   nativeToolCount: number;
+  env: {
+    required: string[];
+    optional: string[];
+    advanced: string[];
+  };
+  /** Sub-capability cards route setup/use back to the primary provider. */
+  parentProviderId?: string;
   setupInstructions?: string;
   docsUrl?: string;
 }

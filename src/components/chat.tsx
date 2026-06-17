@@ -11,11 +11,15 @@ import { v4 as uuidv4 } from 'uuid';
 import type { UserCredits } from '../lib/supabase';
 import { ReferenceChip } from './chat/ReferenceChip';
 import { ReferencePicker } from './chat/ReferencePicker';
-import { MentionInput, type MentionInputHandle } from './chat/MentionInput';
+import { RichMentionEditor, type RichMentionEditorHandle } from './mentions/RichMentionEditor';
+import { MentionChip } from './mentions/MentionChip';
 import type { DocumentReference } from '../lib/references/types';
 import { deserializeReferences, serializeReferences } from '../lib/references/serialize';
 import { referenceFromPath } from '../lib/references/local-picker';
 import { ingestReferences } from '../lib/references/ingest';
+import type { ReferencedContext } from '../lib/mentions/types';
+import { resolveReferencedContext } from '../lib/mentions/resolve';
+import { documentReferenceToMention, mentionToDocumentReference } from './mentions/mentionSerialization';
 import { policyForAutonomyMode, type AutonomyMode as PolicyAutonomyMode } from '../lib/tools/policy';
 import { classifyIntent } from '../lib/intent/classify';
 
@@ -684,7 +688,7 @@ type Message = {
   _agentStatus?: AgentStatus;
   _agentSteps?: AgentStep[];
   _agentAskQuestion?: string | null;
-  _references?: DocumentReference[];
+  _references?: ReferencedContext[];
   // Subtle routing label shown after send ("Answering" / "Needs confirmation").
   _intentLabel?: string;
 };
@@ -717,7 +721,8 @@ function parseAgentSteps(raw?: string | null): AgentStep[] {
 function hydrateMessage(row: any): Message {
   const isAgent = row.message_type === 'agent'
     || Boolean(row.agent_status || row.agent_steps_json || row.agent_ask_question);
-  const references = deserializeReferences(row.references_json || undefined);
+  const references = deserializeReferences(row.references_json || undefined)
+    .map((ref) => 'refId' in ref ? ref : documentReferenceToMention(ref));
 
   return {
     ...row,
@@ -752,10 +757,10 @@ export function ChatScreen({
   const [routing,           setRouting          ] = useState(false);
   const [agentAskAnswer,    setAgentAskAnswer   ] = useState('');
   const [runningTask,       setRunningTask      ] = useState<RunningTask | null>(null);
-  const [references,        setReferences       ] = useState<DocumentReference[]>([]);
+  const [references,        setReferences       ] = useState<ReferencedContext[]>([]);
   const [referencePickerOpen, setReferencePickerOpen] = useState(false);
 
-  const editorRef     = useRef<MentionInputHandle>(null);
+  const editorRef     = useRef<RichMentionEditorHandle>(null);
   const fileRef       = useRef<HTMLInputElement>(null);
   const bottomRef     = useRef<HTMLDivElement>(null);
   const referencePickerTriggerRef = useRef<HTMLButtonElement>(null);
@@ -778,14 +783,14 @@ export function ChatScreen({
 
   // The rich composer (contentEditable) is the source of truth: it reports its
   // derived plain text + ordered references here on every edit.
-  function handleEditorChange(text: string, refs: DocumentReference[]) {
+  function handleEditorChange(text: string, refs: ReferencedContext[]) {
     setInput(text);
     setReferences(refs);
   }
 
   function handleReferencesPicked(picked: DocumentReference[]) {
     // Insert each pick inline at the caret; the editor's onChange syncs state.
-    for (const ref of picked) editorRef.current?.insertReference(ref);
+    for (const ref of picked) editorRef.current?.insertReference(documentReferenceToMention(ref));
     setReferencePickerOpen(false);
   }
 
@@ -802,7 +807,7 @@ export function ChatScreen({
         if (/^[a-zA-Z]:[\\/]/.test(line) || line.startsWith('/') || line.startsWith('\\\\')) refs.push(referenceFromPath(line, 'file'));
       }
     }
-    for (const ref of refs) editorRef.current?.insertReference(ref);
+    for (const ref of refs) editorRef.current?.insertReference(documentReferenceToMention(ref));
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
@@ -894,7 +899,7 @@ export function ChatScreen({
     openrouterId: string,
     asstMsgId: string,
     history: { role: 'user' | 'assistant'; content: string }[],
-    taskReferences: DocumentReference[],
+    taskReferences: ReferencedContext[],
   ) {
     type AgentPersistState = {
       content: string;
@@ -1045,6 +1050,7 @@ export function ChatScreen({
     const messageText = text || 'Use the referenced input(s).';
 
     let currentTaskId: string | null = null;
+    let currentSessionId: string | null = null;
     setSending(true);
     setInput('');
     editorRef.current?.clear();
@@ -1061,6 +1067,7 @@ export function ChatScreen({
       setActiveChat(sessionId);
       setSidebarRefreshKey(k => k + 1);
     }
+    currentSessionId = sessionId;
 
     // ── User message ──
     const userMsgId = uuidv4();
@@ -1152,9 +1159,18 @@ export function ChatScreen({
     // message stays plain `messageText`; only what we send to the model differs.
     let userContent: ChatMessage['content'] = messageText;
     if (taskReferences.length > 0) {
-      const ingest = await ingestReferences(taskReferences, text);
-      if (ingest.textBlocks.length > 0 || ingest.imageBlocks.length > 0) {
-        const textPart = [messageText, ...ingest.textBlocks].join('\n\n');
+      const resolved = await resolveReferencedContext({
+        references: taskReferences,
+        userId,
+        workspaceId: localStorage.getItem('active_workspace_id') ?? undefined,
+      });
+      if (resolved.blockers.length > 0) {
+        throw new Error(`Referenced context is not ready:\n${resolved.blockers.map((b) => `- ${b}`).join('\n')}`);
+      }
+      const ingest = await ingestReferences(resolved.documentReferences, text);
+      const textBlocks = [...(resolved.promptBlock ? [resolved.promptBlock] : []), ...ingest.textBlocks];
+      if (textBlocks.length > 0 || ingest.imageBlocks.length > 0) {
+        const textPart = [messageText, ...textBlocks].join('\n\n');
         userContent = ingest.imageBlocks.length > 0
           ? [{ type: 'text', text: textPart }, ...ingest.imageBlocks]
           : textPart;
@@ -1211,6 +1227,16 @@ export function ChatScreen({
         console.warn('Failed to save stopped assistant message:', err),
       );
     }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (currentTaskId) {
+        setMessages(prev => prev.map(m =>
+          m.id === currentTaskId ? { ...m, content: message, streaming: false, _error: true, _agentStatus: 'error' } : m,
+        ));
+        await addMessage(currentTaskId, currentSessionId!, 'assistant', message).catch(saveErr =>
+          console.warn('Failed to save assistant error:', saveErr),
+        );
+      }
     } finally {
       chatAbortRef.current = null;
       setSending(false);
@@ -1258,7 +1284,10 @@ export function ChatScreen({
                         <div>{msg.content}</div>
                         {(msg._references?.length ?? 0) > 0 && (
                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8, justifyContent: 'flex-end' }}>
-                            {msg._references!.map((ref) => <ReferenceChip key={ref.id} refItem={ref} />)}
+                            {msg._references!.map((ref) => {
+                              const doc = mentionToDocumentReference(ref);
+                              return doc ? <ReferenceChip key={ref.id} refItem={doc} /> : <MentionChip key={ref.id} refItem={ref} />;
+                            })}
                           </div>
                         )}
                       </UserMsg>
@@ -1384,12 +1413,16 @@ export function ChatScreen({
               )}
 
               {/* Rich composer: text with inline reference pills (mention-style) */}
-              <MentionInput
+              <RichMentionEditor
                 ref={editorRef}
+                value={input}
+                references={references}
                 onChange={handleEditorChange}
-                onTriggerPicker={() => setReferencePickerOpen(true)}
+                userId={userId ?? ''}
+                workspaceId={localStorage.getItem('active_workspace_id') ?? undefined}
                 onKeyDown={onKeyDown}
                 placeholder="Ask Larund anything, or describe a task…"
+                minHeight={36}
               />
               <ReferencePicker
                 open={referencePickerOpen}

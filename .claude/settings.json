@@ -35,7 +35,13 @@
       "Bash(node -e \"const s=require\\('simple-icons'\\); console.log\\('siGithub' in s, Object.keys\\(s.siGithub||{}\\)\\); const g=s.siGithub; console.log\\(g.title, g.hex, g.slug, \\(g.path||''\\).slice\\(0,30\\)\\);\")",
       "Bash(node -e ' *)",
       "Bash(python -)",
-      "Bash(node -e \"const s=require\\('simple-icons'\\); for\\(const w of ['siBrevo','siHiggsfield','siMicrosoftoffice','siMicrosoft','siOpenai','siLangchain']\\) process.stdout.write\\(w.replace\\('si',''\\)+'='+\\(w in s?'OK':'MISS'\\)+'  '\\); console.log\\(\\);\")"
+      "Bash(node -e \"const s=require\\('simple-icons'\\); for\\(const w of ['siBrevo','siHiggsfield','siMicrosoftoffice','siMicrosoft','siOpenai','siLangchain']\\) process.stdout.write\\(w.replace\\('si',''\\)+'='+\\(w in s?'OK':'MISS'\\)+'  '\\); console.log\\(\\);\")",
+      "Bash(node scripts/sync-env.ts --help)",
+      "Bash(node scripts/sync-env.ts)",
+      "Bash(node scripts/env-audit.ts)",
+      "Bash(curl -s \"https://crates.io/api/v1/crates/tauri-plugin-oauth\")",
+      "Bash(curl -s -A \"cargo\" \"https://index.crates.io/ta/ur/tauri-plugin-oauth\")",
+      "Bash(grep -n 'pub async fn start\\\\|pub fn cancel\\\\|command\\\\|OauthConfig\\\\|pub struct OauthConfig\\\\|ports\\\\|response' __TRACKED_VAR__/src/lib.rs)"
     ]
   }
 }

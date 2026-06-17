@@ -269,7 +269,17 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
                     <button style={ghostBtn} onClick={() => moveStep(s.id, 1)} title="Down"><Icon name="arrowUp" size={12} stroke={2} style={{ transform: 'rotate(180deg)' }} /></button>
                     <button style={dangerBtn} onClick={() => removeStep(s.id)}><Icon name="trash" size={12} stroke={1.6} /></button>
                   </div>
-                  <textarea value={s.instruction} onChange={(e) => updateStep(s.id, { instruction: e.target.value })} style={{ ...input, minHeight: 44, resize: 'vertical', marginTop: 6 }} placeholder="Instruction…" />
+                  <div style={{ marginTop: 6 }}>
+                    <MentionEditor
+                      value={s.instruction}
+                      references={s.referencedContext}
+                      onChange={(text, refs) => updateStep(s.id, { instruction: text, referencedContext: refs })}
+                      userId={userId}
+                      workspaceId={workspaceId}
+                      minHeight={58}
+                      placeholder="Instruction... type @ to add step context"
+                    />
+                  </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
                     <label style={{ fontSize: 11.5, color: 'var(--text-hint)', display: 'flex', alignItems: 'center', gap: 5 }}><input type="checkbox" checked={s.required} onChange={(e) => updateStep(s.id, { required: e.target.checked })} /> required</label>
                     {s.verificationHint && <Badge text={`verify: ${s.verificationHint}`} color="var(--success)" />}

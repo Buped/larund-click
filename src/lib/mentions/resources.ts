@@ -2,8 +2,7 @@
 // mentions stay in sync with Skills, Connections, MCP, Memory and Workflows.
 
 import type { MentionKind, MentionResource } from './types';
-import { listBuilderSkills } from '../skills/builder/store';
-import { listRichSkillManifests } from '../skills/runner';
+import { listSkillPackages } from '../skills/packages/store';
 import { listCatalogProviders } from '../connections/catalog';
 import { listMcpServers, listMcpTools } from '../mcp/store';
 import { listMemory } from '../memory/store';
@@ -18,14 +17,30 @@ export async function listMentionResources(opts: {
   const out: MentionResource[] = [];
 
   if (want('skill')) {
-    const custom = await listBuilderSkills({ userId: opts.userId, workspaceId: opts.workspaceId, includeSuggested: false }).catch(() => []);
-    for (const s of custom) out.push({ kind: 'skill', refId: s.id, label: s.name, detail: s.enabled ? 'Created by you' : 'Disabled', available: s.enabled, metadata: { requiredConnections: s.requiredConnections } });
-    for (const s of listRichSkillManifests()) out.push({ kind: 'skill', refId: s.id, label: s.name, detail: 'Built-in', available: true, metadata: { requiredConnections: s.requiredConnections } });
+    const skills = await listSkillPackages({ userId: opts.userId, workspaceId: opts.workspaceId, includeSuggested: false }).catch(() => []);
+    for (const s of skills) {
+      out.push({
+        kind: 'skill',
+        refId: s.id,
+        label: s.name,
+        detail: s.source === 'built_in' ? 'Built-in skill' : s.enabled ? 'Created by you' : 'Disabled',
+        available: s.enabled,
+        metadata: { requiredConnections: s.requiredConnections, source: s.source, riskLevel: s.riskLevel },
+      });
+    }
   }
 
   if (want('connection')) {
     for (const p of listCatalogProviders()) {
-      out.push({ kind: 'connection', refId: p.id, label: p.name, detail: p.runtime === 'connected' ? 'Connected' : p.runtime === 'needs_setup' ? 'Needs setup' : p.runtime === 'available' ? 'MCP available' : 'Coming soon', available: p.runtime === 'connected', metadata: { runtime: p.runtime } });
+      const detail = p.runtime === 'connected' ? 'Connected'
+        : p.runtime === 'dev_shortcut_active' ? 'Dev shortcut active'
+        : p.runtime === 'ready_to_connect' ? 'Ready to connect'
+        : p.runtime === 'api_key_required' ? 'Add API key'
+        : p.runtime === 'developer_setup_missing' ? 'Developer setup missing'
+        : p.runtime === 'needs_reconnect' ? 'Needs reconnect'
+        : p.runtime === 'mcp_available' ? 'MCP available'
+        : 'Coming soon';
+      out.push({ kind: 'connection', refId: p.id, label: p.name, detail, available: p.runtime === 'connected' || p.runtime === 'dev_shortcut_active', metadata: { runtime: p.runtime } });
     }
   }
 
@@ -45,7 +60,7 @@ export async function listMentionResources(opts: {
 
   if (want('workflow')) {
     const wfs = await listWorkflowTemplates({ userId: opts.userId, workspaceId: opts.workspaceId }).catch(() => []);
-    for (const w of wfs.filter((x) => x.source !== 'builtin')) out.push({ kind: 'workflow', refId: w.id, label: w.name, detail: `${w.steps.length} steps`, available: true });
+    for (const w of wfs) out.push({ kind: 'workflow', refId: w.id, label: w.name, detail: `${w.steps.length} steps`, available: true, metadata: { source: w.source } });
   }
 
   return out;

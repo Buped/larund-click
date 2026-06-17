@@ -8,6 +8,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "env:sync": "node scripts/sync-env.ts",
+    "env:sync:dev-shortcuts": "node scripts/sync-env.ts --include-dev-shortcuts",
+    "env:audit": "node scripts/env-audit.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

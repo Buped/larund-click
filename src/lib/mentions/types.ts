@@ -16,6 +16,10 @@ export interface ReferencedContext {
   /** The text inserted into the prompt for this reference (e.g. "@Google Sheets"). */
   displayText: string;
   metadata?: Record<string, unknown>;
+  snapshot?: unknown;
+  insertedAt: string;
+  status?: 'available' | 'needs_setup' | 'disabled' | 'missing';
+  resolvedAtSendTime?: boolean;
 }
 
 /** A pickable resource surfaced in the mention dropdown. */
@@ -60,6 +64,9 @@ export function resourceToReference(r: MentionResource): ReferencedContext {
     label: r.label,
     refId: r.refId,
     displayText: `@${r.label}`,
-    metadata: r.metadata,
+    metadata: { ...r.metadata, detail: r.detail },
+    insertedAt: new Date().toISOString(),
+    status: r.available ? 'available' : 'needs_setup',
+    resolvedAtSendTime: true,
   };
 }

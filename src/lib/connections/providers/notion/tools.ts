@@ -36,6 +36,23 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 
 export const notionTools: ConnectionToolDefinition[] = [
   {
+    name: 'notion.test_connection',
+    description: 'Verify the Notion token and return bot/user metadata.',
+    risk: 'external_read',
+    async run(_args, secrets) {
+      const token = secrets[TOKEN_KEY];
+      if (!token) return mockOrMissingAuth('Notion', 'notion.test_connection', 'notion.test_connection', SETUP);
+      const r = await nFetch('/users/me', token);
+      if (!r.success) return r;
+      try {
+        const data = JSON.parse(r.output) as { name?: string; id?: string; bot?: { owner?: unknown } };
+        return ok(`Connected to Notion as ${data.name ?? data.id ?? 'integration'}.`, { account: data.name, id: data.id, bot: Boolean(data.bot) });
+      } catch {
+        return ok('Connected to Notion.', { raw: true });
+      }
+    },
+  },
+  {
     name: 'notion.search',
     description: 'Search Notion (query).',
     risk: 'external_read',

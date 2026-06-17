@@ -22,6 +22,8 @@ import { manualHandoffMessage } from '../browser-workflows/manual-blockers';
 import { sanitizeArgs } from '../tools/audit';
 import type { DocumentReference } from '../references/types';
 import { ingestReferences, buildReferenceMessageContent } from '../references/ingest';
+import type { ReferencedContext } from '../mentions/types';
+import { resolveReferencedContext } from '../mentions/resolve';
 import {
   buildCoworkerPromptContext,
   recordMemoryUsage,
@@ -75,7 +77,7 @@ export interface RunOptions {
   workflows?: WorkflowRunner;
   /** Prior conversation turns, oldest first. Gives the loop real context. */
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
-  references?: DocumentReference[];
+  references?: ReferencedContext[];
 }
 
 /** How many prior turns to feed into the prompt window. */
@@ -238,8 +240,6 @@ export async function runControlLoop(
   const skills = opts.skills ?? createSkillRunner({ userId, workspaceId: coworker.workspace?.id ?? opts.workspaceId });
   const workflows = opts.workflows ?? createWorkflowRunner();
 
-  const ctx = { userId, sessionId, workspaceRoot, task, references, audit, approvals, connections, skills, workflows, onAskUser, addCost: (usd: number) => { totalCostUsd += usd; } };
-
   onStatus('planning');
   emitStep({
     id: nowStepId('mode'),
@@ -255,7 +255,25 @@ export async function runControlLoop(
   const resolved = resolveActiveTask(sessionId, task);
   const taskState = resolved.state;
   taskState.status = 'running';
-  taskState.referencedInputs = references;
+  const resolvedReferences = references.length
+    ? await resolveReferencedContext({
+        references,
+        userId,
+        workspaceId: coworker.workspace?.id ?? opts.workspaceId,
+      })
+    : { promptBlock: '', blockers: [], documentReferences: [] as DocumentReference[] };
+
+  if (resolvedReferences.blockers.length) {
+    const message = `Referenced context is not ready:\n${resolvedReferences.blockers.map((b) => `- ${b}`).join('\n')}`;
+    emitStep({ id: nowStepId('reference-blocker'), type: 'blocked', output: message, timestamp: new Date().toISOString() });
+    await tracker.setStatus('blocked', { error: message });
+    onError(message);
+    await updateOverlay({ active: false, status: 'error' });
+    return;
+  }
+
+  taskState.referencedInputs = resolvedReferences.documentReferences;
+  const ctx = { userId, sessionId, workspaceRoot, task, references: resolvedReferences.documentReferences, audit, approvals, connections, skills, workflows, onAskUser, addCost: (usd: number) => { totalCostUsd += usd; } };
   if (resolved.isCorrection) {
     emitStep({
       id: nowStepId('correction'),
@@ -274,12 +292,12 @@ export async function runControlLoop(
 
   // Read attached references into model-ready content (text + image blocks).
   // Shared with the normal chat path via ../references/ingest.
-  const ingest = references.length > 0 ? await ingestReferences(references, task) : null;
+  const ingest = resolvedReferences.documentReferences.length > 0 ? await ingestReferences(resolvedReferences.documentReferences, task) : null;
   if (ingest) {
     emitStep({
       id: nowStepId('refs-plan'),
       type: 'checklist',
-      output: `Referenced inputs: ${references.map((ref) => ref.label).join(', ')}. I will inspect them before using their contents.`,
+      output: `Referenced inputs: ${resolvedReferences.documentReferences.map((ref) => ref.label).join(', ')}. I will inspect them before using their contents.`,
       timestamp: new Date().toISOString(),
     });
     for (const item of ingest.perRef) {
@@ -307,9 +325,10 @@ export async function runControlLoop(
     ? `\n\n## Recent conversation\n${history.map((m) => `${m.role}: ${m.content}`).join('\n')}`
     : '';
 
-  const coworkerBlock = coworker.promptBlock ? `\n\n${coworker.promptBlock}` : '';
+  const coworkerBlock = [coworker.promptBlock, resolvedReferences.promptBlock].filter(Boolean).join('\n\n');
+  const coworkerPromptBlock = coworkerBlock ? `\n\n${coworkerBlock}` : '';
   const systemPrompt =
-    `${CONTROL_SYSTEM_PROMPT}\n\n## Tool catalog\n${toolCatalogSummary()}\n\n## Workspace\n${workspaceRoot}${coworkerBlock}` +
+    `${CONTROL_SYSTEM_PROMPT}\n\n## Tool catalog\n${toolCatalogSummary()}\n\n## Workspace\n${workspaceRoot}${coworkerPromptBlock}` +
     `${historyBlock}\n\n${renderTaskStatePrompt(taskState)}\n\n## Current message\n${task}`;
 
   // Surfaced memory counts as used (drives recency boost), fire-and-forget.

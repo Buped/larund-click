@@ -1,11 +1,20 @@
 import type { ToolRisk } from '../tools/types';
 
-export type McpTransport = 'stdio' | 'streamable_http';
+export type McpTransport = 'stdio' | 'streamable_http' | 'cli_adapter';
 export type McpTrustLevel = 'untrusted' | 'trusted' | 'verified';
-export type McpServerStatus = 'not_connected' | 'connected' | 'error' | 'disabled';
+export type McpServerStatus =
+  | 'not_connected'
+  | 'connecting'
+  | 'connected'
+  | 'auth_required'
+  | 'error'
+  | 'disabled';
+export type McpAuthType = 'none' | 'oauth2' | 'bearer' | 'cli_login' | 'custom_headers';
 
 export interface McpServerConfig {
   id: string;
+  /** Links this server to a Connections catalog provider (e.g. "higgsfield"). */
+  providerId?: string;
   userId: string;
   workspaceId?: string;
   name: string;
@@ -16,12 +25,15 @@ export interface McpServerConfig {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+  authType?: McpAuthType;
   enabled: boolean;
   trustLevel: McpTrustLevel;
   status: McpServerStatus;
   createdAt: string;
   updatedAt: string;
   lastConnectedAt?: string;
+  /** Last connection error (sanitized, never a secret). */
+  lastError?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -96,6 +108,7 @@ export interface McpClient {
 }
 
 export interface CreateMcpServerInput {
+  providerId?: string;
   userId: string;
   workspaceId?: string;
   name: string;
@@ -106,6 +119,7 @@ export interface CreateMcpServerInput {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+  authType?: McpAuthType;
   trustLevel?: McpTrustLevel;
   enabled?: boolean;
   metadata?: Record<string, unknown>;

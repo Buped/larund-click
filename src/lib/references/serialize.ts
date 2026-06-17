@@ -1,15 +1,18 @@
 import type { ChatInputPayload, DocumentReference } from './types';
+import type { MentionKind, ReferencedContext } from '../mentions/types';
 
-export function serializeReferences(references: DocumentReference[]): string {
+export type StoredReference = DocumentReference | ReferencedContext;
+
+export function serializeReferences(references: StoredReference[]): string {
   return JSON.stringify(references);
 }
 
-export function deserializeReferences(raw: string | null | undefined): DocumentReference[] {
+export function deserializeReferences(raw: string | null | undefined): StoredReference[] {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isDocumentReference);
+    return parsed.map(normalizeReference).filter((x): x is StoredReference => Boolean(x));
   } catch {
     return [];
   }
@@ -27,6 +30,31 @@ export function renderReferenceMarkdown(ref: DocumentReference): string {
 export function appendReferenceSummary(text: string, references: DocumentReference[]): string {
   if (references.length === 0) return text;
   return `${text}\n\nReferenced inputs:\n${references.map((r) => `- ${r.id}: ${r.kind} "${r.label}" ${r.path ?? r.url ?? ''}`.trim()).join('\n')}`;
+}
+
+function normalizeReference(value: unknown): StoredReference | null {
+  if (!value || typeof value !== 'object') return null;
+  const ref = value as Partial<DocumentReference & ReferencedContext>;
+  if (isMentionKind(ref.kind) && typeof ref.id === 'string' && typeof ref.label === 'string' && typeof ref.refId === 'string') {
+    return {
+      id: ref.id,
+      kind: ref.kind,
+      label: ref.label,
+      refId: typeof ref.refId === 'string' ? ref.refId : (ref.path ?? ref.url ?? ref.id),
+      displayText: typeof ref.displayText === 'string' ? ref.displayText : `@${ref.label}`,
+      metadata: ref.metadata,
+      snapshot: ref.snapshot,
+      insertedAt: ref.insertedAt ?? new Date().toISOString(),
+      status: ref.status ?? 'available',
+      resolvedAtSendTime: ref.resolvedAtSendTime ?? true,
+    };
+  }
+  if (isDocumentReference(value)) return value;
+  return null;
+}
+
+function isMentionKind(kind: unknown): kind is MentionKind {
+  return kind === 'skill' || kind === 'connection' || kind === 'mcp' || kind === 'memory' || kind === 'workflow' || kind === 'file' || kind === 'folder';
 }
 
 function isDocumentReference(value: unknown): value is DocumentReference {

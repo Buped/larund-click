@@ -42,6 +42,62 @@ html, body, #root {
   overflow: hidden;
 }
 
+.rich-mention-editor {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  background: rgba(10, 10, 8, 0.46);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--text-primary);
+  font-family: inherit;
+  outline: none;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rich-mention-editor:focus {
+  border-color: rgba(74, 158, 255, 0.42);
+  box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.08);
+}
+
+.rich-mention-editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-hint);
+  pointer-events: none;
+}
+
+.rich-mention-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: min(240px, 80%);
+  min-height: 22px;
+  margin: 0 2px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--mention-color) 45%, transparent);
+  background: color-mix(in srgb, var(--mention-color) 17%, transparent);
+  color: var(--mention-color);
+  font-size: 11.5px;
+  font-weight: 650;
+  vertical-align: baseline;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-input-box .rich-mention-editor {
+  min-height: 36px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  resize: none;
+}
+
 /* ── Animations ─────────────────────────────────── */
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 

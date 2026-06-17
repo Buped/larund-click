@@ -76,10 +76,13 @@ export class MockMcpClient implements McpClient {
  * mock stays available for local/dev validation. Transport is resolved from the
  * config on connect and cached; other methods fall back to the store.
  */
+type Route = 'http' | 'cli' | 'mock';
+
 export class RoutingMcpClient implements McpClient {
   private mock = new MockMcpClient();
-  private route = new Map<string, 'http' | 'mock'>();
+  private route = new Map<string, Route>();
   private http: McpClient | null = null;
+  private cli: McpClient | null = null;
 
   private async httpClient(): Promise<McpClient> {
     if (!this.http) {
@@ -89,22 +92,42 @@ export class RoutingMcpClient implements McpClient {
     return this.http;
   }
 
+  private async cliClient(): Promise<McpClient> {
+    if (!this.cli) {
+      const mod = await import('./higgsfield/client');
+      this.cli = new mod.HiggsfieldCliClient();
+    }
+    return this.cli;
+  }
+
+  private routeFor(config: McpServerConfig): Route {
+    if (config.transport === 'streamable_http' && config.url) return 'http';
+    if (config.transport === 'cli_adapter') return 'cli';
+    return 'mock';
+  }
+
+  private async clientFor(which: Route): Promise<McpClient> {
+    if (which === 'http') return this.httpClient();
+    if (which === 'cli') return this.cliClient();
+    return this.mock;
+  }
+
   private async pick(serverId: string): Promise<McpClient> {
     let which = this.route.get(serverId);
     if (!which) {
       // Resolve lazily for calls that skip connect (e.g. callMcpTool).
       const { getMcpServer } = await import('./store');
       const server = await getMcpServer(serverId);
-      which = server && server.transport === 'streamable_http' && server.url ? 'http' : 'mock';
+      which = server ? this.routeFor(server) : 'mock';
       this.route.set(serverId, which);
     }
-    return which === 'http' ? this.httpClient() : this.mock;
+    return this.clientFor(which);
   }
 
   async connect(config: McpServerConfig): Promise<void> {
-    const which = config.transport === 'streamable_http' && config.url ? 'http' : 'mock';
+    const which = this.routeFor(config);
     this.route.set(config.id, which);
-    return (which === 'http' ? this.httpClient() : Promise.resolve(this.mock)).then((c) => c.connect(config));
+    return (await this.clientFor(which)).connect(config);
   }
   async disconnect(serverId: string) { return (await this.pick(serverId)).disconnect(serverId); }
   async listTools(serverId: string) { return (await this.pick(serverId)).listTools(serverId); }

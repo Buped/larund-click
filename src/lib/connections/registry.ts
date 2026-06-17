@@ -1,26 +1,69 @@
 import type { ConnectionRegistry, ConnectionCallResult } from '../tools/types';
 import type { ConnectionInfo, ConnectionManifest, ConnectionStatus } from './types';
-import { getSecrets, hasAllSecrets } from './secrets';
+import { missingAuth, mockConnectionsAllowed } from './mock-guard';
+import { isDeveloperSetupReady, devPatShortcutsEnabled, getProviderSecret } from './env/resolve';
+import { envSchemaForProvider } from './env/schema';
+import { getConnectedAccount, DEFAULT_CONTEXT, type ConnectionContext } from './connectedAccounts';
+import { resolveRuntimeCredentials } from './runtimeCredentials';
 import { githubManifest } from './providers/github/manifest';
 import { notionManifest } from './providers/notion/manifest';
 import { googleWorkspaceManifest } from './providers/google-workspace/manifest';
 import { slackManifest } from './providers/slack/manifest';
-import { hubspotManifest, airtableManifest, wordpressManifest } from './providers/extra-scaffolds';
+import { xManifest } from './providers/x/manifest';
+import { hubspotManifest, airtableManifest, wordpressManifest, moreScaffoldManifests } from './providers/extra-scaffolds';
 
 export const ALL_MANIFESTS: ConnectionManifest[] = [
   githubManifest,
   notionManifest,
   googleWorkspaceManifest,
+  xManifest,
   slackManifest,
   hubspotManifest,
   airtableManifest,
   wordpressManifest,
+  ...moreScaffoldManifests,
 ];
 
-export function connectionStatus(m: ConnectionManifest): ConnectionStatus {
+/**
+ * Per-user runtime state for a provider. Distinguishes app-level developer setup
+ * from a user actually being connected.
+ */
+export type ProviderRuntimeState =
+  | 'connected'
+  | 'ready_to_connect'
+  | 'api_key_required'
+  | 'developer_setup_missing'
+  | 'needs_reconnect'
+  | 'dev_shortcut_active'
+  | 'mcp_available'
+  | 'scaffold';
+
+export function providerRuntimeState(providerId: string, ctx: ConnectionContext = DEFAULT_CONTEXT): ProviderRuntimeState {
+  const schema = envSchemaForProvider(providerId);
+  if (schema.authMode === 'mcp_url') {
+    return isDeveloperSetupReady(providerId) ? 'mcp_available' : 'developer_setup_missing';
+  }
+  const account = getConnectedAccount(providerId, ctx);
+  if (account) return account.status === 'connected' ? 'connected' : 'needs_reconnect';
+  if (devPatShortcutsEnabled() && schema.devShortcut.some((key) => Boolean(getProviderSecret(providerId, key)))) {
+    return 'dev_shortcut_active';
+  }
+  if (schema.appRequired.length > 0 && !isDeveloperSetupReady(providerId)) return 'developer_setup_missing';
+  // API-key / PAT providers need the user's own key, not an OAuth Connect.
+  if (schema.authMode === 'api_key_user_entered' || schema.authMode === 'pat_user_entered') return 'api_key_required';
+  return 'ready_to_connect';
+}
+
+/**
+ * Coarse status for legacy callers. `configured` means the agent can call tools
+ * now (a user is connected, a dev shortcut is active, or an MCP server is set) —
+ * NOT merely that app credentials exist.
+ */
+export function connectionStatus(m: ConnectionManifest, ctx: ConnectionContext = DEFAULT_CONTEXT): ConnectionStatus {
   if (m.scaffold) return 'scaffold';
   if (m.auth.type === 'none') return 'configured';
-  return hasAllSecrets(m.auth.envVars ?? []) ? 'configured' : 'missing_auth';
+  const state = providerRuntimeState(m.id, ctx);
+  return state === 'connected' || state === 'dev_shortcut_active' || state === 'mcp_available' ? 'configured' : 'missing_auth';
 }
 
 export function listConnections(): ConnectionInfo[] {
@@ -39,13 +82,14 @@ export function listConnections(): ConnectionInfo[] {
  * Build a ConnectionRegistry. `call(connection, tool, args)` resolves the
  * provider + tool, checks configuration, then runs it with resolved secrets.
  */
-export function createConnectionRegistry(_userId = ''): ConnectionRegistry {
+export function createConnectionRegistry(userId = ''): ConnectionRegistry {
   const byId = new Map(ALL_MANIFESTS.map((m) => [m.id, m]));
+  const ctx: ConnectionContext = { userId: userId || DEFAULT_CONTEXT.userId };
 
   return {
     isConfigured(connection: string): boolean {
       const m = byId.get(connection);
-      return m ? connectionStatus(m) === 'configured' : false;
+      return m ? connectionStatus(m, ctx) === 'configured' : false;
     },
     async call(connection: string, tool: string, args: Record<string, unknown>): Promise<ConnectionCallResult> {
       const m = byId.get(connection);
@@ -57,11 +101,14 @@ export function createConnectionRegistry(_userId = ''): ConnectionRegistry {
       const def = m.tools.find((t) => t.name === fq || t.name === tool);
       if (!def) return { success: false, output: '', error: `unknown_tool:${tool}` };
 
-      // Providers fall back to mock output when their secret is missing, so we
-      // resolve whatever is configured and let the tool decide.
-      const secrets = getSecrets(m.auth.envVars ?? []);
+      // Resolve user credentials: connected account → dev shortcut → mcp → blocker.
+      // The app-level client secret is NEVER used as a user token here.
+      const resolved = await resolveRuntimeCredentials(m.id, ctx);
+      if (!resolved.ok && !mockConnectionsAllowed()) {
+        return missingAuth(m.name, fq, resolved.message ?? 'Connect your account first.', resolved.blocker);
+      }
       try {
-        return await def.run(args, secrets);
+        return await def.run(args, resolved.secrets);
       } catch (e) {
         return { success: false, output: '', error: `connection_error: ${String(e)}` };
       }

@@ -12,12 +12,24 @@ trigger: "organize sort clean rename restructure files folders downloads project
 ---
 
 # File Organizer
-1. Inspect with file.list / file.tree.
-2. Classify into categories.
-3. Propose a plan; stop here if a dry-run was requested.
-4. Ask approval before moving or deleting many files.
-5. Execute file.mkdir then file.move/copy. Never delete without approval.
-6. Summarize all changes.`;
+Use this skill when the user asks to clean, sort, rename, archive, deduplicate, or restructure local files and folders.
+
+## Process
+1. Inspect the target with file.list, file.tree, and file.search before proposing changes.
+2. Identify file types, project names, dates, and likely categories from names and metadata.
+3. Present a deterministic plan when the change is broad, destructive, or affects many files.
+4. Create destination folders with file.mkdir before moving files.
+5. Move or copy with file.move/file.copy. Never delete without explicit approval.
+6. Re-list the final folders and summarize every changed path.
+
+## Verification
+- For reorganizations, run file.tree or file.list on the destination and source.
+- For renames/moves, confirm the old path is gone and the new path exists.
+- For dry runs, stop after the plan and do not mutate files.
+
+## Rules
+- Do not use mouse, screenshots, OCR, or pixel targeting.
+- If a target path is ambiguous, ask_user before changing files.`;
 
 const browserAutomation = `---
 name: browser-automation
@@ -29,11 +41,23 @@ trigger: "open website fill form extract data log into web app browser"
 ---
 
 # Browser Automation
-1. browser.open then browser.wait + browser.read/get_state (URL/title/focus/inputs/STATE_HINTS).
-2. Check state: login_required/captcha/permission_required = manual blocker -> ask_user, resume.
-3. Act by element text/selector; browser.type errors AMBIGUOUS -> use a more specific target.
-4. Re-read after EVERY state-changing action; verify with assert_text/assert_url.
-5. Opening a page is NOT completion unless the user only asked to open it. Never use a mouse.`;
+Use this skill for web tasks that can be completed through DOM/CDP browser tools: opening pages, reading data, filling forms, clicking accessible elements, uploading files, downloading files, or extracting tables.
+
+## Process
+1. Open the target with browser.open, then run browser.wait and browser.read or browser.get_state.
+2. Inspect URL, title, visible text, inputs, buttons, and page state hints.
+3. If login, 2FA, CAPTCHA, paywall, or permission is required, ask_user for a manual step and resume after confirmation.
+4. Act only by DOM text, labels, roles, selectors, keyboard shortcuts, paste, upload, or download.
+5. After every state-changing action, read the page again and verify the expected change.
+
+## Verification
+- Use browser.assert_text or browser.assert_url for final proof when possible.
+- Extract tables with browser.extract_table instead of screenshots.
+- Opening a page is not completion unless the user only asked to open it.
+
+## Rules
+- Never use a mouse, cursor, coordinates, screenshots, OCR clicks, or visual pixel targeting.
+- If browser.type reports ambiguity, choose a more specific selector or ask_user.`;
 
 const googleSheetsWeb = `---
 name: google-sheets-web
@@ -45,12 +69,19 @@ trigger: "google sheet google táblázat sheets.new spreadsheet online open goog
 ---
 
 # Google Sheets (Web)
-A Google Sheet is a CLOUD doc, NOT local sheet.write. A local .xlsx/.csv does NOT satisfy it.
-1. If google-workspace connection configured -> connection.call sheets.write + sheets.read to verify.
-2. Else browser: browser.open https://sheets.new -> wait/read. If login_required -> ask_user, resume.
-3. Build TSV rows; clipboard.set the TSV; browser.paste into the grid (A1 is focused on a fresh sheet).
-4. browser.read/assert_text to confirm rows are in the grid, THEN task.complete.
-5. "at least N rows" with no data -> generate sample rows. Never write into the title box.`;
+A Google Sheet is a cloud document, not a local .xlsx or .csv file. Use this skill when the user explicitly asks for Google Sheets, sheets.new, an online spreadsheet, or the currently open Google Sheet.
+
+## Process
+1. Prefer the Google Workspace connection when configured: create/open the sheet, write or append values, then read values back.
+2. If the connection is unavailable but browser work is acceptable, open https://sheets.new and read the page state.
+3. If login is required, ask_user to sign in and resume the same task.
+4. Build tab-separated rows and paste them into the grid, not the title box.
+5. If the user asks for a minimum number of rows without providing data, generate reasonable sample rows.
+
+## Verification
+- With the API, call a read_values tool after writing and compare expected values.
+- With the browser, use browser.read/assert_text or another DOM read-back to confirm rows are visible.
+- A local spreadsheet file alone never completes a Google Sheets task.`;
 
 const googleSheets = `---
 name: google-sheets
@@ -62,11 +93,19 @@ trigger: "google sheet google sheets online spreadsheet sheets.new szamla konyve
 ---
 
 # Google Sheets
-1. Use google.sheets.create if a new cloud sheet is needed.
-2. Use google.sheets.write_values or google.sheets.append_values for rows.
-3. Always call google.sheets.read_values after writing and verify expected values.
-4. A local .xlsx or .csv never completes a Google Sheets request unless the user changes the target.
-5. If auth is missing, ask for Google Workspace setup or offer local .xlsx as an explicit fallback.`;
+Use this skill for API-first Google Sheets work through the Google Workspace connection.
+
+## Process
+1. Confirm whether the user wants a new sheet, an existing sheet, append, overwrite, formatting, or export.
+2. Use google.sheets.create for new cloud sheets.
+3. Use google.sheets.write_values or google.sheets.append_values for tabular data.
+4. Preserve user-provided headers and row order unless asked to transform them.
+5. If credentials are missing, block and ask the user to connect Google Workspace or approve an explicit local fallback.
+
+## Verification
+- Always call google.sheets.read_values after writing.
+- Compare expected headers, row count, and important values.
+- Do not complete a cloud Google Sheets request with only a local file.`;
 
 const googleWorkspace = `---
 name: google-workspace
@@ -78,11 +117,18 @@ trigger: "google workspace google drive google sheets google docs gmail calendar
 ---
 
 # Google Workspace
-1. Prefer connection.call with google-workspace tools.
-2. If auth is missing, ask the user to connect Google Workspace or offer a local file fallback when acceptable.
-3. Never satisfy a Google cloud document request with only a local file.
-4. Verify every create/write by reading metadata, values or content back.
-5. Browser fallback must use DOM/read-back only; no mouse or visual control.`;
+Use this skill when the task spans Google Drive, Docs, Sheets, Gmail, or Calendar and should be handled through structured Google APIs when possible.
+
+## Process
+1. Identify the exact Google surface and operation: read, create, update, send, share, export, schedule, or search.
+2. Prefer connection.call with google-workspace tools.
+3. If auth is missing, show a blocker and ask the user to connect Google Workspace.
+4. For browser fallback, use browser DOM/CDP tools only and re-read state after changes.
+5. For external sends or sharing, expect approval before sending/publishing.
+
+## Verification
+- Read metadata, document content, sheet values, calendar event details, or message status back.
+- Never satisfy a Google cloud document request with only a local artifact unless the user explicitly changes the target.`;
 
 const googleDocs = `---
 name: google-docs
@@ -94,11 +140,19 @@ trigger: "google docs google doc document invoice szamla"
 ---
 
 # Google Docs
-1. Use google.docs.create for new cloud docs.
-2. Insert content with google.docs.insert_text or google.docs.batch_update.
-3. Read back with google.docs.read before completion.
-4. Export through Drive with google.docs.export_docx or google.docs.export_pdf when requested.
-5. If auth is missing, ask to connect Google or offer local .docx/.txt as a fallback.`;
+Use this skill to create, update, read, export, or verify Google Docs.
+
+## Process
+1. Confirm whether the target is a cloud Google Doc or a local document.
+2. Use google.docs.create for new cloud docs.
+3. Insert or update content with google.docs.insert_text or google.docs.batch_update.
+4. Use Drive export tools for PDF/DOCX exports when requested.
+5. If auth is missing, ask the user to connect Google Workspace or approve a local fallback.
+
+## Verification
+- Read the Google Doc content back before completing.
+- For exports, confirm the exported file exists and can be read/opened by file tools.
+- Do not claim a cloud doc exists unless the Google API or browser state confirms it.`;
 
 const localOffice = `---
 name: local-office
@@ -110,11 +164,19 @@ trigger: "excel xlsx csv word docx txt local office libreoffice"
 ---
 
 # Local Office
-1. For Excel, write .xlsx with sheet.write; for CSV use .csv.
-2. Read back with sheet.read/sheet.to_json before completion.
-3. For Word-like local output, prefer doc.write_docx when requested or doc.write_txt for plain text.
-4. Opening Word/Excel is optional preview only; no GUI editing.
-5. Google Sheets/Docs requests are cloud targets, not local Office targets.`;
+Use this skill for local spreadsheet, CSV, DOCX, TXT, and office-style file work when the user wants files on disk.
+
+## Process
+1. Determine the requested local format and output path.
+2. For spreadsheets, use sheet.write, sheet.append, sheet.export_csv, or sheet.to_json.
+3. For text/DOCX output, use doc.write_txt or doc.write_docx.
+4. Avoid GUI Office automation. Opening a file is preview only, not editing.
+5. If the user asked for Google Sheets or Google Docs, switch to the cloud skill instead.
+
+## Verification
+- Read spreadsheet outputs with sheet.read or sheet.to_json.
+- Read document outputs with doc.read or file.read as appropriate.
+- Confirm the exact file path exists before completion.`;
 
 const documentAccounting = `---
 name: document-accounting
@@ -126,11 +188,19 @@ trigger: "invoice szamla accounting konyvel konyveles xlsx google sheet"
 ---
 
 # Document Accounting
-1. Read all referenced invoice files first with document.read/document.read_many; for folders use folder.scan then folder.read_relevant.
-2. Extract invoice number, issuer, customer, date, item, net, gross/total and currency.
-3. If target is local Excel, use sheet.write to .xlsx and sheet.read back.
-4. If target is Google Sheets, use the Google connection and read values back.
-5. Complete only when source files read and output rows verified.`;
+Use this skill when the user references invoices, receipts, folders of documents, or asks for accounting/bookkeeping extraction into a table.
+
+## Process
+1. Read every referenced invoice with document.read or document.read_many.
+2. For folders, scan first, select relevant files, then read the relevant documents.
+3. Extract invoice number, issuer, customer, date, line item, net, tax, gross total, and currency.
+4. Preserve uncertainty explicitly rather than inventing missing values.
+5. Write the requested output: local XLSX/CSV through sheet tools or cloud Google Sheets through the Google connection.
+
+## Verification
+- Confirm all source files were read or report which files could not be read.
+- Read the output rows back and compare row count/key totals.
+- Completion requires both source read evidence and output read-back evidence.`;
 
 const taskVerification = `---
 name: task-verification
@@ -142,11 +212,24 @@ trigger: "verify confirm check done complete read back outcome"
 ---
 
 # Task Verification
-Prove the outcome; never trust "done" alone (the runtime guard re-checks).
-- Local files -> file.exists/list/tree; read back writes; confirm source+dest for moves.
-- Local spreadsheet -> sheet.read the rows. Cloud Google Sheet -> browser.assert_text or connection sheets.read (a local file does NOT count).
-- Browser/webapp -> after a change, browser.read + assert_text/assert_url. Opening a page is not proof.
-- If a login/captcha/permission wall blocks verification -> ask_user and resume; never complete.`;
+Use this skill before task.complete and whenever a task result needs proof.
+
+## Principles
+- Never trust task.complete without evidence.
+- Choose the read-back method that matches the actual target surface.
+- If verification fails, keep working or report blocked/failed. Do not claim completion.
+
+## Read-back methods
+1. Local files: file.exists, file.list/file.tree, then file.read/doc.read/sheet.read for written content.
+2. Local spreadsheets: sheet.read or sheet.to_json and compare expected rows.
+3. Google Sheets: connection read_values or browser DOM assertion. A local file does not count.
+4. Google Docs: google.docs.read/export or browser/document read-back.
+5. Browser tasks: browser.read plus assert_text/assert_url after any state-changing action.
+6. Connections/MCP: read the provider response or query the created/updated object.
+
+## Blockers
+- Login, CAPTCHA, permissions, missing auth, or unavailable tools require ask_user or a blocked status.
+- The completion guard must reject task.complete until required evidence exists.`;
 
 const vscodeProject = `---
 name: vscode-project
@@ -158,8 +241,19 @@ trigger: "open project vs code run tests fix failing tests git diff coding"
 ---
 
 # VS Code Project Workflow
-1. code --reuse-window <folder>. 2. file.tree/search to scan.
-3. Edit with file.edit/write. 4. cli.run tests/build. 5. git diff. Never click in VS Code.`;
+Use this skill for local coding tasks: inspect a repository, edit files, run tests, fix build errors, and summarize diffs.
+
+## Process
+1. Inspect the repository with file.tree and file.search before editing.
+2. Read relevant files and understand local patterns.
+3. Make focused file edits with file.edit/file.write or CLI-supported tooling.
+4. Run the smallest relevant tests first, then broader build/test commands when needed.
+5. Inspect git diff and summarize changed behavior.
+
+## Verification
+- Report commands run and their result.
+- Do not complete a code change without at least a build, test, lint, or explicit reason tests could not run.
+- Never click in VS Code or use mouse/cursor/screenshot automation.`;
 
 const githubMaintainer = `---
 name: github-maintainer
@@ -171,8 +265,18 @@ trigger: "github repo readme pull request issue branch commit"
 ---
 
 # GitHub Maintainer
-1. If github not configured, ask_user. 2. Read via connection.call (read_file/list_issues/search_repos).
-3. Writes (write_file/open_pr/comment_issue) need approval.request. 4. Report URLs.`;
+Use this skill for GitHub repository maintenance through the GitHub connection: issues, PRs, branches, files, reviews, comments, and release coordination.
+
+## Process
+1. Check that the GitHub connection is configured before attempting live work.
+2. Read repository, issue, PR, or file context through connection.call.
+3. For writes, prepare the exact proposed action and request approval when required.
+4. Create focused branches/commits/PRs or comments, then report stable URLs.
+
+## Verification
+- Read back created comments, PR metadata, branch status, or file content.
+- Do not claim a GitHub write succeeded without provider confirmation.
+- If auth or permissions are missing, block and ask_user.`;
 
 const notionWorkspace = `---
 name: notion-workspace
@@ -184,8 +288,18 @@ trigger: "notion page database row update create query workspace"
 ---
 
 # Notion Workspace
-1. If notion not configured, ask_user. 2. Read via search/read_page/query_database.
-3. Writes (create_page/update_page/create_database_row) need approval. 4. Report page URL.`;
+Use this skill for Notion pages and databases through the Notion connection.
+
+## Process
+1. Confirm the Notion connection is configured and the target workspace/page/database is clear.
+2. Search/read pages or query databases before writing.
+3. For creates and updates, preserve page structure and user terminology.
+4. Request approval for writes when policy requires it.
+5. Report the resulting page/database URL or row identifier.
+
+## Verification
+- Read the page, database row, or query result back after a write.
+- If permissions are missing, block and ask_user rather than inventing access.`;
 
 const marketingReport = `---
 name: marketing-report
@@ -197,9 +311,19 @@ trigger: "marketing report weekly metrics summary analytics dashboard compile"
 ---
 
 # Marketing Report
-1. Gather inputs (sheet.read, browser.*, connection.call).
-2. Aggregate key metrics + deltas. 3. file.write the report (Markdown).
-4. Summarize what changed and where it was saved. Never screenshot dashboards.`;
+Use this skill to compile recurring or one-off marketing performance reports from spreadsheets, CSVs, dashboards, web pages, or connected tools.
+
+## Process
+1. Identify the reporting period, metrics, sources, and requested output format.
+2. Read data through sheet.read, file.read, browser DOM tools, or connection APIs.
+3. Aggregate key metrics, deltas, anomalies, and caveats.
+4. Write the report with clear sections: summary, metric table, insights, risks, and next actions.
+5. Keep claims tied to read source data.
+
+## Verification
+- Read the saved report back.
+- Confirm required sections and key metrics are present.
+- Never screenshot dashboards or rely on visual-only evidence.`;
 
 export const BUNDLED_SKILL_FILES: string[] = [
   fileOrganizer,

@@ -10,6 +10,8 @@ export interface ConnectionAuth {
   type: AuthType;
   /** Env/secret-store keys this connection reads (never logged). */
   envVars?: string[];
+  /** At least one group must be fully present for providers with alternate auth modes. */
+  envVarGroups?: string[][];
   scopes?: string[];
 }
 

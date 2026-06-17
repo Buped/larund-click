@@ -5,40 +5,48 @@
 
 import { CATALOG } from './providers';
 import type { CatalogProvider } from './types';
-import { ALL_MANIFESTS, connectionStatus } from '../registry';
+import { providerRuntimeState } from '../registry';
+import { DEFAULT_CONTEXT, type ConnectionContext } from '../connectedAccounts';
 
-export type RuntimeConnectionState = 'connected' | 'needs_setup' | 'available' | 'coming_soon';
+/**
+ * Live per-user connection state. Distinguishes "developer hasn't configured the
+ * app" from "user hasn't connected yet" from "connected".
+ */
+export type RuntimeConnectionState =
+  | 'connected'
+  | 'ready_to_connect'
+  | 'api_key_required'
+  | 'developer_setup_missing'
+  | 'needs_reconnect'
+  | 'dev_shortcut_active'
+  | 'mcp_available'
+  | 'coming_soon';
 
 export interface ResolvedCatalogProvider extends CatalogProvider {
-  /** Live connection state, derived from credentials + implementation status. */
+  /** Live connection state, derived from app creds + connected accounts + impl status. */
   runtime: RuntimeConnectionState;
 }
 
-function runtimeState(provider: CatalogProvider): RuntimeConnectionState {
-  // Real registry providers reflect actual secret presence.
-  const manifest = ALL_MANIFESTS.find((m) => m.id === provider.id);
-  if (manifest) {
-    const s = connectionStatus(manifest);
-    if (s === 'configured') return 'connected';
-    if (s === 'missing_auth') return 'needs_setup';
+function runtimeState(provider: CatalogProvider, ctx: ConnectionContext): RuntimeConnectionState {
+  if (provider.status === 'mcp_available') return 'mcp_available';
+  // Google sub-apps inherit Google Workspace; others use their own id.
+  const baseId = provider.parentProviderId ?? provider.id;
+  const state = providerRuntimeState(baseId, ctx);
+  if (state === 'scaffold') return 'coming_soon';
+  // Roadmap-only providers stay "coming soon" until their tools exist — but if a
+  // user genuinely connected one, reflect that honestly.
+  if (provider.status === 'coming_soon' && (state === 'ready_to_connect' || state === 'developer_setup_missing')) {
+    return 'coming_soon';
   }
-  // Google sub-apps inherit the Google Workspace credential state.
-  if (['google-drive', 'google-docs', 'google-sheets', 'gmail', 'google-calendar'].includes(provider.id)) {
-    const gw = ALL_MANIFESTS.find((m) => m.id === 'google-workspace');
-    if (gw && connectionStatus(gw) === 'configured') return 'connected';
-    if (provider.status === 'working' || provider.status === 'partial') return 'needs_setup';
-  }
-  if (provider.status === 'working' || provider.status === 'partial' || provider.status === 'needs_setup') return 'needs_setup';
-  if (provider.status === 'mcp_available') return 'available';
-  return 'coming_soon';
+  return state;
 }
 
-export function listCatalogProviders(): ResolvedCatalogProvider[] {
-  return CATALOG.map((p) => ({ ...p, runtime: runtimeState(p) }));
+export function listCatalogProviders(ctx: ConnectionContext = DEFAULT_CONTEXT): ResolvedCatalogProvider[] {
+  return CATALOG.map((p) => ({ ...p, runtime: runtimeState(p, ctx) }));
 }
 
-export function getResolvedProvider(id: string): ResolvedCatalogProvider | undefined {
-  return listCatalogProviders().find((p) => p.id === id);
+export function getResolvedProvider(id: string, ctx: ConnectionContext = DEFAULT_CONTEXT): ResolvedCatalogProvider | undefined {
+  return listCatalogProviders(ctx).find((p) => p.id === id);
 }
 
 /** Providers a user can act on now (connect or use): excludes pure coming-soon. */

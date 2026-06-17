@@ -5,8 +5,8 @@ import { deriveFlags } from '../types';
 import { getBrandIcon } from '../../../brand-icons/provider-icons';
 
 describe('connection catalog', () => {
-  it('contains at least 20 providers', () => {
-    expect(CATALOG.length).toBeGreaterThanOrEqual(20);
+  it('contains at least 35 providers', () => {
+    expect(CATALOG.length).toBeGreaterThanOrEqual(35);
   });
 
   it('every provider has a real logo or a clean monogram fallback', () => {
@@ -41,20 +41,48 @@ describe('connection catalog', () => {
     }
   });
 
-  it('marks at least the three real providers as working', () => {
-    for (const id of ['github', 'notion', 'google-workspace']) {
+  it('marks real native providers as working', () => {
+    for (const id of ['github', 'notion', 'google-workspace', 'x']) {
       expect(getCatalogProvider(id)?.status).toBe('working');
     }
+  });
+
+  it('routes Google sub-apps through google-workspace', () => {
+    for (const id of ['google-drive', 'google-docs', 'google-sheets', 'gmail', 'google-calendar']) {
+      expect(getCatalogProvider(id)?.parentProviderId).toBe('google-workspace');
+    }
+  });
+
+  it('every provider has official developer docs', () => {
+    for (const p of CATALOG) {
+      expect(p.docsUrl).toBeTruthy();
+    }
+  });
+
+  it('every provider exposes env setup groups', () => {
+    for (const p of CATALOG) {
+      expect(Array.isArray(p.env.required)).toBe(true);
+      expect(Array.isArray(p.env.optional)).toBe(true);
+      expect(Array.isArray(p.env.advanced)).toBe(true);
+    }
+    // env.required now means APP-LEVEL developer credentials, never user tokens.
+    expect(getCatalogProvider('x')?.env.required).toEqual(['X_CLIENT_ID']);
+    expect(getCatalogProvider('x')?.env.required).not.toContain('X_BEARER_TOKEN');
+    expect(getCatalogProvider('google-drive')?.parentProviderId).toBe('google-workspace');
   });
 
   it('resolves runtime state and excludes coming_soon from actionable', () => {
     const resolved = listCatalogProviders();
     expect(resolved.length).toBe(CATALOG.length);
-    // No secrets configured in tests → real providers need setup, not connected.
+    // No app credentials configured in tests → GitHub needs developer setup, not connected.
     const github = resolved.find((p) => p.id === 'github')!;
-    expect(github.runtime).toBe('needs_setup');
-    const comingSoon = resolved.find((p) => p.status === 'coming_soon' && !p.supportsMcp);
-    if (comingSoon) expect(isActionable(comingSoon)).toBe(false);
+    expect(github.runtime).toBe('developer_setup_missing');
+    // API-key providers surface "Add API key", not "developer setup".
+    expect(resolved.find((p) => p.id === 'resend')!.runtime).toBe('api_key_required');
+    // An OAuth-only coming_soon provider with no app creds is not actionable.
+    const metaAds = resolved.find((p) => p.id === 'meta-ads')!;
+    expect(metaAds.runtime).toBe('coming_soon');
+    expect(isActionable(metaAds)).toBe(false);
   });
 
   it('supports both native API and MCP for providers that declare both', () => {

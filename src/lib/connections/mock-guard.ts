@@ -38,13 +38,14 @@ export function mockConnectionsAllowed(): boolean {
 }
 
 /** Structured missing-auth failure with an actionable, secret-free message. */
-export function missingAuth(provider: string, tool: string, instruction?: string): ConnectionCallResult {
+export function missingAuth(provider: string, tool: string, instruction?: string, blocker?: string): ConnectionCallResult {
   const extra = instruction ? ` ${instruction}` : '';
+  const kind = blocker ?? 'missing_connection';
   return {
     success: false,
     output: '',
-    error: `missing_auth: ${provider} is not connected — cannot run ${tool}. Connect ${provider} in Connections, then retry.${extra}`,
-    details: { missingAuth: true, provider },
+    error: `missing_auth (${kind}): ${provider} is not connected — cannot run ${tool}. Connect ${provider} in Connections, then retry.${extra}`,
+    details: { missingAuth: true, blocker: kind, provider },
   };
 }
 
