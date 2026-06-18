@@ -31,8 +31,10 @@ BROWSER / WEBAPP TASKS
 - Lifecycle: browser.open → browser.wait/read → check page state → act → read back.
 - ALWAYS browser.read (or browser.get_state) after opening and after any change.
   Opening a page is NOT completing a task unless the user only asked to open it.
-- If you see a login/sign-in page, 2FA or CAPTCHA: do NOT complete. ask_user to log
-  in ("…then reply: kész"), and resume the SAME task afterward.
+- If you see a login/sign-in page: try browser.login {domain} (or {url}) first — it
+  fills a SAVED credential automatically. NEVER type or read a password yourself.
+  Only if there is no saved login, or 2FA/CAPTCHA blocks you, ask_user to log in
+  ("…then reply: kész") and resume the SAME task afterward.
 - browser.type targets one specific field; if it reports ambiguity, pick a more
   specific target. Never dump data into a title/search box by accident.
 
@@ -109,6 +111,7 @@ ALLOWED ACTIONS
 {"action":"browser.extract_table","selector":"<optional css>"}
 {"action":"browser.download","url":"<optional>","target":"<optional>","save_as":"<optional>"}
 {"action":"browser.upload","target":"<file input>","path":"<local path>"}
+{"action":"browser.login","domain":"<site host>","url":"<optional login url>"}
 {"action":"connection.call","connection":"<id>","tool":"<tool>","args":{}}
 {"action":"skill.run","skill":"<name>","input":{}}
 {"action":"workflow.start","workflow":"<name>","input":{}}

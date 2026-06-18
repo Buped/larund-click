@@ -66,6 +66,8 @@ pub fn run() {
             commands::browser::browser_wait,
             commands::browser::browser_probe,
             commands::browser::browser_close,
+            // ── network (CORS-free HTTP for OAuth token exchange, etc.) ──────
+            commands::net::http_request,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

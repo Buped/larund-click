@@ -87,15 +87,8 @@ export const CATALOG: CatalogProvider[] = [
     [nativePat('github'), remoteMcp()], { nativeToolCount: 7, setupInstructions: 'Add a GitHub personal access token (repo scope).', docsUrl: 'https://github.com/settings/tokens' }),
   p('notion', 'Notion', 'productivity', 'Search, read and write Notion pages and databases.', 'working',
     [nativePat('notion'), remoteMcp()], { nativeToolCount: 7, setupInstructions: 'Create an internal integration token and share pages with it.', docsUrl: 'https://www.notion.so/my-integrations' }),
-  p('google-workspace', 'Google Workspace', 'productivity', 'Drive, Docs, Sheets, Gmail, Calendar and Google marketing APIs through one OAuth connection.', 'working',
-    [nativeToken('google-workspace')], { nativeToolCount: 21, setupInstructions: 'Connect once with Google OAuth. Drive, Docs, Sheets, Gmail and Calendar share this auth; Ads/GA4/Search Console may need extra IDs/tokens.' }),
-
-  // Google sub-apps — surfaced as their own cards but powered by Google Workspace.
-  p('google-drive', 'Google Drive', 'productivity', 'Available through Google Workspace.', 'working', [nativeToken('google-workspace')], { nativeToolCount: 5, parentProviderId: 'google-workspace' }),
-  p('google-docs', 'Google Docs', 'productivity', 'Available through Google Workspace.', 'working', [nativeToken('google-workspace')], { nativeToolCount: 5, parentProviderId: 'google-workspace' }),
-  p('google-sheets', 'Google Sheets', 'data', 'Available through Google Workspace.', 'working', [nativeToken('google-workspace')], { nativeToolCount: 6, parentProviderId: 'google-workspace' }),
-  p('gmail', 'Gmail', 'communication', 'Available through Google Workspace. Sending requires approval.', 'partial', [nativeToken('google-workspace')], { nativeToolCount: 4, parentProviderId: 'google-workspace' }),
-  p('google-calendar', 'Google Calendar', 'productivity', 'Available through Google Workspace. Event writes require approval.', 'partial', [nativeToken('google-workspace')], { nativeToolCount: 2, parentProviderId: 'google-workspace' }),
+  p('google-workspace', 'Google', 'productivity', 'One Google connection — Drive, Gmail, Docs, Sheets, Calendar and more, via a single sign-in.', 'working',
+    [nativeToken('google-workspace')], { nativeToolCount: 21, setupInstructions: 'Connect once with Google. Drive, Gmail, Docs, Sheets and Calendar all share this one sign-in; Ads/GA4/Search Console may need extra IDs/tokens.' }),
 
   // ── Communication ───────────────────────────────────────────────────────────
   p('slack', 'Slack', 'communication', 'Search messages, read channels, post messages (post needs approval).', 'coming_soon',

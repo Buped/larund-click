@@ -8,6 +8,7 @@
 // the Larund backend so the confidential client secret never ships in the client.
 
 import { getProviderSecret } from '../env/resolve';
+import { tauriFetch } from '../../net/tauriFetch';
 import { createConnectedAccount, type ConnectedAccount, type ConnectionContext } from '../connectedAccounts';
 
 export interface OAuthProviderEndpoints {
@@ -250,7 +251,8 @@ export async function exchangeAuthorizationCode(input: ExchangeInput): Promise<O
     ...(input.codeVerifier ? { code_verifier: input.codeVerifier } : {}),
   });
 
-  const res = await fetch(ep.tokenUrl, {
+  // Routed through Tauri so CORS-less token endpoints (e.g. Google) succeed.
+  const res = await tauriFetch(ep.tokenUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
     body: body.toString(),
@@ -269,6 +271,48 @@ export async function exchangeAuthorizationCode(input: ExchangeInput): Promise<O
   return {
     accessToken,
     refreshToken: json.refresh_token ? String(json.refresh_token) : undefined,
+    expiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : undefined,
+    scope: json.scope ? String(json.scope) : undefined,
+  };
+}
+
+/**
+ * Exchange a refresh token for a fresh access token (refresh_token grant), routed
+ * through Tauri so CORS-less token endpoints (Google) work. Providers that don't
+ * return a new refresh token keep the existing one.
+ */
+export async function refreshOAuthTokens(providerId: string, refreshToken: string): Promise<OAuthTokens> {
+  const ep = OAUTH_ENDPOINTS[providerId];
+  if (!ep) throw new Error(`no_oauth_endpoints:${providerId}`);
+  if (authExchangeMode() === 'backend') throw new Error('backend_exchange_required: route token refresh through the Larund backend.');
+  const clientId = getProviderSecret(providerId, ep.clientIdEnv);
+  if (!clientId) throw new Error(`developer_setup_missing:${ep.clientIdEnv}`);
+  const clientSecret = ep.clientSecretEnv ? getProviderSecret(providerId, ep.clientSecretEnv) : undefined;
+  const body = new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+    client_id: clientId,
+    ...(clientSecret ? { client_secret: clientSecret } : {}),
+  });
+  const res = await tauriFetch(ep.tokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    body: body.toString(),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`token_refresh_failed_${res.status}: ${text.slice(0, 200)}`);
+  let json: Record<string, unknown> = {};
+  try { json = JSON.parse(text); } catch { /* form-encoded fallback */ }
+  if (!json.access_token) {
+    const form = new URLSearchParams(text);
+    if (form.get('access_token')) json = Object.fromEntries(form.entries());
+  }
+  const accessToken = String(json.access_token ?? '');
+  if (!accessToken) throw new Error('token_refresh_failed: no access_token in response');
+  const expiresIn = typeof json.expires_in === 'number' ? json.expires_in : Number(json.expires_in) || undefined;
+  return {
+    accessToken,
+    refreshToken: json.refresh_token ? String(json.refresh_token) : refreshToken,
     expiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : undefined,
     scope: json.scope ? String(json.scope) : undefined,
   };

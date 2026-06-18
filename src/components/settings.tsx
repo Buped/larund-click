@@ -446,7 +446,7 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
               <>
                 <SettingRow label="Control system" sub="No-mouse operator: CLI, files, browser DOM, connections and skills"><span style={{ fontSize: 12.5, color: "var(--text-hint)" }}>Always on</span></SettingRow>
                 <SettingRow label="Autonomy mode" sub="Controls when the operator asks before tool calls"><Select value={autonomyMode} options={["Semi-automatic","Manual","Full autonomous"]} onChange={handleAutonomyChange} /></SettingRow>
-                <SettingRow label="External writes" sub="Semi mode asks before Google/remote writes; full mode proceeds unless high impact"><span style={{ fontSize: 12.5, color: "var(--text-hint)" }}>Policy enforced</span></SettingRow>
+                <SettingRow label="External writes" sub="Semi asks before remote writes, sends and logins; full acts silently except genuinely destructive actions"><span style={{ fontSize: 12.5, color: "var(--text-hint)" }}>Policy enforced</span></SettingRow>
                 <SettingRow label="Max task duration" sub="Abort task if it runs longer than this"><Select value="15 minutes" options={["5 minutes","10 minutes","15 minutes","30 minutes","No limit"]} onChange={() => {}} /></SettingRow>
               </>
             )}

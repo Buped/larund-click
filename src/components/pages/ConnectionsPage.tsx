@@ -9,7 +9,7 @@
 //   • Dev shortcut active      — a DEV_* personal token is in use (Developer Mode).
 // Tool execution is unchanged; we never fake capability.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../icons';
 import { BrandIcon } from '../BrandIcon';
 import { getProvider } from '../../lib/connections/hub/status';
@@ -29,9 +29,14 @@ import {
 import { beginOAuthConnect } from '../../lib/connections/oauth/connect';
 import { redirectUriFor } from '../../lib/connections/oauth/flow';
 import { HiggsfieldDetail } from '../connections/HiggsfieldDetail';
+import { higgsfieldConnectionState } from '../../lib/mcp/higgsfield/connect';
+import {
+  connectMcpProvider, mcpProviderState, setMcpProviderUrl, disconnectMcpProvider,
+  type McpProviderState,
+} from '../../lib/mcp/connect-provider';
 import {
   PageFrame, PageHeader, Empty, SearchInput, Badge,
-  card, btn, ghostBtn, input, labelStyle,
+  card, btn, ghostBtn, input, labelStyle, getActiveWorkspaceId,
 } from './ui';
 
 const FILTERS = ['All', 'Connected', 'Needs setup', 'Native API', 'MCP available', 'Productivity', 'Marketing', 'Development', 'Communication', 'Data'] as const;
@@ -47,6 +52,44 @@ const RUNTIME_LABEL: Record<RuntimeConnectionState, { text: string; color: strin
   mcp_available: { text: 'MCP available', color: 'var(--accent)' },
   coming_soon: { text: 'Coming soon', color: 'var(--text-hint)' },
 };
+
+// Connection-state ranking: connected float to the top, then actionable, then
+// blocked/coming-soon. Used to sort the grid so the user's live connections lead.
+const STATE_RANK: Record<RuntimeConnectionState, number> = {
+  connected: 0,
+  dev_shortcut_active: 0,
+  ready_to_connect: 1,
+  api_key_required: 1,
+  needs_reconnect: 1,
+  mcp_available: 2,
+  developer_setup_missing: 3,
+  coming_soon: 4,
+};
+
+/** Whether a card represents a live, working connection (full opacity). */
+function isLiveConnection(s: RuntimeConnectionState): boolean {
+  return s === 'connected' || s === 'dev_shortcut_active';
+}
+
+/** Default remote MCP URL declared by a provider's implementations, if any. */
+function defaultMcpUrl(p: ResolvedCatalogProvider): string | undefined {
+  for (const impl of p.implementations) {
+    if (impl.kind === 'remote_mcp' && impl.defaultServerUrl) return impl.defaultServerUrl;
+  }
+  return undefined;
+}
+
+/** Map a live MCP/CLI server state onto the catalog card runtime state. */
+function mcpStateToRuntime(s: McpProviderState | string): RuntimeConnectionState | undefined {
+  switch (s) {
+    case 'ready':
+    case 'connected': return 'connected';
+    case 'review_tools': return 'mcp_available';
+    case 'auth_required':
+    case 'error': return 'needs_reconnect';
+    default: return undefined; // not_configured / ready_to_inspect → keep catalog base
+  }
+}
 
 const RISK_GROUPS: Array<{ label: string; risks: ToolRisk[] }> = [
   { label: 'Read', risks: ['read_only', 'external_read'] },
@@ -68,6 +111,76 @@ function ImplBadges({ p }: { p: ResolvedCatalogProvider }) {
     <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
       {p.supportsNativeApi && <Badge text="Native API" color="var(--accent)" />}
       {p.supportsMcp && <Badge text="MCP available" color="#7C3AED" />}
+    </div>
+  );
+}
+
+// ── One-click MCP connect (generic, reused by any provider with a remote MCP) ──
+
+const MCP_STATE_LABEL: Record<McpProviderState, { text: string; color: string }> = {
+  not_configured: { text: 'Add MCP URL', color: 'var(--text-hint)' },
+  ready_to_inspect: { text: 'Ready to inspect', color: 'var(--accent)' },
+  auth_required: { text: 'Sign in required', color: 'var(--warning)' },
+  connected: { text: 'Connected', color: 'var(--success)' },
+  review_tools: { text: 'Review tools', color: 'var(--warning)' },
+  ready: { text: 'Ready to use', color: 'var(--success)' },
+  error: { text: 'Error', color: 'var(--danger)' },
+};
+
+function McpConnectCard({ providerId, name, defaultUrl, onChanged }: { providerId: string; name: string; defaultUrl?: string; onChanged: () => void }) {
+  const ctx = { userId: 'local', workspaceId: getActiveWorkspaceId() };
+  const [url, setUrl] = useState(defaultUrl ?? '');
+  const [state, setState] = useState<McpProviderState>('not_configured');
+  const [serverId, setServerId] = useState<string | undefined>();
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+
+  async function refresh() {
+    const s = await mcpProviderState(providerId, ctx);
+    setState(s.state); setServerId(s.server?.id);
+    if (s.server?.url && !url) setUrl(s.server.url);
+  }
+  useEffect(() => { void refresh(); /* eslint-disable-next-line */ }, []);
+
+  async function connect() {
+    if (!url.trim()) { setMsg('Enter the MCP server URL to connect.'); return; }
+    setBusy('connect'); setMsg('');
+    try {
+      const s = await connectMcpProvider(providerId, name, url, ctx);
+      setState(s.state); setServerId(s.server?.id); setMsg(s.message); onChanged();
+    } catch (e) {
+      setMsg(`Connect failed: ${String(e instanceof Error ? e.message : e)}`);
+    } finally { setBusy(''); }
+  }
+
+  const st = MCP_STATE_LABEL[state];
+  const hasDefault = Boolean(defaultUrl);
+
+  return (
+    <div style={{ ...card, marginTop: 12 }}>
+      <div style={{ ...labelStyle, marginBottom: 8 }}>Connect via MCP server</div>
+      <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 8 }}>
+        {hasDefault
+          ? `One click connects ${name} through its hosted MCP server. Larund inspects the tools before any run.`
+          : `Paste a ${name} MCP server URL. Larund inspects the tools before any run.`}
+      </div>
+      <input style={input} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…/mcp" />
+      <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+        <button style={{ ...btn, opacity: busy ? 0.6 : 1 }} disabled={!!busy} onClick={connect}>
+          {busy === 'connect' ? 'Connecting…' : state === 'connected' || state === 'ready' ? 'Reconnect & inspect' : 'Connect & inspect'}
+        </button>
+        {!hasDefault && (
+          <button style={ghostBtn} disabled={!!busy || !url.trim()} onClick={async () => { await setMcpProviderUrl(providerId, name, url, ctx); await refresh(); setMsg('MCP URL saved.'); }}>Save URL</button>
+        )}
+        {serverId && (state === 'connected' || state === 'ready' || state === 'review_tools') && (
+          <button style={ghostBtn} disabled={!!busy} onClick={async () => { await disconnectMcpProvider(serverId); await refresh(); setMsg('Disconnected.'); onChanged(); }}>Disconnect</button>
+        )}
+      </div>
+      <div style={{ marginTop: 10, fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span className="dot" style={{ background: st.color }} /><span style={{ color: st.color, fontWeight: 600 }}>{st.text}</span>
+        {msg && <span style={{ color: 'var(--text-muted)' }}>· {msg}</span>}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 8 }}>Only connect MCP servers you trust. Discovered tools start unapproved and must be reviewed before use.</div>
     </div>
   );
 }
@@ -206,9 +319,14 @@ function SetupModal({ providerId, provider, name, onClose, onSaved }: { provider
               <button style={{ ...btn, marginTop: 10, width: '100%', justifyContent: 'center' }} onClick={connectApiKey}>Connect</button>
             </>
           ) : (
-            <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>This connection is set up from the MCP page.</div>
+            <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{provider.supportsMcp ? 'Connect this one via its MCP server below.' : 'This connection is set up from the MCP page.'}</div>
           )}
         </div>
+
+        {/* One-click MCP connect for any provider that supports a remote MCP server */}
+        {provider.supportsMcp && (
+          <McpConnectCard providerId={provider.id} name={provider.name} defaultUrl={defaultMcpUrl(provider)} onChanged={onSaved} />
+        )}
 
         {/* Developer setup (app-level OAuth creds) — only when missing or in Developer Mode */}
         {showDevCard && (
@@ -382,13 +500,38 @@ function ProviderDetail({ provider, onBack, onChanged }: { provider: ResolvedCat
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export function ConnectionsPage() {
-  const [providers, setProviders] = useState<ResolvedCatalogProvider[]>(() => listCatalogProviders());
+  const [base, setBase] = useState<ResolvedCatalogProvider[]>(() => listCatalogProviders());
+  // Live runtime overrides for MCP/CLI-backed providers, whose real state lives in
+  // the async MCP store and can't be seen by the synchronous catalog resolver.
+  const [mcpRuntime, setMcpRuntime] = useState<Record<string, RuntimeConnectionState>>({});
   const [filter, setFilter] = useState<Filter>('All');
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showUpcoming, setShowUpcoming] = useState(false);
 
-  function refresh() { setProviders(listCatalogProviders()); }
+  function refresh() { setBase(listCatalogProviders()); void loadMcpRuntime(); }
+
+  async function loadMcpRuntime() {
+    const ctx = { userId: 'local', workspaceId: getActiveWorkspaceId() };
+    const overrides: Record<string, RuntimeConnectionState> = {};
+    for (const p of listCatalogProviders()) {
+      // Only MCP-primary providers; native-first ones keep their registry state so
+      // a stale MCP server can never downgrade a working native connection.
+      if (p.status !== 'mcp_available') continue;
+      try {
+        const s = p.id === 'higgsfield'
+          ? (await higgsfieldConnectionState(ctx)).state
+          : (await mcpProviderState(p.id, ctx)).state;
+        const mapped = mcpStateToRuntime(s);
+        if (mapped) overrides[p.id] = mapped;
+      } catch { /* leave catalog base state */ }
+    }
+    setMcpRuntime(overrides);
+  }
+  useEffect(() => { void loadMcpRuntime(); /* eslint-disable-next-line */ }, []);
+
+  // Overlay live MCP state onto the catalog base.
+  const providers = base.map((p) => (mcpRuntime[p.id] ? { ...p, runtime: mcpRuntime[p.id] } : p));
   const selected = providers.find((p) => p.id === selectedId);
   if (selected?.id === 'higgsfield') return <HiggsfieldDetail onBack={() => { setSelectedId(null); refresh(); }} />;
   if (selected) return <ProviderDetail provider={selected} onBack={() => { setSelectedId(null); refresh(); }} onChanged={refresh} />;
@@ -407,14 +550,22 @@ export function ConnectionsPage() {
   }
 
   const all = providers.filter(matches);
-  const main = all.filter((p) => p.runtime !== 'coming_soon');
+  // Connected connections lead the grid; everything not-yet-connected follows.
+  const byRank = (a: ResolvedCatalogProvider, b: ResolvedCatalogProvider) =>
+    STATE_RANK[a.runtime] - STATE_RANK[b.runtime] || a.name.localeCompare(b.name);
+  const main = all.filter((p) => p.runtime !== 'coming_soon').sort(byRank);
   const upcoming = showUpcoming ? all.filter((p) => p.runtime === 'coming_soon') : [];
 
   const Card = ({ p }: { p: ResolvedCatalogProvider }) => {
     const st = RUNTIME_LABEL[p.runtime];
-    const clickable = p.runtime !== 'coming_soon' || p.supportsMcp;
+    // Connected cards render at full strength; not-yet-connected ones are only
+    // slightly subdued so the connection state reads without burying them.
+    const live = isLiveConnection(p.runtime);
     return (
-      <button onClick={() => setSelectedId(p.id)} className="conn-card" style={{ cursor: 'pointer', opacity: clickable ? 1 : 0.78 }}>
+      <button onClick={() => setSelectedId(p.id)} className="conn-card" style={{
+        cursor: 'pointer',
+        opacity: live ? 1 : 0.82,
+      }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
           <BrandIcon providerId={p.id} />
           <div style={{ flex: 1, minWidth: 0 }}>

@@ -3,6 +3,7 @@ import type { ControlAction, ControlToolResult } from './types';
 import type { ToolContext } from '../tools/types';
 import type { DocumentReference } from '../references/types';
 import { readDocument, readManyDocuments, summarizeReadResults, scanFolder, readRelevantFromFolder, formatFolderScan } from '../document-reader';
+import { getCredentialForDomain, resolveCredentialPassword, markCredentialUsed, normalizeDomain } from '../credentials/store';
 
 const ERR = (error: string): ControlToolResult => ({ success: false, output: '', error });
 
@@ -345,6 +346,71 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
     case 'browser.upload': {
       const r = await tryInvoke<string>('browser_upload', { target: action.target, path: action.path });
       return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'browser.login': {
+      // Resolve a saved credential and sign in. The password is read from the
+      // vault HERE and typed straight into the page — it is never part of the
+      // action, the returned output, the audit, or the model context.
+      let domain = normalizeDomain(action.domain ?? action.url ?? '');
+      if (!domain) {
+        const read = await tryInvoke<string>('browser_read', { selector: null });
+        if (read.ok) domain = normalizeDomain(read.value.match(/^URL:\s*(.+)$/im)?.[1] ?? '');
+      }
+      if (!domain) return ERR('browser.login needs a domain or url, or an open page to infer one.');
+      const cred = getCredentialForDomain(domain);
+      if (!cred) return ERR(`no_saved_login_for:${domain}`);
+      const password = await resolveCredentialPassword(cred.id);
+      if (!password) return ERR('login_password_unavailable');
+
+      const typeFirst = async (targets: string[], text: string): Promise<boolean> => {
+        for (const target of targets) {
+          const r = await tryInvoke<string>('browser_type', { target, text });
+          if (r.ok) return true;
+        }
+        return false;
+      };
+      const clickFirst = async (targets: string[]): Promise<boolean> => {
+        for (const target of targets) {
+          const r = await tryInvoke<string>('browser_click', { target });
+          if (r.ok) return true;
+        }
+        return false;
+      };
+
+      const userTargets = [action.username_field, 'input[type=email]', 'input[name=email]', 'input[name=username]', 'input[id=identifierId]', 'Email or phone', 'Email', 'Username', 'Phone'].filter(Boolean) as string[];
+      const passTargets = [action.password_field, 'input[type=password]', 'input[name=password]', 'Password'].filter(Boolean) as string[];
+      const submitTargets = [action.submit_text, 'Sign in', 'Log in', 'Login', 'Continue', 'Next', 'Submit'].filter(Boolean) as string[];
+
+      if (action.url) {
+        const open = await tryInvoke<string>('browser_open', { url: action.url });
+        if (!open.ok) return ERR(open.error);
+        await tryInvoke<string>('browser_wait', { text: null, selector: null, seconds: 2 });
+      }
+
+      const typedUser = await typeFirst(userTargets, cred.username);
+      if (!typedUser) return ERR('login_username_field_not_found');
+
+      // Try the password directly; if it isn't on the page yet (two-step logins),
+      // advance with Next/Continue and retry once.
+      let typedPass = await typeFirst(passTargets, password);
+      if (!typedPass) {
+        await clickFirst(submitTargets);
+        await tryInvoke<string>('browser_wait', { text: null, selector: null, seconds: 2 });
+        typedPass = await typeFirst(passTargets, password);
+      }
+      if (!typedPass) return ERR('login_password_field_not_found');
+
+      if (!(await clickFirst(submitTargets))) {
+        await tryInvoke<string>('browser_key', { key: 'Enter' });
+      }
+      await tryInvoke<string>('browser_wait', { text: null, selector: null, seconds: 3 });
+      markCredentialUsed(cred.id);
+      const verify = await tryInvoke<string>('browser_read', { selector: null });
+      const onLoginPage = verify.ok && /password|sign in|log in/i.test(verify.value) && /input/i.test(verify.value);
+      return {
+        success: true,
+        output: `Signed in to ${cred.domain} as ${cred.username}${onLoginPage ? ' (verify: page may still show a login form — check for 2FA).' : '.'}`,
+      };
     }
 
     // ── connections / skills / workflows ───────────────────────────────────

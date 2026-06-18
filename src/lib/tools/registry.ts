@@ -69,6 +69,7 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
   { name: 'browser.extract_table', category: 'browser', baseRisk: 'external_read', description: 'Extract a table as rows.' },
   { name: 'browser.download', category: 'browser', baseRisk: 'external_write', description: 'Download a file.' },
   { name: 'browser.upload', category: 'browser', baseRisk: 'external_write', description: 'Upload a file to an input.' },
+  { name: 'browser.login', category: 'browser', baseRisk: 'credential_access', description: 'Sign in to a site using a SAVED login (pass {domain} or {url}). The password is filled from the vault automatically — never type or read passwords yourself.' },
 
   { name: 'connection.call', category: 'connections', baseRisk: 'external_read', description: 'Call a connection tool.' },
   { name: 'skill.run', category: 'skills', baseRisk: 'local_write', description: 'Run a skill workflow.' },

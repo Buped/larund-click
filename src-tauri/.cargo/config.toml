@@ -11,6 +11,10 @@ AR_x86_64_pc_windows_msvc = "D:\\cargo-shims\\lib.exe"
 linker = "C:\\Users\\KomPhone\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\lib\\rustlib\\x86_64-pc-windows-msvc\\bin\\rust-lld.exe"
 rustflags = [
   "-C", "linker-flavor=lld-link",
+  # xwin's dynamic UCRT import lib lacks some symbols (strcspn, _beginthreadex,
+  # realloc, ...) that exist only in the static CRT; link the static CRT so both
+  # Rust std and cc-compiled C deps (/MT) resolve them.
+  "-C", "target-feature=+crt-static",
   "-C", "link-arg=/LIBPATH:D:\\xwin-cache\\splat\\crt\\lib\\x86_64",
   "-C", "link-arg=/LIBPATH:D:\\xwin-cache\\splat\\sdk\\lib\\um\\x86_64",
   "-C", "link-arg=/LIBPATH:D:\\xwin-cache\\splat\\sdk\\lib\\ucrt\\x86_64",

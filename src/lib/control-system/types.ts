@@ -81,6 +81,10 @@ export type ControlAction =
   | { action: 'browser.extract_table'; selector?: string }
   | { action: 'browser.download'; url?: string; target?: string; save_as?: string }
   | { action: 'browser.upload'; target: string; path: string }
+  // Sign in to a site using a SAVED credential. The password is read from the
+  // vault inside the executor and typed directly into the page — it never appears
+  // in this action, the model context, or logs. Provide a domain or login URL.
+  | { action: 'browser.login'; url?: string; domain?: string; username_field?: string; password_field?: string; submit_text?: string }
 
   // ── Connections / skills / workflows ──────────────────────────────────
   | { action: 'connection.call'; connection: string; tool: string; args: Record<string, unknown> }

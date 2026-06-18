@@ -41,7 +41,28 @@
       "Bash(node scripts/env-audit.ts)",
       "Bash(curl -s \"https://crates.io/api/v1/crates/tauri-plugin-oauth\")",
       "Bash(curl -s -A \"cargo\" \"https://index.crates.io/ta/ur/tauri-plugin-oauth\")",
-      "Bash(grep -n 'pub async fn start\\\\|pub fn cancel\\\\|command\\\\|OauthConfig\\\\|pub struct OauthConfig\\\\|ports\\\\|response' __TRACKED_VAR__/src/lib.rs)"
+      "Bash(grep -n 'pub async fn start\\\\|pub fn cancel\\\\|command\\\\|OauthConfig\\\\|pub struct OauthConfig\\\\|ports\\\\|response' __TRACKED_VAR__/src/lib.rs)",
+      "Bash(cd d:/Larund-click; echo \"=== embed-resource / tauri-winres versions in lock ===\"; grep -A1 'name = \"embed-resource\"' src-tauri/Cargo.lock; grep -A1 'name = \"tauri-winres\"' src-tauri/Cargo.lock; echo \"=== LLVM resource tools present? ===\"; ls \"C:/Program Files/LLVM/bin/\" 2>/dev/null | grep -iE \"llvm-rc|llvm-windres|^rc\\\\.exe\" ; echo \"=== windres on PATH? ===\"; which windres 2>/dev/null || echo \"windres: NOT FOUND\"; echo \"=== current .cargo [env] ===\"; sed -n '/\\\\[env\\\\]/,/\\\\[target/p' src-tauri/.cargo/config.toml)",
+      "PowerShell($stub = \"$env:TEMP\\\\larund_stub.c\"; \"static int _s=0;\" | Out-File -Encoding ascii $stub; $out = \"$env:TEMP\\\\larund_stub_out.lib\"; & \"C:\\\\Program Files\\\\LLVM\\\\bin\\\\clang-cl.exe\" /nologo /c $stub /Fo$out 2>&1; \"exit=$LASTEXITCODE\"; if \\(Test-Path $out\\) { \"OBJECT CREATED size=\" + \\(Get-Item $out\\).Length; $bytes=[System.IO.File]::ReadAllBytes\\($out\\)[0..1]; \"magic=$\\($bytes -join ','\\)\" } ; Remove-Item $stub,$out -ErrorAction SilentlyContinue)",
+      "Bash(npm run *)",
+      "Bash(echo \"started pid $!\")",
+      "Bash(tasklist)",
+      "PowerShell(npx tsc --noEmit)",
+      "PowerShell(npx vitest run src/lib/connections/catalog src/lib/mcp/higgsfield 2>&1)",
+      "PowerShell(npm run build 2>&1)",
+      "PowerShell(npx vitest run src/lib/credentials 2>&1)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 1420 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 500; if \\(Get-NetTCPConnection -LocalPort 1420 -State Listen -ErrorAction SilentlyContinue\\) { \"1420 STILL IN USE\" } else { \"1420 FREE\" })",
+      "Bash(grep -Eq 'error\\\\[|could not compile|error calling dlltool|error: linking|panicked|Running `' C:/Users/KomPhone/AppData/Local/Temp/claude/d--Larund-click/4054d419-87a6-489b-b152-1db59ff372d6/tasks/b4tim9w60.output)",
+      "Bash(cd /d/Larund-click/src-tauri && grep -n -B2 -A40 'name = \"reqwest\"' Cargo.lock | grep -E 'name = \"reqwest\"|version|rustls|native-tls|aws-lc|hyper-tls|hyper-rustls|tokio-native' )",
+      "Read(//d/d/Larund-click/src-tauri/**)",
+      "Bash(cargo tree *)",
+      "Bash(echo \"=== exit: $? ===\")",
+      "Bash(echo \"=== aws-lc check exit: $? ===\")",
+      "PowerShell(Get-NetTCPConnection -LocalPort 1420 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 400; if \\(Get-NetTCPConnection -LocalPort 1420 -State Listen -ErrorAction SilentlyContinue\\) { \"1420 BUSY\" } else { \"1420 FREE\" })",
+      "Bash(grep -Eq 'error\\\\[|could not compile|error calling dlltool|error: linking|panicked|aws-lc|net\\\\.rs|Running `[^ ]*tauri' C:/Users/KomPhone/AppData/Local/Temp/claude/d--Larund-click/4054d419-87a6-489b-b152-1db59ff372d6/tasks/b2lvxwz5p.output)"
+    ],
+    "additionalDirectories": [
+      "D:\\Larund-click\\src-tauri\\.cargo"
     ]
   }
 }

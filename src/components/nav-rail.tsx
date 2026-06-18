@@ -11,7 +11,7 @@ import type { Workspace } from '../lib/workspaces/types';
 import { listNotifications, markRead } from '../lib/notifications/store';
 import type { Notification } from '../lib/notifications/types';
 
-export type Route = 'chat' | 'tasks' | 'automations' | 'skills' | 'memory' | 'connections' | 'mcp';
+export type Route = 'chat' | 'tasks' | 'automations' | 'skills' | 'memory' | 'connections' | 'logins' | 'mcp';
 
 const NAV: Array<{ id: Route; label: string; icon: string }> = [
   { id: 'chat', label: 'Chat', icon: 'message' },
@@ -20,6 +20,7 @@ const NAV: Array<{ id: Route; label: string; icon: string }> = [
   { id: 'skills', label: 'Skills', icon: 'sparkle' },
   { id: 'memory', label: 'Memory', icon: 'cpu' },
   { id: 'connections', label: 'Connections', icon: 'link' },
+  { id: 'logins', label: 'Logins', icon: 'lock' },
   { id: 'mcp', label: 'MCP', icon: 'diamond' },
 ];
 

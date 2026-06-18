@@ -47,9 +47,10 @@ describe('connection catalog', () => {
     }
   });
 
-  it('routes Google sub-apps through google-workspace', () => {
+  it('exposes a single unified Google connection (no per-app sub-cards)', () => {
+    expect(getCatalogProvider('google-workspace')?.name).toBe('Google');
     for (const id of ['google-drive', 'google-docs', 'google-sheets', 'gmail', 'google-calendar']) {
-      expect(getCatalogProvider(id)?.parentProviderId).toBe('google-workspace');
+      expect(getCatalogProvider(id)).toBeUndefined();
     }
   });
 
@@ -68,7 +69,6 @@ describe('connection catalog', () => {
     // env.required now means APP-LEVEL developer credentials, never user tokens.
     expect(getCatalogProvider('x')?.env.required).toEqual(['X_CLIENT_ID']);
     expect(getCatalogProvider('x')?.env.required).not.toContain('X_BEARER_TOKEN');
-    expect(getCatalogProvider('google-drive')?.parentProviderId).toBe('google-workspace');
   });
 
   it('resolves runtime state and excludes coming_soon from actionable', () => {

@@ -43,16 +43,16 @@ export const HIGGSFIELD_TOOLS: HiggsfieldToolDef[] = [
     title: 'List models',
     description: 'List available Higgsfield generation models.',
     risk: 'read_only',
-    inputSchema: obj({ kind: { ...S, description: 'Optional filter: image | video | audio' } }),
-    argv: (a) => ['models', 'list', ...(str(a.kind) ? ['--type', str(a.kind)] : []), '--json'],
+    inputSchema: obj({}),
+    argv: () => ['model', 'list', '--json'],
   },
   {
     name: 'higgsfield.model_get',
     title: 'Get model',
-    description: 'Get details and parameters for a single Higgsfield model.',
+    description: 'Inspect the parameter schema for a single Higgsfield model.',
     risk: 'read_only',
     inputSchema: obj({ model_id: S }, ['model_id']),
-    argv: (a) => ['models', 'get', str(a.model_id), '--json'],
+    argv: (a) => ['model', str(a.model_id), '--json'],
   },
   {
     name: 'higgsfield.generate_cost',
@@ -60,7 +60,7 @@ export const HIGGSFIELD_TOOLS: HiggsfieldToolDef[] = [
     description: 'Estimate the credit cost of a generation before running it.',
     risk: 'read_only',
     inputSchema: obj({ model_id: S, prompt: S, params: { type: 'object', additionalProperties: true } }),
-    argv: (a) => ['generate', 'cost', ...(str(a.model_id) ? ['--model', str(a.model_id)] : []), ...(str(a.prompt) ? ['--prompt', str(a.prompt)] : []), '--json'],
+    argv: (a) => ['generate', 'cost', ...(str(a.model_id) ? [str(a.model_id)] : []), ...(str(a.prompt) ? ['--prompt', str(a.prompt)] : []), '--json'],
   },
   {
     name: 'higgsfield.generate_create',
@@ -70,7 +70,7 @@ export const HIGGSFIELD_TOOLS: HiggsfieldToolDef[] = [
     inputSchema: obj({ model_id: S, prompt: S, aspect_ratio: S, params: { type: 'object', additionalProperties: true } }, ['model_id', 'prompt']),
     argv: (a) => [
       'generate', 'create',
-      '--model', str(a.model_id),
+      str(a.model_id),
       '--prompt', str(a.prompt),
       ...(str(a.aspect_ratio) ? ['--aspect-ratio', str(a.aspect_ratio)] : []),
       '--json',
@@ -91,7 +91,7 @@ export const HIGGSFIELD_TOOLS: HiggsfieldToolDef[] = [
     risk: 'external_read',
     polling: true,
     inputSchema: obj({ job_id: S, timeout_seconds: N }, ['job_id']),
-    argv: (a) => ['generate', 'wait', str(a.job_id), '--timeout', String(num(a.timeout_seconds, 180)), '--json'],
+    argv: (a) => ['generate', 'wait', str(a.job_id), '--wait-timeout', `${num(a.timeout_seconds, 180)}s`, '--json'],
   },
   {
     name: 'higgsfield.generate_list',
@@ -107,7 +107,7 @@ export const HIGGSFIELD_TOOLS: HiggsfieldToolDef[] = [
     description: 'Upload a local image file to Higgsfield for use as input. Sends a user file externally.',
     risk: 'external_write',
     inputSchema: obj({ path: S }, ['path']),
-    argv: (a) => ['upload', 'image', str(a.path), '--json'],
+    argv: (a) => ['upload', str(a.path), '--json'],
   },
   {
     name: 'higgsfield.upload_video',
@@ -115,7 +115,7 @@ export const HIGGSFIELD_TOOLS: HiggsfieldToolDef[] = [
     description: 'Upload a local video file to Higgsfield for use as input. Sends a user file externally.',
     risk: 'external_write',
     inputSchema: obj({ path: S }, ['path']),
-    argv: (a) => ['upload', 'video', str(a.path), '--json'],
+    argv: (a) => ['upload', str(a.path), '--json'],
   },
   {
     name: 'higgsfield.upload_audio',
@@ -123,7 +123,7 @@ export const HIGGSFIELD_TOOLS: HiggsfieldToolDef[] = [
     description: 'Upload a local audio file to Higgsfield for use as input. Sends a user file externally.',
     risk: 'external_write',
     inputSchema: obj({ path: S }, ['path']),
-    argv: (a) => ['upload', 'audio', str(a.path), '--json'],
+    argv: (a) => ['upload', str(a.path), '--json'],
   },
   {
     name: 'higgsfield.soul_id_create',
@@ -140,7 +140,7 @@ export const HIGGSFIELD_TOOLS: HiggsfieldToolDef[] = [
     risk: 'external_read',
     polling: true,
     inputSchema: obj({ soul_id: S, timeout_seconds: N }, ['soul_id']),
-    argv: (a) => ['soul-id', 'wait', str(a.soul_id), '--timeout', String(num(a.timeout_seconds, 300)), '--json'],
+    argv: (a) => ['soul-id', 'wait', str(a.soul_id), '--wait-timeout', `${num(a.timeout_seconds, 300)}s`, '--json'],
   },
   {
     name: 'higgsfield.workflow_list',
@@ -148,7 +148,7 @@ export const HIGGSFIELD_TOOLS: HiggsfieldToolDef[] = [
     description: 'List available Higgsfield workflows.',
     risk: 'read_only',
     inputSchema: obj({}),
-    argv: () => ['workflows', 'list', '--json'],
+    argv: () => ['workflow', 'list', '--json'],
   },
   {
     name: 'higgsfield.workflow_get',
@@ -156,7 +156,7 @@ export const HIGGSFIELD_TOOLS: HiggsfieldToolDef[] = [
     description: 'Get details and inputs for a single Higgsfield workflow.',
     risk: 'read_only',
     inputSchema: obj({ workflow_id: S }, ['workflow_id']),
-    argv: (a) => ['workflows', 'get', str(a.workflow_id), '--json'],
+    argv: (a) => ['workflow', 'get', str(a.workflow_id), '--json'],
   },
   {
     name: 'higgsfield.generate_workflow',
@@ -164,7 +164,7 @@ export const HIGGSFIELD_TOOLS: HiggsfieldToolDef[] = [
     description: 'Run a Higgsfield workflow with inputs to produce a generation. Costs credits.',
     risk: 'external_write',
     inputSchema: obj({ workflow_id: S, inputs: { type: 'object', additionalProperties: true } }, ['workflow_id']),
-    argv: (a) => ['workflows', 'run', str(a.workflow_id), '--json'],
+    argv: (a) => ['generate', 'workflow', str(a.workflow_id), '--json'],
   },
 ];
 

@@ -5,6 +5,7 @@ import { NavRail, type Route } from './components/nav-rail';
 import { TasksPage }       from './components/pages/TasksPage';
 import { AutomationsPage } from './components/pages/AutomationsPage';
 import { ConnectionsPage } from './components/pages/ConnectionsPage';
+import { LoginsPage }      from './components/pages/LoginsPage';
 import { McpPage }         from './components/pages/McpPage';
 import { SkillsPage }      from './components/pages/SkillsPage';
 import { MemoryPage }      from './components/pages/MemoryPage';
@@ -145,6 +146,7 @@ export default function App() {
         {route === 'skills'      && <SkillsPage userId={uid} />}
         {route === 'memory'      && <MemoryPage userId={uid} />}
         {route === 'connections' && <ConnectionsPage />}
+        {route === 'logins'      && <LoginsPage />}
         {route === 'mcp'         && <McpPage userId={uid} />}
       </div>
       {showSettings && (

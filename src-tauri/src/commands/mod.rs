@@ -5,5 +5,6 @@ pub mod desktop;
 pub mod documents;
 pub mod fs_ops;
 pub mod input_guard;
+pub mod net;
 pub mod process;
 pub mod sheets;

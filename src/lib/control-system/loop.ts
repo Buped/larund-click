@@ -7,7 +7,7 @@ import type { ControlAction } from './types';
 import { runControlAction } from '../tools/run';
 import { MemoryAuditLogger } from '../tools/audit';
 import { PromptApprovalService } from '../tools/approvals';
-import { DEFAULT_POLICY, type RiskPolicy } from '../tools/policy';
+import { policyForAutonomyMode, type RiskPolicy } from '../tools/policy';
 import { toolCatalogSummary } from '../tools/registry';
 import type { AuditEntry, ConnectionRegistry, SkillRunner, WorkflowRunner } from '../tools/types';
 import { createConnectionRegistry } from '../connections/registry';
@@ -196,7 +196,6 @@ export async function runControlLoop(
   };
 
   let totalCostUsd = 0;
-  const policy = opts.policy ?? DEFAULT_POLICY;
   const sessionId = opts.sessionId ?? `sess-${Date.now()}`;
   const references = opts.references ?? [];
 
@@ -208,6 +207,9 @@ export async function runControlLoop(
     roleId: opts.roleId,
     workflowTemplateId: opts.workflowTemplateId,
   });
+  // An explicit policy wins; otherwise derive it from the workspace autonomy mode
+  // so automations/tasks honour manual/semi/full the same way chat does.
+  const policy: RiskPolicy = opts.policy ?? policyForAutonomyMode(coworker.workspace?.autonomyMode ?? 'semi');
   const workspaceRoot = opts.workspaceRoot ?? coworker.workspaceRoot ?? '~';
   tracker = await startTaskTracker({
     userId,

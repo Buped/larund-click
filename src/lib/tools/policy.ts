@@ -38,14 +38,17 @@ export const MANUAL_POLICY: RiskPolicy = {
   process_exec: 'ask',
 };
 
+// Full autonomy: act silently for everything EXCEPT genuinely destructive actions.
+// Sends, external writes, logins (credential_access) and process exec all run
+// without asking; only destructive (delete/kill/format/rm -rf) still confirms.
 export const FULL_AUTONOMY_POLICY: RiskPolicy = {
   read_only: 'auto',
   external_read: 'auto',
   local_write: 'auto',
   external_write: 'auto',
-  external_send: 'ask',
+  external_send: 'auto',
   destructive: 'ask',
-  credential_access: 'ask',
+  credential_access: 'auto',
   process_exec: 'auto',
 };
 
@@ -73,6 +76,7 @@ export const ACTION_CATEGORY: Record<string, ToolCategory> = {
   'browser.shortcut': 'browser', 'browser.paste': 'browser',
   'browser.assert_text': 'browser', 'browser.assert_url': 'browser', 'browser.wait': 'browser',
   'browser.extract_table': 'browser', 'browser.download': 'browser', 'browser.upload': 'browser',
+  'browser.login': 'browser',
   'connection.call': 'connections', 'skill.run': 'skills',
   'workflow.start': 'workflows', 'workflow.status': 'workflows', 'workflow.cancel': 'workflows',
   'approval.request': 'approvals', 'task.complete': 'runtime', 'ask_user': 'runtime',
@@ -163,6 +167,8 @@ export function assessRisk(action: ControlAction): ToolRisk {
     case 'browser.shortcut': case 'browser.paste':
     case 'browser.download': case 'browser.upload':
       return 'external_write';
+    case 'browser.login':
+      return 'credential_access';
 
     case 'connection.call':
       return connectionToolRisk(action.tool);

@@ -15,10 +15,12 @@ import { getProviderSecret, isDeveloperSetupReady, devPatShortcutsEnabled, getMi
 import {
   getConnectedAccount,
   getTokenSecretForProviderCall,
+  refreshProviderTokenIfNeeded,
   DEFAULT_CONTEXT,
   type ConnectionContext,
   type ConnectedAccount,
 } from './connectedAccounts';
+import { oauthEndpoints, refreshOAuthTokens } from './oauth/flow';
 
 export type CredentialSource = 'connected_account' | 'dev_shortcut' | 'mcp' | 'none';
 
@@ -100,6 +102,12 @@ export async function resolveRuntimeCredentials(
         : 'needs_reconnect';
       return { ok: false, source: 'none', secrets: appCreds, blocker, account,
         message: `Your ${providerId} connection is ${account.status}. Reconnect it.` };
+    }
+    // Refresh an expired/near-expiry OAuth token before use (Google et al.).
+    if (account.refreshTokenRef && oauthEndpoints(providerId)) {
+      try {
+        await refreshProviderTokenIfNeeded(account.id, (rt) => refreshOAuthTokens(providerId, rt));
+      } catch { /* fall through; a stale token surfaces as a provider 401 the caller handles */ }
     }
     const token = await getTokenSecretForProviderCall(account.tokenRef);
     if (token) {

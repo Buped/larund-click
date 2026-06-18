@@ -24,7 +24,7 @@ function scriptRunner(routes: Array<[RegExp, Partial<CliResult>]>) {
 const READY = scriptRunner([
   [/\bversion\b/, { success: true, stdout: 'higgsfield 1.2.3' }],
   [/account --json/, { success: true, stdout: '{"email":"a@b.co","credits":42}' }],
-  [/models list --json/, { success: true, stdout: '{"models":[{"id":"soul","name":"Soul"}]}' }],
+  [/\bmodel list --json/, { success: true, stdout: '{"models":[{"id":"soul","name":"Soul"}]}' }],
   [/generate create/, { success: true, stdout: '{"id":"job_123","status":"queued"}' }],
   [/generate wait/, { success: false, stderr: 'request timed out', exitCode: 1 }],
 ]);
