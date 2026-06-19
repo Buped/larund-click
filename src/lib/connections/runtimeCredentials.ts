@@ -21,6 +21,7 @@ import {
   type ConnectedAccount,
 } from './connectedAccounts';
 import { oauthEndpoints, refreshOAuthTokens } from './oauth/flow';
+import { loadUserProviderSecrets, credentialFieldsForAccount } from './userCredentials';
 
 export type CredentialSource = 'connected_account' | 'dev_shortcut' | 'mcp' | 'none';
 
@@ -103,6 +104,21 @@ export async function resolveRuntimeCredentials(
       return { ok: false, source: 'none', secrets: appCreds, blocker, account,
         message: `Your ${providerId} connection is ${account.status}. Reconnect it.` };
     }
+    // Multi-field API-key / app-password providers (WordPress, WooCommerce, …):
+    // the field VALUES live in the secure secret store; the account records only the
+    // field NAMES. Surface the values into `secrets` for the tool's run().
+    if (account.authType === 'api_key') {
+      const fields = credentialFieldsForAccount(account);
+      if (fields.length) {
+        const userSecrets = await loadUserProviderSecrets(ctx, providerId, fields);
+        if (Object.keys(userSecrets).length) {
+          return { ok: true, source: 'connected_account', secrets: { ...appCreds, ...userSecrets }, account };
+        }
+        return { ok: false, source: 'none', secrets: appCreds, blocker: 'needs_reconnect', account,
+          message: `Your ${providerId} credentials are missing from the secret store. Reconnect.` };
+      }
+    }
+
     // Refresh an expired/near-expiry OAuth token before use (Google et al.).
     if (account.refreshTokenRef && oauthEndpoints(providerId)) {
       try {

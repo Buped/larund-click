@@ -67,7 +67,7 @@ export type ControlAction =
   | { action: 'keyboard.combo'; keys: string[] }
 
   // ── Browser (CDP / DOM — element-based, never pixels) ──────────────────
-  | { action: 'browser.open'; url: string; profile?: string }
+  | { action: 'browser.open'; url: string; profile?: string; browser_profile_id?: string }
   | { action: 'browser.read'; selector?: string }
   | { action: 'browser.get_state' }
   | { action: 'browser.click'; target: string }
@@ -83,8 +83,9 @@ export type ControlAction =
   | { action: 'browser.upload'; target: string; path: string }
   // Sign in to a site using a SAVED credential. The password is read from the
   // vault inside the executor and typed directly into the page — it never appears
-  // in this action, the model context, or logs. Provide a domain or login URL.
-  | { action: 'browser.login'; url?: string; domain?: string; username_field?: string; password_field?: string; submit_text?: string }
+  // in this action, the model context, or logs. Identify the login by app_id (a
+  // saved App), credential_id, domain, or url; optionally pick a browser profile.
+  | { action: 'browser.login'; url?: string; domain?: string; app_id?: string; credential_id?: string; browser_profile_id?: string; username_field?: string; password_field?: string; submit_text?: string }
 
   // ── Connections / skills / workflows ──────────────────────────────────
   | { action: 'connection.call'; connection: string; tool: string; args: Record<string, unknown> }

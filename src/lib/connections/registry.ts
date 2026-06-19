@@ -1,4 +1,5 @@
 import type { ConnectionRegistry, ConnectionCallResult } from '../tools/types';
+import type { ToolRisk } from '../control-system/types';
 import type { ConnectionInfo, ConnectionManifest, ConnectionStatus } from './types';
 import { missingAuth, mockConnectionsAllowed } from './mock-guard';
 import { isDeveloperSetupReady, devPatShortcutsEnabled, getProviderSecret } from './env/resolve';
@@ -10,7 +11,8 @@ import { notionManifest } from './providers/notion/manifest';
 import { googleWorkspaceManifest } from './providers/google-workspace/manifest';
 import { slackManifest } from './providers/slack/manifest';
 import { xManifest } from './providers/x/manifest';
-import { hubspotManifest, airtableManifest, wordpressManifest, moreScaffoldManifests } from './providers/extra-scaffolds';
+import { wordpressManifest } from './providers/wordpress/manifest';
+import { hubspotManifest, airtableManifest, moreScaffoldManifests } from './providers/extra-scaffolds';
 
 export const ALL_MANIFESTS: ConnectionManifest[] = [
   githubManifest,
@@ -23,6 +25,24 @@ export const ALL_MANIFESTS: ConnectionManifest[] = [
   wordpressManifest,
   ...moreScaffoldManifests,
 ];
+
+// Authoritative per-tool risk, declared by each provider manifest. The risk policy
+// consults this so approval gating reflects what a tool actually does (e.g.
+// set_featured_media is a write, publish_* is external_send) rather than guessing from
+// the tool name. Both the fully-qualified and short tool names are indexed.
+const TOOL_RISK_BY_NAME = new Map<string, ToolRisk>();
+for (const m of ALL_MANIFESTS) {
+  for (const t of m.tools) {
+    TOOL_RISK_BY_NAME.set(t.name, t.risk);
+    const short = t.name.includes('.') ? t.name.split('.').slice(1).join('.') : t.name;
+    if (!TOOL_RISK_BY_NAME.has(short)) TOOL_RISK_BY_NAME.set(short, t.risk);
+  }
+}
+
+/** The risk a provider manifest declares for a tool, if known. */
+export function connectionToolDeclaredRisk(tool: string): ToolRisk | undefined {
+  return TOOL_RISK_BY_NAME.get(tool);
+}
 
 /**
  * Per-user runtime state for a provider. Distinguishes app-level developer setup

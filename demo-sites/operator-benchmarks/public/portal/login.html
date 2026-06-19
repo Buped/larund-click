@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Demo Invoice Portal — Sign in</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 360px; margin: 60px auto; padding: 0 16px; }
+    h1 { font-size: 20px; }
+    label { display: block; font-size: 13px; margin: 12px 0 4px; color: #444; }
+    input { width: 100%; padding: 10px; font-size: 15px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+    button { margin-top: 18px; width: 100%; padding: 11px; font-size: 15px; border: 0; border-radius: 8px; background: #2563eb; color: #fff; cursor: pointer; }
+    .err { color: #b91c1c; font-size: 13px; margin-top: 12px; min-height: 18px; }
+  </style>
+</head>
+<body>
+  <h1>Demo Invoice Portal</h1>
+  <p style="color:#666;font-size:13px">Sign in to view your invoices. (demo / demo123)</p>
+  <form id="loginForm" onsubmit="return doLogin(event)">
+    <label for="username">Username</label>
+    <input id="username" name="username" type="text" autocomplete="username" placeholder="Username">
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Password">
+    <button type="submit">Sign in</button>
+    <div class="err" id="err"></div>
+  </form>
+  <script>
+    function doLogin(e) {
+      e.preventDefault();
+      const u = document.getElementById('username').value.trim();
+      const p = document.getElementById('password').value;
+      if (u === 'demo' && p === 'demo123') {
+        location.href = 'invoices.html';
+      } else {
+        document.getElementById('err').textContent = 'Invalid username or password.';
+      }
+      return false;
+    }
+  </script>
+</body>
+</html>

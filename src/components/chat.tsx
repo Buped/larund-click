@@ -321,12 +321,67 @@ const TOOL_ICONS: Record<string, string> = {
   'window.list':       'monitor',
   'browser.open':      'externalLink',
   'browser.read':      'fileText',
+  'browser.get_state': 'monitor',
+  'browser.click':     'command',
+  'browser.type':      'command',
+  'browser.key':       'command',
+  'browser.shortcut':  'command',
+  'browser.paste':     'upload',
+  'browser.wait':      'clock',
+  'browser.assert_text': 'check',
+  'browser.assert_url':  'check',
+  'browser.extract_table': 'fileText',
+  'browser.download':  'fileText',
+  'browser.upload':    'upload',
+  'browser.login':     'lock',
   'connection.call':   'externalLink',
   'skill.run':         'sparkle',
   'workflow.start':    'monitor',
   'approval.request':  'sparkle',
   'task.complete':     'check',
   'ask_user':          'sparkle',
+};
+
+// Human-friendly labels for tool calls, so the step list reads like work being
+// done rather than raw tool names. The raw name + JSON stays available on expand.
+const TOOL_LABELS: Record<string, string> = {
+  'cli.run': 'Running command',
+  'process.start': 'Starting process',
+  'file.read': 'Reading file',
+  'file.write': 'Writing file',
+  'file.edit': 'Editing file',
+  'file.list': 'Listing files',
+  'file.search': 'Searching files',
+  'document.read': 'Reading document',
+  'document.read_many': 'Reading documents',
+  'document.summarize': 'Summarizing document',
+  'folder.scan': 'Scanning folder',
+  'folder.read_relevant': 'Reading folder',
+  'sheet.read': 'Reading sheet',
+  'sheet.write': 'Writing sheet',
+  'sheet.append': 'Appending to sheet',
+  'doc.write_docx': 'Writing document',
+  'app.open': 'Opening app',
+  'window.focus': 'Focusing window',
+  'browser.open': 'Opening page',
+  'browser.read': 'Reading page',
+  'browser.get_state': 'Reading page',
+  'browser.click': 'Clicking',
+  'browser.type': 'Filling form',
+  'browser.paste': 'Pasting',
+  'browser.wait': 'Waiting for page',
+  'browser.assert_text': 'Verifying page',
+  'browser.assert_url': 'Verifying page',
+  'browser.extract_table': 'Extracting table',
+  'browser.download': 'Downloading',
+  'browser.upload': 'Uploading',
+  'browser.login': 'Signing in',
+  'connection.call': 'Using connection',
+  'skill.run': 'Running skill',
+  'workflow.start': 'Starting workflow',
+  'approval.request': 'Asking approval',
+  'task.complete': 'Finishing up',
+  'ask_user': 'Needs your help',
 };
 
 function AgentStepItem({ step }: { step: AgentStep }) {
@@ -361,7 +416,7 @@ function AgentStepItem({ step }: { step: AgentStep }) {
     let argPreview = '';
     try {
       const p = JSON.parse(step.input || '{}');
-      argPreview = p.cmd || p.path || p.name || p.question || '';
+      argPreview = p.cmd || p.path || p.name || p.question || p.url || p.domain || p.target || p.connection || '';
     } catch { /* ignore */ }
 
     return (
@@ -384,7 +439,7 @@ function AgentStepItem({ step }: { step: AgentStep }) {
             <Icon name={iconName} size={9} stroke={1.8} />
           </span>
           <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', flex: 'none' }}>
-            {toolName}
+            {TOOL_LABELS[toolName] || toolName}
           </span>
           {argPreview && (
             <span style={{
@@ -551,7 +606,7 @@ function AgentMsgContent({
         <div style={{ flex: 1 }} />
 
         {/* Stop button — visible while running */}
-        {false && isRunning && (
+        {isRunning && (
           <button
             onClick={onStop}
             style={{
@@ -569,9 +624,9 @@ function AgentMsgContent({
             Stop
           </button>
         )}
-        {false && isRunning && (
+        {isRunning && (
           <span style={{ fontSize: 10.5, color: 'var(--text-hint)', marginLeft: 6 }}>
-            vagy ESC
+            or ESC
           </span>
         )}
       </div>

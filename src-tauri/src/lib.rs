@@ -39,6 +39,7 @@ pub fn run() {
             commands::agent::sheet_read,
             commands::agent::sheet_write,
             commands::documents::document_extract_text,
+            commands::documents::document_extract_rich,
             commands::documents::docx_write,
             commands::documents::file_write_bytes,
             commands::documents::file_read_bytes,
@@ -64,6 +65,9 @@ pub fn run() {
             commands::browser::browser_key,
             commands::browser::browser_shortcut,
             commands::browser::browser_wait,
+            commands::browser::browser_extract_table,
+            commands::browser::browser_download,
+            commands::browser::browser_upload,
             commands::browser::browser_probe,
             commands::browser::browser_close,
             // ── network (CORS-free HTTP for OAuth token exchange, etc.) ──────

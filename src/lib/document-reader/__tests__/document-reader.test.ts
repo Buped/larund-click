@@ -76,6 +76,49 @@ describe('document reader', () => {
     expect(result.contentText).toContain('Larund Kft');
   });
 
+  it('reads a text PDF via the rich extractor (method=text)', async () => {
+    const richIo: DocumentIO = {
+      ...io,
+      async extractRich() {
+        return { method: 'text', text: 'ACME invoice 125000 HUF 2026-06-15', pageCount: 1, images: [] };
+      },
+    };
+    const result = await readDocument(ref('C:\\docs\\text-invoice.pdf'), { io: richIo });
+    expect(result.ok).toBe(true);
+    expect(result.contentText).toContain('ACME invoice');
+    expect(result.metadata.pageCount).toBe(1);
+  });
+
+  it('falls back to page images for a scanned PDF (method=image → imageDataUrls)', async () => {
+    const scannedIo: DocumentIO = {
+      ...io,
+      async extractRich() {
+        return {
+          method: 'image',
+          text: '',
+          pageCount: 2,
+          images: ['data:image/jpeg;base64,AAAA', 'data:image/jpeg;base64,BBBB'],
+        };
+      },
+    };
+    const result = await readDocument(ref('C:\\docs\\scanned.pdf'), { io: scannedIo });
+    expect(result.ok).toBe(true);
+    expect(result.imageDataUrls).toHaveLength(2);
+    expect(result.summary).toMatch(/scanned pdf/i);
+  });
+
+  it('fails a PDF with no text and no images (method=empty)', async () => {
+    const emptyIo: DocumentIO = {
+      ...io,
+      async extractRich() {
+        return { method: 'empty', text: '', pageCount: 0, images: [] };
+      },
+    };
+    const result = await readDocument(ref('C:\\docs\\blank.pdf'), { io: emptyIo });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/pdf_no_text_or_images/);
+  });
+
   it('reads PPTX extracted slide text through the native extractor hook', async () => {
     const result = await readDocument(ref('C:\\docs\\deck.pptx'), { io });
     expect(result.ok).toBe(true);

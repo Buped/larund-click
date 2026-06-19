@@ -47,18 +47,7 @@ export const airtableManifest: ConnectionManifest = {
   ],
 };
 
-export const wordpressManifest: ConnectionManifest = {
-  id: 'wordpress',
-  name: 'WordPress',
-  description: 'Posts and pages via REST API (coming soon).',
-  auth: { type: 'api_key', envVars: ['WORDPRESS_SITE_URL', 'WORDPRESS_USERNAME', 'WORDPRESS_APP_PASSWORD'] },
-  scaffold: true,
-  risk: 'external_write',
-  tools: [
-    scaffoldTool('wordpress.list_posts', 'List posts.', 'external_read'),
-    scaffoldTool('wordpress.create_post', 'Create a draft post.', 'external_write'),
-  ],
-};
+// WordPress is now a real provider — see providers/wordpress/manifest.ts.
 
 export const moreScaffoldManifests: ConnectionManifest[] = [
   scaffoldManifest('discord', 'Discord', 'Guilds, channels and messages (coming soon).', ['DISCORD_BOT_TOKEN'], [

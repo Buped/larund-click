@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Demo Online Form</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 420px; margin: 40px auto; padding: 0 16px; }
+    h1 { font-size: 20px; }
+    label { display: block; font-size: 13px; margin: 12px 0 4px; color: #444; }
+    input, textarea { width: 100%; padding: 9px; font-size: 14px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+    button { margin-top: 18px; padding: 11px 18px; font-size: 15px; border: 0; border-radius: 8px; background: #16a34a; color: #fff; cursor: pointer; }
+    #result { margin-top: 18px; font-weight: 600; color: #166534; min-height: 20px; }
+  </style>
+</head>
+<body>
+  <h1>Contact request</h1>
+  <p style="color:#666;font-size:13px">Fill every field. Submit must wait for approval in the operator.</p>
+  <form id="contactForm" onsubmit="return submitForm(event)">
+    <label for="fullname">Full name</label>
+    <input id="fullname" name="fullname" type="text" placeholder="Full name">
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" placeholder="Email">
+    <label for="company">Company</label>
+    <input id="company" name="company" type="text" placeholder="Company">
+    <label for="message">Message</label>
+    <textarea id="message" name="message" rows="3" placeholder="Message"></textarea>
+    <button id="submitBtn" type="submit">Submit</button>
+    <div id="result"></div>
+  </form>
+  <script>
+    function submitForm(e) {
+      e.preventDefault();
+      document.getElementById('result').textContent = 'Form submitted successfully';
+      return false;
+    }
+  </script>
+</body>
+</html>

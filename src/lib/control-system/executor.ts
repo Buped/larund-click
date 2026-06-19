@@ -3,7 +3,17 @@ import type { ControlAction, ControlToolResult } from './types';
 import type { ToolContext } from '../tools/types';
 import type { DocumentReference } from '../references/types';
 import { readDocument, readManyDocuments, summarizeReadResults, scanFolder, readRelevantFromFolder, formatFolderScan } from '../document-reader';
-import { getCredentialForDomain, resolveCredentialPassword, markCredentialUsed, normalizeDomain } from '../credentials/store';
+import { getCredentialForDomain, getCredential, resolveCredentialPassword, markCredentialUsed, normalizeDomain } from '../credentials/store';
+import { getApp, markAppUsed } from '../apps/store';
+import { getBrowserProfile, DEFAULT_BROWSER_PROFILE } from '../browser/profiles';
+
+/** Resolve a browser-profile id to the launch config the Rust layer expects. The
+ *  managed default needs no config (Rust defaults to Agent Chrome). */
+function browserProfileArg(id?: string | null): Record<string, unknown> | null {
+  const p = id ? getBrowserProfile(id) : undefined;
+  if (!p || p.id === DEFAULT_BROWSER_PROFILE.id) return null;
+  return { kind: p.kind, executablePath: p.executablePath, profileDir: p.profileDir, remoteDebuggingPort: p.remoteDebuggingPort, cdpEndpoint: p.cdpEndpoint };
+}
 
 const ERR = (error: string): ControlToolResult => ({ success: false, output: '', error });
 
@@ -272,7 +282,7 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
 
     // ── browser ────────────────────────────────────────────────────────────
     case 'browser.open': {
-      const r = await tryInvoke<string>('browser_open', { url: action.url });
+      const r = await tryInvoke<string>('browser_open', { url: action.url, browserProfile: browserProfileArg(action.browser_profile_id) });
       return r.ok ? { success: true, output: r.value } : ERR(r.error);
     }
     case 'browser.read': {
@@ -348,19 +358,24 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
       return r.ok ? { success: true, output: r.value } : ERR(r.error);
     }
     case 'browser.login': {
-      // Resolve a saved credential and sign in. The password is read from the
-      // vault HERE and typed straight into the page — it is never part of the
-      // action, the returned output, the audit, or the model context.
-      let domain = normalizeDomain(action.domain ?? action.url ?? '');
+      // Resolve which app/credential/browser to use, then sign in. The password is
+      // read from the vault HERE and typed straight into the page — it is never part
+      // of the action, the returned output, the audit, or the model context.
+      const app = action.app_id ? getApp(action.app_id) : undefined;
+      let domain = normalizeDomain(action.domain ?? action.url ?? app?.domain ?? app?.loginUrl ?? app?.homeUrl ?? '');
       if (!domain) {
         const read = await tryInvoke<string>('browser_read', { selector: null });
         if (read.ok) domain = normalizeDomain(read.value.match(/^URL:\s*(.+)$/im)?.[1] ?? '');
       }
-      if (!domain) return ERR('browser.login needs a domain or url, or an open page to infer one.');
-      const cred = getCredentialForDomain(domain);
-      if (!cred) return ERR(`no_saved_login_for:${domain}`);
+      // Credential resolution: explicit id → app's linked credential → domain match.
+      const cred = action.credential_id ? getCredential(action.credential_id)
+        : app?.credentialId ? getCredential(app.credentialId)
+        : domain ? getCredentialForDomain(domain) : undefined;
+      if (!cred) return ERR(`no_saved_login_for:${domain || action.app_id || 'unknown'}`);
       const password = await resolveCredentialPassword(cred.id);
       if (!password) return ERR('login_password_unavailable');
+      const loginUrl = action.url ?? app?.loginUrl ?? cred.loginUrl ?? undefined;
+      const browserProfileId = action.browser_profile_id ?? app?.preferredBrowserId ?? null;
 
       const typeFirst = async (targets: string[], text: string): Promise<boolean> => {
         for (const target of targets) {
@@ -381,8 +396,8 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
       const passTargets = [action.password_field, 'input[type=password]', 'input[name=password]', 'Password'].filter(Boolean) as string[];
       const submitTargets = [action.submit_text, 'Sign in', 'Log in', 'Login', 'Continue', 'Next', 'Submit'].filter(Boolean) as string[];
 
-      if (action.url) {
-        const open = await tryInvoke<string>('browser_open', { url: action.url });
+      if (loginUrl) {
+        const open = await tryInvoke<string>('browser_open', { url: loginUrl, browserProfile: browserProfileArg(browserProfileId) });
         if (!open.ok) return ERR(open.error);
         await tryInvoke<string>('browser_wait', { text: null, selector: null, seconds: 2 });
       }
@@ -405,6 +420,7 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
       }
       await tryInvoke<string>('browser_wait', { text: null, selector: null, seconds: 3 });
       markCredentialUsed(cred.id);
+      if (app) markAppUsed(app.id);
       const verify = await tryInvoke<string>('browser_read', { selector: null });
       const onLoginPage = verify.ok && /password|sign in|log in/i.test(verify.value) && /input/i.test(verify.value);
       return {

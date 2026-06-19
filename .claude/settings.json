@@ -59,7 +59,10 @@
       "Bash(echo \"=== exit: $? ===\")",
       "Bash(echo \"=== aws-lc check exit: $? ===\")",
       "PowerShell(Get-NetTCPConnection -LocalPort 1420 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 400; if \\(Get-NetTCPConnection -LocalPort 1420 -State Listen -ErrorAction SilentlyContinue\\) { \"1420 BUSY\" } else { \"1420 FREE\" })",
-      "Bash(grep -Eq 'error\\\\[|could not compile|error calling dlltool|error: linking|panicked|aws-lc|net\\\\.rs|Running `[^ ]*tauri' C:/Users/KomPhone/AppData/Local/Temp/claude/d--Larund-click/4054d419-87a6-489b-b152-1db59ff372d6/tasks/b2lvxwz5p.output)"
+      "Bash(grep -Eq 'error\\\\[|could not compile|error calling dlltool|error: linking|panicked|aws-lc|net\\\\.rs|Running `[^ ]*tauri' C:/Users/KomPhone/AppData/Local/Temp/claude/d--Larund-click/4054d419-87a6-489b-b152-1db59ff372d6/tasks/b2lvxwz5p.output)",
+      "PowerShell($env:PATH = \"C:\\\\msys64\\\\mingw64\\\\bin;$env:PATH\"; cargo check --manifest-path src-tauri/Cargo.toml --message-format=short 2>&1 | Select-Object -Last 30)",
+      "Bash(xxd)",
+      "Bash(echo \"tsc exit: $?\")"
     ],
     "additionalDirectories": [
       "D:\\Larund-click\\src-tauri\\.cargo"

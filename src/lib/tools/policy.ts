@@ -1,5 +1,6 @@
 import type { ControlAction, ToolRisk } from '../control-system/types';
 import type { ToolCategory } from './types';
+import { connectionToolDeclaredRisk } from '../connections/registry';
 
 export type PolicyDecision = 'auto' | 'ask' | 'block';
 
@@ -171,7 +172,8 @@ export function assessRisk(action: ControlAction): ToolRisk {
       return 'credential_access';
 
     case 'connection.call':
-      return connectionToolRisk(action.tool);
+      // Prefer the provider manifest's declared risk; fall back to name patterns.
+      return connectionToolDeclaredRisk(action.tool) ?? connectionToolRisk(action.tool);
     case 'skill.run': case 'workflow.start':
       return 'local_write';
     case 'workflow.status':

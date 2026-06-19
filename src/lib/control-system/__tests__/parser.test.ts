@@ -10,6 +10,13 @@ describe('no-mouse parser', () => {
       .toEqual({ action: 'connection.call', connection: 'github', tool: 'read_file', args: {} });
   });
 
+  it('accepts browser.login (saved-credential sign-in)', () => {
+    expect(parseControlAction('Sign in.\n{"action":"browser.login","app_id":"app-1"}'))
+      .toEqual({ action: 'browser.login', app_id: 'app-1' });
+    expect(parseControlAction('{"action":"browser.login","domain":"shopify.com"}'))
+      .toEqual({ action: 'browser.login', domain: 'shopify.com' });
+  });
+
   it('rejects every mouse / cursor / visual / SOC action', () => {
     expect(parseControlAction('{"action":"soc.visual","objective":"click"}')).toBeNull();
     expect(parseControlAction('{"tool":"mouse_click","x":1,"y":2}')).toBeNull();

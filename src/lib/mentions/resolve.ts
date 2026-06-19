@@ -1,5 +1,7 @@
 import type { DocumentReference } from '../references/types';
 import type { ReferencedContext } from './types';
+import { getApp, appStatus } from '../apps/store';
+import { getBrowserProfile, DEFAULT_BROWSER_PROFILE } from '../browser/profiles';
 import { loadFullSkillPackage, renderSkillPackageForAgent } from '../skills/packages/runtime';
 import { listCatalogProviders } from '../connections/catalog';
 import { getMcpServer, listMcpTools } from '../mcp/store';
@@ -28,6 +30,28 @@ export async function resolveReferencedContext(args: {
   for (const ref of args.references) {
     if (ref.kind === 'file' || ref.kind === 'folder') {
       documentReferences.push(toDocumentReference(ref));
+      continue;
+    }
+
+    if (ref.kind === 'app') {
+      const app = getApp(ref.refId);
+      if (!app) { blockers.push(`Referenced app "${ref.label}" was not found.`); continue; }
+      const status = appStatus(app);
+      const browser = getBrowserProfile(app.preferredBrowserId)?.label ?? DEFAULT_BROWSER_PROFILE.label;
+      // SAFE metadata only — never the password or any raw secret.
+      lines.push([
+        `## App: ${app.label}`,
+        app.domain ? `domain: ${app.domain}` : undefined,
+        app.homeUrl ? `homeUrl: ${app.homeUrl}` : undefined,
+        app.loginUrl ? `loginUrl: ${app.loginUrl}` : undefined,
+        `preferredBrowser: ${browser}`,
+        `credential: ${app.credentialId ? 'saved' : 'none'}`,
+        app.username ? `account: ${app.username}` : undefined,
+        app.notes ? `notes: ${app.notes}` : undefined,
+        app.usageHints ? `usage hints: ${app.usageHints}` : undefined,
+        `usage: To act in this app, open ${app.loginUrl || app.homeUrl || app.domain} with browser_profile_id "${app.preferredBrowserId ?? DEFAULT_BROWSER_PROFILE.id}". If login is required, call browser.login with app_id "${app.id}" (it fills the saved password automatically). Never ask the model for the password.`,
+      ].filter(Boolean).join('\n'));
+      if (status !== 'ready') blockers.push(`App "${app.label}" ${status === 'needs_password' ? 'has no saved password yet' : 'needs setup'} — login may require manual help.`);
       continue;
     }
 

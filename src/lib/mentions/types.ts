@@ -4,7 +4,7 @@
 // status, MCP tools, memory content, workflow steps, file reference) rather than
 // just a label.
 
-export type MentionKind = 'skill' | 'connection' | 'mcp' | 'memory' | 'workflow' | 'file' | 'folder';
+export type MentionKind = 'app' | 'skill' | 'connection' | 'mcp' | 'memory' | 'workflow' | 'file' | 'folder';
 
 export interface ReferencedContext {
   id: string;
@@ -35,6 +35,7 @@ export interface MentionResource {
 }
 
 export const MENTION_COLORS: Record<MentionKind, string> = {
+  app: '#22D3EE',        // cyan
   skill: '#A78BFA',     // purple
   connection: '#4A9EFF', // blue
   mcp: '#34BE78',        // green
@@ -45,6 +46,7 @@ export const MENTION_COLORS: Record<MentionKind, string> = {
 };
 
 export const MENTION_TABS: Array<{ kind: MentionKind; label: string }> = [
+  { kind: 'app', label: 'Apps' },
   { kind: 'skill', label: 'Skills' },
   { kind: 'connection', label: 'Connections' },
   { kind: 'mcp', label: 'MCP' },

@@ -1,5 +1,6 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { MENTION_COLORS, type MentionKind, type ReferencedContext } from '../../lib/mentions/types';
+import { matchMentionQuery } from '../../lib/mentions/match';
 import { MentionDropdown } from './MentionDropdown';
 import { useMentionResources } from './useMentionResources';
 
@@ -54,14 +55,13 @@ function activeMentionQuery(editor: HTMLElement): { start: number; query: string
   if (!sel || sel.rangeCount === 0) return null;
   const range = sel.getRangeAt(0);
   if (!range.collapsed || !editor.contains(range.commonAncestorContainer)) return null;
-  if (range.startContainer.nodeType !== Node.TEXT_NODE) {
-    return { start: 0, query: '', rect: caretRect(range) ?? editor.getBoundingClientRect() };
-  }
+  // Only a real text node can hold an `@` query. An element container (empty or
+  // freshly-cleared editor, caret on a <br>, etc.) must NOT open the dropdown.
+  if (range.startContainer.nodeType !== Node.TEXT_NODE) return null;
   const node = range.startContainer as Text;
-  const before = node.data.slice(0, range.startOffset);
-  const match = before.match(/(^|\s)@([^\s@]*)$/);
-  if (!match) return null;
-  return { start: range.startOffset - match[2].length - 1, query: match[2], rect: caretRect(range) ?? editor.getBoundingClientRect() };
+  const matched = matchMentionQuery(node.data.slice(0, range.startOffset));
+  if (!matched) return null;
+  return { start: range.startOffset - matched.tokenLength, query: matched.query, rect: caretRect(range) ?? editor.getBoundingClientRect() };
 }
 
 function caretRect(range: Range): DOMRect | null {
@@ -187,10 +187,14 @@ export const RichMentionEditor = forwardRef<RichMentionEditorHandle, {
     clear() {
       const editor = editorRef.current;
       if (!editor) return;
+      // Full reset: DOM, saved caret, and all dropdown state. Notify the parent
+      // directly (not via emit) so there is no path that can re-open the dropdown.
       editor.innerHTML = '';
       savedRange.current = null;
       setOpen(false);
-      emit();
+      setQuery('');
+      setAnchorRect(null);
+      onChange('', []);
     },
     focus() { editorRef.current?.focus(); },
   }), [emit]);

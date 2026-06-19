@@ -22,7 +22,121 @@ use tungstenite::{Message, WebSocket};
 
 use super::desktop::DesktopScreenshot;
 
-const DEBUG_PORT: u16 = 9222;
+const DEFAULT_PORT: u16 = 9222;
+
+/// Where to reach the active browser, and (optionally) how to launch it. Selected
+/// per browser profile. `launch == None` means an already-running browser exposed
+/// at `host:port` over CDP (we connect, never spawn).
+#[derive(Clone, PartialEq)]
+struct ActiveTarget {
+    host: String,
+    port: u16,
+    launch: Option<LaunchSpec>,
+}
+
+#[derive(Clone, PartialEq)]
+struct LaunchSpec {
+    exe: String,
+    profile_dir: String,
+}
+
+/// Browser profile config passed from the frontend (mirrors src/lib/browser/profiles.ts).
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserProfileArg {
+    kind: String,
+    executable_path: Option<String>,
+    profile_dir: Option<String>,
+    remote_debugging_port: Option<u16>,
+    cdp_endpoint: Option<String>,
+}
+
+static ACTIVE: OnceLock<Mutex<Option<ActiveTarget>>> = OnceLock::new();
+
+fn active_store() -> &'static Mutex<Option<ActiveTarget>> {
+    ACTIVE.get_or_init(|| Mutex::new(None))
+}
+
+fn default_target() -> ActiveTarget {
+    ActiveTarget {
+        host: "127.0.0.1".into(),
+        port: DEFAULT_PORT,
+        launch: Some(LaunchSpec {
+            exe: chrome_exe().unwrap_or_default(),
+            profile_dir: agent_profile_dir("AgentChrome"),
+        }),
+    }
+}
+
+fn current_target() -> ActiveTarget {
+    active_store()
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .unwrap_or_else(default_target)
+}
+
+/// Translate a frontend browser profile into a concrete target. Returns an error
+/// for non-Chromium / unconfigured profiles instead of silently guessing.
+fn target_from_profile(p: &BrowserProfileArg) -> Result<ActiveTarget, String> {
+    let port = p.remote_debugging_port.unwrap_or(DEFAULT_PORT);
+    match p.kind.as_str() {
+        "agent_chrome" => Ok(ActiveTarget {
+            host: "127.0.0.1".into(),
+            port,
+            launch: Some(LaunchSpec {
+                exe: chrome_exe().ok_or("Chrome was not found on this system.")?,
+                profile_dir: p.profile_dir.clone().unwrap_or_else(|| agent_profile_dir("AgentChrome")),
+            }),
+        }),
+        "agent_edge" => Ok(ActiveTarget {
+            host: "127.0.0.1".into(),
+            port,
+            launch: Some(LaunchSpec {
+                exe: edge_exe().ok_or("Microsoft Edge was not found on this system.")?,
+                profile_dir: p.profile_dir.clone().unwrap_or_else(|| agent_profile_dir("AgentEdge")),
+            }),
+        }),
+        "custom_chromium" => {
+            let exe = p.executable_path.clone().filter(|e| !e.is_empty())
+                .ok_or("Custom browser needs an executable path.")?;
+            Ok(ActiveTarget {
+                host: "127.0.0.1".into(),
+                port,
+                launch: Some(LaunchSpec {
+                    exe,
+                    profile_dir: p.profile_dir.clone().unwrap_or_else(|| agent_profile_dir("AgentCustom")),
+                }),
+            })
+        }
+        "existing_cdp" => {
+            let endpoint = p.cdp_endpoint.clone().filter(|e| !e.is_empty())
+                .ok_or("Existing CDP profile needs a cdp endpoint (e.g. http://localhost:9223).")?;
+            let parsed = url_host_port(&endpoint)?;
+            Ok(ActiveTarget { host: parsed.0, port: parsed.1, launch: None })
+        }
+        other => Err(format!(
+            "Larund can only automate Chromium-based browsers through CDP right now (got '{}').",
+            other
+        )),
+    }
+}
+
+/// Minimal host:port parse for an http(s) CDP endpoint.
+fn url_host_port(endpoint: &str) -> Result<(String, u16), String> {
+    let rest = endpoint
+        .trim()
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let authority = rest.split('/').next().unwrap_or(rest);
+    let mut parts = authority.split(':');
+    let host = parts.next().filter(|h| !h.is_empty()).ok_or("CDP endpoint missing host")?;
+    let port = parts
+        .next()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(DEFAULT_PORT);
+    Ok((host.to_string(), port))
+}
 
 // JS injected via Runtime.evaluate. Each is a function expression we invoke with
 // JSON-encoded arguments, except READ_JS which is a self-calling IIFE.
@@ -95,9 +209,9 @@ fn store() -> &'static Mutex<Option<BrowserState>> {
     BROWSER.get_or_init(|| Mutex::new(None))
 }
 
-fn agent_profile_dir() -> String {
+fn agent_profile_dir(name: &str) -> String {
     let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string());
-    format!("{}\\LarundClick\\AgentChrome", base)
+    format!("{}\\LarundClick\\{}", base, name)
 }
 
 fn chrome_exe() -> Option<String> {
@@ -108,6 +222,20 @@ fn chrome_exe() -> Option<String> {
     ];
     for base in candidates.into_iter().flatten() {
         let p = format!("{}\\Google\\Chrome\\Application\\chrome.exe", base);
+        if std::path::Path::new(&p).exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+fn edge_exe() -> Option<String> {
+    let candidates = [
+        std::env::var("ProgramFiles(x86)").ok(),
+        std::env::var("ProgramFiles").ok(),
+    ];
+    for base in candidates.into_iter().flatten() {
+        let p = format!("{}\\Microsoft\\Edge\\Application\\msedge.exe", base);
         if std::path::Path::new(&p).exists() {
             return Some(p);
         }
@@ -146,16 +274,17 @@ fn response_complete(buf: &[u8]) -> bool {
 /// report failure). Instead we stop as soon as the full Content-Length body has
 /// arrived, falling back to an idle read-timeout.
 fn http_get(path: &str) -> Result<String, String> {
-    let mut stream = TcpStream::connect(("127.0.0.1", DEBUG_PORT)).map_err(|e| e.to_string())?;
+    let target = current_target();
+    let mut stream = TcpStream::connect((target.host.as_str(), target.port)).map_err(|e| e.to_string())?;
     stream
         .set_read_timeout(Some(Duration::from_millis(1500)))
         .ok();
     // Host MUST include the port: Chrome builds webSocketDebuggerUrl from this
-    // header, and a portless Host yields ws://127.0.0.1/... (defaults to port 80
+    // header, and a portless Host yields ws://host/... (defaults to port 80
     // → connection fails).
     let req = format!(
-        "GET {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAccept: */*\r\nConnection: close\r\n\r\n",
-        path, DEBUG_PORT
+        "GET {} HTTP/1.1\r\nHost: {}:{}\r\nAccept: */*\r\nConnection: close\r\n\r\n",
+        path, target.host, target.port
     );
     stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
 
@@ -198,14 +327,16 @@ fn parse_json_http(resp: &str) -> Result<Value, String> {
     }
 }
 
-fn launch_chrome() -> Result<(), String> {
-    let exe = chrome_exe().ok_or("Chrome not found on this system")?;
-    let dir = agent_profile_dir();
-    std::fs::create_dir_all(&dir).ok();
-    Command::new(exe)
+fn launch_browser(target: &ActiveTarget) -> Result<(), String> {
+    let spec = target.launch.as_ref().ok_or("This browser profile connects to an existing CDP endpoint and is not started by Larund.")?;
+    if spec.exe.is_empty() {
+        return Err("No browser executable is configured for this profile.".to_string());
+    }
+    std::fs::create_dir_all(&spec.profile_dir).ok();
+    Command::new(&spec.exe)
         .args([
-            format!("--remote-debugging-port={}", DEBUG_PORT),
-            format!("--user-data-dir={}", dir),
+            format!("--remote-debugging-port={}", target.port),
+            format!("--user-data-dir={}", spec.profile_dir),
             "--no-first-run".into(),
             "--no-default-browser-check".into(),
             "--remote-allow-origins=*".into(),
@@ -218,11 +349,19 @@ fn launch_chrome() -> Result<(), String> {
     Ok(())
 }
 
-fn ensure_chrome() -> Result<(), String> {
+fn ensure_browser() -> Result<(), String> {
     if http_get("/json/version").is_ok() {
         return Ok(());
     }
-    launch_chrome()?;
+    let target = current_target();
+    // Existing-CDP profiles are never launched — they must already be reachable.
+    if target.launch.is_none() {
+        return Err(format!(
+            "No browser reachable at {}:{}. Start it with --remote-debugging-port, or pick a managed browser profile.",
+            target.host, target.port
+        ));
+    }
+    launch_browser(&target)?;
     for _ in 0..40 {
         std::thread::sleep(Duration::from_millis(500));
         if http_get("/json/version").is_ok() {
@@ -230,7 +369,7 @@ fn ensure_chrome() -> Result<(), String> {
             return Ok(());
         }
     }
-    Err("Agent Chrome did not become reachable on the debug port".to_string())
+    Err("The browser did not become reachable on the debug port".to_string())
 }
 
 fn connect_page() -> Result<BrowserState, String> {
@@ -244,9 +383,10 @@ fn connect_page() -> Result<BrowserState, String> {
         .get("webSocketDebuggerUrl")
         .and_then(|x| x.as_str())
         .ok_or("No webSocketDebuggerUrl for page target")?;
-    // Defensive: ensure the URL carries the debug port even if Chrome omitted it.
+    // Defensive: ensure the URL carries the debug host:port even if it was omitted.
+    let target = current_target();
     let ws_url = if let Some(rest) = ws_url_raw.strip_prefix("ws://127.0.0.1/") {
-        format!("ws://127.0.0.1:{}/{}", DEBUG_PORT, rest)
+        format!("ws://{}:{}/{}", target.host, target.port, rest)
     } else {
         ws_url_raw.to_string()
     };
@@ -324,7 +464,7 @@ fn wait_ready(state: &mut BrowserState) {
 fn with_browser<T>(f: impl FnOnce(&mut BrowserState) -> Result<T, String>) -> Result<T, String> {
     let mut guard = store().lock().map_err(|_| "browser lock poisoned".to_string())?;
     if guard.is_none() {
-        ensure_chrome()?;
+        ensure_browser()?;
         *guard = Some(connect_page()?);
     }
     let state = guard.as_mut().unwrap();
@@ -347,8 +487,26 @@ fn with_browser<T>(f: impl FnOnce(&mut BrowserState) -> Result<T, String>) -> Re
 
 // ─── Tauri commands ───────────────────────────────────────────────────────────
 
+/// Switch the active browser target if a profile is supplied and differs from the
+/// current one. Drops any existing CDP connection so the next call reconnects to
+/// the new browser.
+fn apply_profile(profile: Option<BrowserProfileArg>) -> Result<(), String> {
+    let Some(p) = profile else { return Ok(()) };
+    let target = target_from_profile(&p)?;
+    let mut active = active_store().lock().map_err(|_| "browser active lock poisoned".to_string())?;
+    if active.as_ref() != Some(&target) {
+        *active = Some(target);
+        // Force reconnect to the new target on the next browser call.
+        if let Ok(mut b) = store().lock() {
+            *b = None;
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
-pub async fn browser_open(url: String) -> Result<String, String> {
+pub async fn browser_open(url: String, browser_profile: Option<BrowserProfileArg>) -> Result<String, String> {
+    apply_profile(browser_profile)?;
     with_browser(|s| {
         cdp(s, "Page.navigate", json!({ "url": url }))?;
         wait_ready(s);
@@ -446,8 +604,22 @@ pub async fn browser_shortcut(keys: Vec<String>) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn browser_read() -> Result<String, String> {
-    with_browser(|s| eval(s, READ_JS))
+pub async fn browser_read(selector: Option<String>) -> Result<String, String> {
+    with_browser(|s| match selector {
+        Some(sel) if !sel.trim().is_empty() => {
+            let q = serde_json::to_string(&sel).unwrap_or_else(|_| "\"\"".into());
+            let expr = format!(
+                "(function(s){{const e=document.querySelector(s);return e?((e.innerText||e.value||e.textContent||'')+'').trim():'NOT_FOUND';}})({})",
+                q
+            );
+            let r = eval(s, &expr)?;
+            if r == "NOT_FOUND" {
+                return Err(format!("No element matching \"{}\" was found on the page", sel));
+            }
+            Ok(r)
+        }
+        _ => eval(s, READ_JS),
+    })
 }
 
 #[tauri::command]
@@ -542,4 +714,181 @@ pub async fn browser_close() -> Result<(), String> {
         let _ = cdp(&mut st, "Browser.close", json!({}));
     }
     Ok(())
+}
+
+/// Staging directory CDP downloads land in before we move them to their final home.
+fn download_staging_dir() -> String {
+    let dir = agent_profile_dir("Downloads");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// Snapshot of completed files currently in a directory (ignores in-progress
+/// Chrome `.crdownload` temp files).
+fn completed_files(dir: &str) -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.ends_with(".crdownload") {
+                set.insert(name);
+            }
+        }
+    }
+    set
+}
+
+/// Extract a table on the page as TSV text (header + rows). Falls back to NOT_FOUND
+/// so the executor can degrade to a plain read.
+#[tauri::command]
+pub async fn browser_extract_table(selector: Option<String>) -> Result<String, String> {
+    with_browser(|s| {
+        let q = serde_json::to_string(&selector.unwrap_or_default()).unwrap_or_else(|_| "\"\"".into());
+        let js = format!(
+            r#"(function(sel){{
+function vis(e){{try{{const r=e.getBoundingClientRect();return r.width>1&&r.height>1;}}catch(_){{return true;}}}}
+let t=null;
+if(sel){{try{{t=document.querySelector(sel);}}catch(_){{}}}}
+if(!t){{const all=[...document.querySelectorAll('table')].filter(vis);t=all.sort((a,b)=>b.rows.length-a.rows.length)[0];}}
+if(!t)return 'NOT_FOUND';
+const rows=[...t.rows].map(r=>[...r.cells].map(c=>(c.innerText||'').replace(/\t/g,' ').replace(/\s+/g,' ').trim()).join('\t'));
+return rows.join('\n');}})({})"#,
+            q
+        );
+        let r = eval(s, &js)?;
+        if r == "NOT_FOUND" {
+            return Err("No table was found on the page".to_string());
+        }
+        Ok(r)
+    })
+}
+
+/// Download a file through the browser. Sets the CDP download behaviour to a staging
+/// dir, triggers the download (navigating to `url`, or relying on a download the page
+/// just started), waits for the file to complete, then moves/renames it to its final
+/// location. Returns the absolute final path so the agent can verify it.
+#[tauri::command]
+pub async fn browser_download(
+    url: Option<String>,
+    target: Option<String>,
+    save_as: Option<String>,
+) -> Result<String, String> {
+    let staging = download_staging_dir();
+    let before = completed_files(&staging);
+
+    with_browser(|s| {
+        // Route downloads to our staging dir and allow them to proceed without a prompt.
+        cdp(
+            s,
+            "Browser.setDownloadBehavior",
+            json!({ "behavior": "allow", "downloadPath": staging, "eventsEnabled": true }),
+        )
+        .or_else(|_| {
+            cdp(
+                s,
+                "Page.setDownloadBehavior",
+                json!({ "behavior": "allow", "downloadPath": staging }),
+            )
+        })?;
+
+        // Trigger the download. When a url is given we click a synthetic <a download>;
+        // otherwise we assume the page already started one (e.g. after browser.click).
+        if let Some(u) = &url {
+            let uj = serde_json::to_string(u).unwrap_or_else(|_| "\"\"".into());
+            let js = format!(
+                "(function(u){{const a=document.createElement('a');a.href=u;a.download='';a.style.display='none';document.body.appendChild(a);a.click();setTimeout(()=>a.remove(),1000);return 'TRIGGERED';}})({})",
+                uj
+            );
+            eval(s, &js)?;
+        }
+        Ok(())
+    })?;
+
+    // Poll the staging dir for a newly completed file (up to ~60s).
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let new_file = loop {
+        let now_files = completed_files(&staging);
+        if let Some(name) = now_files.difference(&before).next() {
+            // Ensure it is no longer being written (size stable / no sibling .crdownload).
+            let crdownload = std::path::Path::new(&staging).join(format!("{name}.crdownload"));
+            if !crdownload.exists() {
+                break Some(name.clone());
+            }
+        }
+        if Instant::now() > deadline {
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    };
+
+    let Some(name) = new_file else {
+        return Err("download_did_not_complete: no new file appeared in the download folder".to_string());
+    };
+
+    let src = std::path::Path::new(&staging).join(&name);
+
+    // Decide the final destination from target (dir or full path) + save_as (filename).
+    let final_path: std::path::PathBuf = match (target.as_deref(), save_as.as_deref()) {
+        (Some(t), Some(fname)) => std::path::Path::new(t).join(fname),
+        (Some(t), None) => {
+            let p = std::path::Path::new(t);
+            // A path with an extension is treated as a full file path; otherwise a dir.
+            if p.extension().is_some() && !p.is_dir() {
+                p.to_path_buf()
+            } else {
+                p.join(&name)
+            }
+        }
+        (None, Some(fname)) => std::path::Path::new(&staging).join(fname),
+        (None, None) => src.clone(),
+    };
+
+    if final_path != src {
+        if let Some(parent) = final_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("download_mkdir_failed: {e}"))?;
+        }
+        // Rename within a volume, fall back to copy+remove across volumes.
+        if std::fs::rename(&src, &final_path).is_err() {
+            std::fs::copy(&src, &final_path).map_err(|e| format!("download_move_failed: {e}"))?;
+            let _ = std::fs::remove_file(&src);
+        }
+    }
+
+    Ok(format!("Downloaded to {}", final_path.to_string_lossy()))
+}
+
+/// Upload a local file into a page's file input over CDP (`DOM.setFileInputFiles`),
+/// which needs no mouse. `target` is the file input's css selector (optional — the
+/// first visible file input is used when omitted).
+#[tauri::command]
+pub async fn browser_upload(target: Option<String>, path: String) -> Result<String, String> {
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("upload_source_missing: {path}"));
+    }
+    with_browser(|s| {
+        let doc = cdp(s, "DOM.getDocument", json!({ "depth": 0 }))?;
+        let root = doc
+            .get("root")
+            .and_then(|r| r.get("nodeId"))
+            .and_then(|n| n.as_i64())
+            .ok_or("could not read document root")?;
+
+        let selector = match &target {
+            Some(t) if !t.trim().is_empty() => t.clone(),
+            _ => "input[type=file]".to_string(),
+        };
+        let found = cdp(s, "DOM.querySelector", json!({ "nodeId": root, "selector": selector }))?;
+        let node_id = found
+            .get("nodeId")
+            .and_then(|n| n.as_i64())
+            .filter(|n| *n != 0)
+            .ok_or_else(|| format!("No file input matching \"{selector}\" was found on the page"))?;
+
+        cdp(
+            s,
+            "DOM.setFileInputFiles",
+            json!({ "nodeId": node_id, "files": [path] }),
+        )?;
+        Ok(format!("Uploaded {path}"))
+    })
 }

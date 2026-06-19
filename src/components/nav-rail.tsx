@@ -20,7 +20,7 @@ const NAV: Array<{ id: Route; label: string; icon: string }> = [
   { id: 'skills', label: 'Skills', icon: 'sparkle' },
   { id: 'memory', label: 'Memory', icon: 'cpu' },
   { id: 'connections', label: 'Connections', icon: 'link' },
-  { id: 'logins', label: 'Logins', icon: 'lock' },
+  { id: 'logins', label: 'Apps', icon: 'lock' },
   { id: 'mcp', label: 'MCP', icon: 'diamond' },
 ];
 

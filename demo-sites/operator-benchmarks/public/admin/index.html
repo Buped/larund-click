@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Demo Admin — Products</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 16px; }
+    h1 { font-size: 20px; }
+    #search { width: 260px; padding: 9px; font-size: 14px; border: 1px solid #ccc; border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 13px; }
+    .bad { color: #b91c1c; font-weight: 600; }
+    .ok { color: #166534; }
+  </style>
+</head>
+<body>
+  <h1>Products (mock admin)</h1>
+  <p style="color:#666;font-size:13px">Read-only audit fixture: image / price / stock / SEO columns. Search filters rows.</p>
+  <input id="search" type="text" name="search" placeholder="Search products…" oninput="filterRows()">
+  <table id="products">
+    <thead><tr><th>SKU</th><th>Name</th><th>Image</th><th>Price</th><th>Stock</th><th>SEO title</th></tr></thead>
+    <tbody>
+      <tr><td>P-001</td><td>Blue Mug</td><td class="ok">yes</td><td>2 490 HUF</td><td>120</td><td class="ok">yes</td></tr>
+      <tr><td>P-002</td><td>Red Mug</td><td class="bad">missing</td><td>2 490 HUF</td><td>0</td><td class="ok">yes</td></tr>
+      <tr><td>P-003</td><td>Green Bottle</td><td class="ok">yes</td><td class="bad">missing</td><td>40</td><td class="bad">missing</td></tr>
+      <tr><td>P-004</td><td>Steel Straw</td><td class="ok">yes</td><td>990 HUF</td><td class="bad">0</td><td class="ok">yes</td></tr>
+      <tr><td>P-005</td><td>Canvas Bag</td><td class="ok">yes</td><td>5 900 HUF</td><td>15</td><td class="bad">missing</td></tr>
+    </tbody>
+  </table>
+  <script>
+    function filterRows() {
+      const q = document.getElementById('search').value.toLowerCase();
+      for (const tr of document.querySelectorAll('#products tbody tr')) {
+        tr.style.display = tr.innerText.toLowerCase().includes(q) ? '' : 'none';
+      }
+    }
+  </script>
+</body>
+</html>

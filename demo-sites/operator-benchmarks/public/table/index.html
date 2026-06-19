@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Demo Table Page</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+    h1 { font-size: 20px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 14px; }
+    th { background: #f9fafb; }
+  </style>
+</head>
+<body>
+  <h1>Weekly orders (mock)</h1>
+  <p style="color:#666;font-size:13px">browser_extract_table should return this as TSV.</p>
+  <table id="orders">
+    <thead><tr><th>Order</th><th>Date</th><th>Customer</th><th>Total</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>#1001</td><td>2026-06-12</td><td>Kovács Bt.</td><td>24 990 HUF</td><td>Fulfilled</td></tr>
+      <tr><td>#1002</td><td>2026-06-13</td><td>Nagy Kft.</td><td>59 900 HUF</td><td>Refunded</td></tr>
+      <tr><td>#1003</td><td>2026-06-14</td><td>Tóth Zrt.</td><td>12 500 HUF</td><td>Problem</td></tr>
+      <tr><td>#1004</td><td>2026-06-15</td><td>Szabó Kft.</td><td>88 000 HUF</td><td>Fulfilled</td></tr>
+    </tbody>
+  </table>
+</body>
+</html>

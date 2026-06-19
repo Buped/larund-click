@@ -152,6 +152,23 @@ function rememberExpectedSheetData(taskState: import('../agent-state/types').Act
   }
 }
 
+/** Max page images to forward to vision per read (economy: caps token cost). */
+const MAX_MIDLOOP_VISION_IMAGES = 8;
+
+/** Page-image data URLs carried by a document read result (scanned PDFs), if any. */
+function pageImagesFromResult(result: import('./types').ControlToolResult): string[] {
+  const out: string[] = [];
+  const details = result.details as { documentRead?: unknown; documentReads?: unknown[] } | undefined;
+  const collect = (dr: unknown) => {
+    const d = dr as { imageDataUrls?: unknown; imageDataUrl?: unknown } | undefined;
+    if (Array.isArray(d?.imageDataUrls)) out.push(...d.imageDataUrls.filter((u): u is string => typeof u === 'string'));
+    else if (typeof d?.imageDataUrl === 'string') out.push(d.imageDataUrl);
+  };
+  if (details?.documentRead) collect(details.documentRead);
+  if (Array.isArray(details?.documentReads)) details.documentReads.forEach(collect);
+  return out.slice(0, MAX_MIDLOOP_VISION_IMAGES);
+}
+
 async function updateOverlay(state: object): Promise<void> {
   try { await emit('agent-overlay-update', state); } catch { /* optional */ }
 }
@@ -514,6 +531,22 @@ export async function runControlLoop(
         ? `Action result: ${result.output}${blockerNote}\nComplete with task.complete only when the result is verified by a read-back and proves the requested outcome.`
         : `Action error: ${result.error ?? result.output}\nPick a different structured tool. Mouse/cursor/visual control is unavailable. If only a GUI mouse path exists, ask_user for a manual step or an API/export alternative.`,
     });
+
+    // Scanned documents read mid-task (e.g. an image-only PDF via document.read) carry
+    // page images. Surface them as a vision message so the model can actually read them
+    // — capped for economy; only when present.
+    if (result.success) {
+      const pageImages = pageImagesFromResult(result);
+      if (pageImages.length) {
+        messages.push({
+          role: 'user',
+          content: [
+            { type: 'text', text: `Attached ${pageImages.length} page image(s) from the document just read — read them visually and extract the data. Do not invent contents.` },
+            ...pageImages.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+          ],
+        });
+      }
+    }
   }
 
   await tracker.setStatus('failed', { error: `Reached maximum iterations (${MAX_ITERATIONS})` });

@@ -1,0 +1,8 @@
+SZÁMLA / INVOICE
+Invoice no: VENDORX-2026-06-0099
+Date: 2026-06-10
+Vendor: VendorX Solutions Kft.
+Amount: 64 900 HUF
+Currency: HUF
+Category: Hosting
+Due: 2026-06-25

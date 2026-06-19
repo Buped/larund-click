@@ -39,6 +39,8 @@ export interface ReferenceIngest {
 
 const MAX_DOC_INJECT_CHARS = 8_000;
 const MAX_TOTAL_INJECT_CHARS = 48_000;
+/** Cap page images per document (economy: limits vision token cost for scanned PDFs). */
+const MAX_VISION_IMAGES = 8;
 
 /**
  * Read attached references (files, folders, images) into model-ready content:
@@ -60,9 +62,24 @@ export async function ingestReferences(
   // content → bounded text block.
   const ingestDocument = (result: ReadDocumentResult) => {
     const target = result.ref.path ?? result.ref.url ?? result.ref.label;
-    if (result.imageDataUrl) {
-      imageBlocks.push({ type: 'image_url', image_url: { url: result.imageDataUrl } });
-      textBlocks.push(`### Image: ${result.ref.label} (${target})\nThe image is attached below — analyze its visual contents.`);
+    // Single image file, or multi-page images from a scanned PDF → vision blocks.
+    const pageImages = result.imageDataUrls?.length
+      ? result.imageDataUrls
+      : result.imageDataUrl
+        ? [result.imageDataUrl]
+        : [];
+    if (pageImages.length) {
+      for (const url of pageImages.slice(0, MAX_VISION_IMAGES)) {
+        imageBlocks.push({ type: 'image_url', image_url: { url } });
+      }
+      const scanned = Boolean(result.imageDataUrls?.length);
+      textBlocks.push(
+        `### ${scanned ? 'Scanned document' : 'Image'}: ${result.ref.label} (${target})\n${
+          scanned
+            ? `${pageImages.length} page image(s) attached below — read them visually and extract the data.`
+            : 'The image is attached below — analyze its visual contents.'
+        }`,
+      );
       return;
     }
     if (!result.ok) {

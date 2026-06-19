@@ -2,6 +2,8 @@
 // mentions stay in sync with Skills, Connections, MCP, Memory and Workflows.
 
 import type { MentionKind, MentionResource } from './types';
+import { listApps, appStatus } from '../apps/store';
+import { getBrowserProfile, DEFAULT_BROWSER_PROFILE } from '../browser/profiles';
 import { listSkillPackages } from '../skills/packages/store';
 import { listCatalogProviders } from '../connections/catalog';
 import { listMcpServers, listMcpTools } from '../mcp/store';
@@ -15,6 +17,22 @@ export async function listMentionResources(opts: {
 }): Promise<MentionResource[]> {
   const want = (k: MentionKind) => !opts.kinds || opts.kinds.includes(k);
   const out: MentionResource[] = [];
+
+  if (want('app')) {
+    for (const app of listApps()) {
+      const status = appStatus(app);
+      const browser = getBrowserProfile(app.preferredBrowserId)?.label ?? DEFAULT_BROWSER_PROFILE.label;
+      const detail = `${app.domain || 'no domain'} · ${browser} · ${status === 'ready' ? 'ready' : status === 'needs_password' ? 'needs password' : 'needs setup'}`;
+      out.push({
+        kind: 'app',
+        refId: app.id,
+        label: app.label,
+        detail,
+        available: status === 'ready',
+        metadata: { domain: app.domain, status, preferredBrowserId: app.preferredBrowserId },
+      });
+    }
+  }
 
   if (want('skill')) {
     const skills = await listSkillPackages({ userId: opts.userId, workspaceId: opts.workspaceId, includeSuggested: false }).catch(() => []);

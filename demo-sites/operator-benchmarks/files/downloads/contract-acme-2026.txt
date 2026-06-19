@@ -1,0 +1,7 @@
+SZOLGÁLTATÁSI SZERZŐDÉS / SERVICE CONTRACT
+Parties: ACME Kft. and Larund Demo Bt.
+Effective date: 2026-06-01
+Term: 12 months
+Scope: Monthly marketing services.
+Signed: 2026-06-01
+This is a CONTRACT document (szerződés), not an invoice.

@@ -6,6 +6,7 @@ import {
   type DocumentReadOptions,
   type FileMetadata,
   type ReadDocumentResult,
+  type RichExtraction,
 } from './types';
 import { summarizeDocument, summarizeText } from './summarize';
 import { getCachedDocument, setCachedDocument } from './cache';
@@ -82,6 +83,20 @@ function defaultIo(): DocumentIO {
     },
     async extractText(path: string) {
       return invoke<string>('document_extract_text', { path });
+    },
+    async extractRich(path: string) {
+      const raw = await invoke<string>('document_extract_rich', { path });
+      try {
+        const p = JSON.parse(raw) as Partial<RichExtraction>;
+        return {
+          method: p.method ?? 'empty',
+          text: p.text ?? '',
+          pageCount: p.pageCount ?? 0,
+          images: Array.isArray(p.images) ? p.images : [],
+        };
+      } catch {
+        return { method: 'empty' as const, text: '', pageCount: 0, images: [] };
+      }
     },
     async listDir(path: string) {
       return invoke<string[]>('dir_list', { path });
@@ -166,6 +181,45 @@ export async function readDocument(ref: DocumentReference, options: DocumentRead
           metadata: normalizeMetadata(md),
           error: 'unsupported_legacy_doc: convert .doc to .docx first',
         };
+      } else if (ext === '.pdf') {
+        // Tiered: local text first ($0); fall back to page images for vision when the
+        // PDF is scanned/image-only.
+        const rich: RichExtraction = io.extractRich
+          ? await io.extractRich(target)
+          : {
+              method: 'text',
+              text: await (io.extractText ? io.extractText(target) : invoke<string>('document_extract_text', { path: target })),
+              pageCount: 0,
+              images: [],
+            };
+        const cut = truncate(rich.text ?? '', limits.maxTextChars);
+        if (rich.method === 'image' && rich.images.length > 0) {
+          result = {
+            ref,
+            ok: true,
+            contentText: cut.text || undefined,
+            imageDataUrls: rich.images,
+            structured: { extraction: 'vision', format: 'pdf', scanned: true, pageCount: rich.pageCount },
+            metadata: { ...normalizeMetadata(md), pageCount: rich.pageCount, truncated: cut.truncated },
+            summary: `Scanned PDF (${rich.pageCount} page(s)) — ${rich.images.length} page image(s) attached for vision analysis.`,
+          };
+        } else if (cut.text.trim()) {
+          result = {
+            ref,
+            ok: true,
+            contentText: cut.text,
+            structured: { extraction: 'text', format: 'pdf', pageCount: rich.pageCount },
+            metadata: { ...normalizeMetadata(md), pageCount: rich.pageCount, truncated: cut.truncated },
+          };
+        } else {
+          result = {
+            ref,
+            ok: false,
+            structured: { extraction: 'empty', format: 'pdf', pageCount: rich.pageCount },
+            metadata: { ...normalizeMetadata(md), pageCount: rich.pageCount },
+            error: 'pdf_no_text_or_images: no extractable text and no embedded page images (the PDF may be empty or an unsupported scan format).',
+          };
+        }
       } else {
         const raw = await (io.extractText ? io.extractText(target) : invoke<string>('document_extract_text', { path: target }));
         const cut = truncate(raw, limits.maxTextChars);
