@@ -1,18 +1,39 @@
 import Database from '@tauri-apps/plugin-sql';
 
-let db: Database | null = null;
-let currentUserId: string | null = null;
+// HMR-safe singleton. The open DB handle lives on globalThis so that when Vite
+// hot-reloads this module (its top-level `let db` would otherwise reset to null),
+// the already-open connection is reused. Without this, every getDb() after an
+// HMR edit threw "Database not initialized" — breaking sessions, messages and
+// chat in dev until a full restart. Harmless in production (no HMR).
+const DB_GLOBAL = globalThis as unknown as {
+  __larundDb?: Database | null;
+  __larundDbUser?: string | null;
+};
+
+let db: Database | null = DB_GLOBAL.__larundDb ?? null;
+let currentUserId: string | null = DB_GLOBAL.__larundDbUser ?? null;
 
 export async function initDatabase(userId: string): Promise<void> {
-  if (db && currentUserId === userId) return;
-  if (db) { await db.close(); db = null; }
+  if (db && currentUserId === userId) {
+    // Connection reused (e.g. preserved across an HMR reload). Re-run the
+    // idempotent schema so any newly-added migration columns are applied to the
+    // existing DB without forcing a manual reset.
+    await initSchema(db);
+    return;
+  }
+  if (db) { await db.close(); db = null; DB_GLOBAL.__larundDb = null; }
   currentUserId = userId;
+  DB_GLOBAL.__larundDbUser = userId;
   const dbName = `sqlite:larund_${userId.slice(0, 8)}.db`;
   db = await Database.load(dbName);
+  DB_GLOBAL.__larundDb = db;
   await initSchema(db);
 }
 
 export async function getDb(): Promise<Database> {
+  // Re-read the global in case an HMR reload re-evaluated this module with a
+  // fresh (null) `db` while the connection is still open on globalThis.
+  if (!db && DB_GLOBAL.__larundDb) db = DB_GLOBAL.__larundDb;
   if (!db) throw new Error('Database not initialized. Call initDatabase(userId) first.');
   return db;
 }
@@ -57,6 +78,19 @@ async function initSchema(db: Database): Promise<void> {
       created_at TEXT DEFAULT (datetime('now'))
     )
   `);
+
+  // Set to 1 once the user renames a chat by hand, so auto title generation
+  // never overwrites a manual title.
+  await ensureColumn(db, 'sessions', 'title_locked', 'INTEGER DEFAULT 0');
+
+  // Memory behaviour settings (Memory workstream). Added via ensureColumn so
+  // existing user DBs migrate forward without losing data.
+  await ensureColumn(db, 'settings', 'memory_suggestions', 'INTEGER DEFAULT 1');
+  await ensureColumn(db, 'settings', 'memory_auto_save', 'INTEGER DEFAULT 0');
+  await ensureColumn(db, 'settings', 'memory_daily_summary', 'INTEGER DEFAULT 1');
+  await ensureColumn(db, 'settings', 'memory_daily_summary_time', "TEXT DEFAULT '22:00'");
+  await ensureColumn(db, 'settings', 'memory_ask_client_data', 'INTEGER DEFAULT 1');
+  await ensureColumn(db, 'settings', 'memory_episodic_retention_days', 'INTEGER DEFAULT 30');
 
   await ensureColumn(db, 'messages', 'message_type', "TEXT DEFAULT 'text'");
   await ensureColumn(db, 'messages', 'agent_status', 'TEXT DEFAULT NULL');
@@ -205,12 +239,26 @@ export async function createSession(id: string, title: string) {
   );
 }
 
+/** Manual rename from the UI — locks the title against auto-generation. */
 export async function updateSessionTitle(id: string, title: string) {
   const db = await getDb();
   await db.execute(
-    'UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?',
+    'UPDATE sessions SET title = ?, title_locked = 1, updated_at = ? WHERE id = ?',
     [title, new Date().toISOString(), id]
   );
+}
+
+/**
+ * Set a machine-generated semantic title. No-op when the user already renamed
+ * the chat (title_locked = 1). Returns true when the title was applied.
+ */
+export async function setAutoSessionTitle(id: string, title: string): Promise<boolean> {
+  const db = await getDb();
+  const res = await db.execute(
+    'UPDATE sessions SET title = ?, updated_at = updated_at WHERE id = ? AND title_locked = 0',
+    [title, id]
+  );
+  return (res?.rowsAffected ?? 0) > 0;
 }
 
 export async function touchSession(id: string) {

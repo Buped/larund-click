@@ -26,10 +26,12 @@ function typeRelevance(type: MemoryType, taskTokens: Set<string>): number {
   const base: Record<MemoryType, number> = {
     correction: 2.0,
     preference: 1.5,
+    client_profile: 1.4,
     procedural: 1.2,
     user_profile: 1.0,
     workspace: 1.0,
     project: 1.0,
+    sensitive_reference: 0.9,
     evidence: 0.6,
     episodic: 0.5,
   };

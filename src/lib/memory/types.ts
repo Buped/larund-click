@@ -9,13 +9,18 @@
 
 export type MemoryType =
   | 'user_profile'
+  | 'client_profile'
   | 'workspace'
   | 'project'
   | 'procedural'
   | 'episodic'
   | 'evidence'
   | 'preference'
-  | 'correction';
+  | 'correction'
+  // A reference to sensitive data that records its EXISTENCE only — never the
+  // value. e.g. "User has a Google Workspace connection". Raw secrets/tokens/
+  // passwords/API keys must never be stored as memory content.
+  | 'sensitive_reference';
 
 export type MemorySource = 'user' | 'agent' | 'task' | 'document' | 'correction' | 'system';
 
@@ -34,6 +39,8 @@ export interface MemoryEntry {
   userId: string;
   workspaceId?: string;
   projectId?: string;
+  /** Client/customer this memory is about, when type === 'client_profile'. */
+  clientId?: string;
   /** Skill id this memory is bound to, when scope === 'skill'. */
   skillId?: string;
   type: MemoryType;
@@ -69,6 +76,7 @@ export interface CreateMemoryInput {
   userId: string;
   workspaceId?: string;
   projectId?: string;
+  clientId?: string;
   skillId?: string;
   type: MemoryType;
   title: string;
@@ -93,7 +101,11 @@ export type MemoryPatch = Partial<Omit<MemoryEntry, 'id' | 'userId' | 'createdAt
 export interface MemoryQuery {
   userId: string;
   workspaceId?: string;
+  clientId?: string;
   type?: MemoryType;
+  /** Restrict to one or more types (used by Memory page type filter). */
+  types?: MemoryType[];
+  source?: MemorySource;
   scope?: MemoryScope;
   status?: MemoryStatus | MemoryStatus[];
   tags?: string[];

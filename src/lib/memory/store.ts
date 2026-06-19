@@ -49,6 +49,7 @@ export async function createMemory(input: CreateMemoryInput): Promise<MemoryEntr
     userId: input.userId,
     workspaceId: input.workspaceId,
     projectId: input.projectId,
+    clientId: input.clientId,
     skillId: input.skillId,
     type: input.type,
     title: input.title.trim(),
@@ -211,6 +212,9 @@ export async function listMemory(query: MemoryQuery): Promise<MemoryEntry[]> {
     entries = entries.filter((e) => !e.workspaceId || e.workspaceId === query.workspaceId);
   }
   if (query.type) entries = entries.filter((e) => e.type === query.type);
+  if (query.types && query.types.length) entries = entries.filter((e) => query.types!.includes(e.type));
+  if (query.source) entries = entries.filter((e) => e.source === query.source);
+  if (query.clientId) entries = entries.filter((e) => e.clientId === query.clientId);
   if (query.scope) entries = entries.filter((e) => e.scope === query.scope);
   if (query.tags && query.tags.length) {
     const want = query.tags.map((t) => t.toLowerCase());

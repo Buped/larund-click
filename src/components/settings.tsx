@@ -240,6 +240,10 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
   const [notifSound, setNotifSound] = useState(true);
   const [autoStart,  setAutoStart ] = useState(false);
   const [memEnabled, setMemEnabled] = useState(true);
+  const [memSuggestions,  setMemSuggestions ] = useState(true);
+  const [memAutoSave,     setMemAutoSave    ] = useState(false);
+  const [memDailySummary, setMemDailySummary] = useState(true);
+  const [memAskClient,    setMemAskClient   ] = useState(true);
   const [memEditId,  setMemEditId ] = useState<string | null>(null);
   const [memEditVal, setMemEditVal] = useState("");
   const [newMemVal,  setNewMemVal ] = useState("");
@@ -274,6 +278,10 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
       if (!s) return;
       setAutoStart(s.launch_at_login === 1);
       setMemEnabled(s.memory_enabled === 1);
+      setMemSuggestions(s.memory_suggestions !== 0);
+      setMemAutoSave(s.memory_auto_save === 1);
+      setMemDailySummary(s.memory_daily_summary !== 0);
+      setMemAskClient(s.memory_ask_client_data !== 0);
       if (s.theme) setTheme(s.theme === 'dark' ? 'Dark' : s.theme === 'light' ? 'Light' : 'System');
       if (s.autonomy_mode) {
         setAutonomyMode(s.autonomy_mode === 'manual' ? 'Manual' : s.autonomy_mode === 'full' ? 'Full autonomous' : 'Semi-automatic');
@@ -336,6 +344,11 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
   async function handleToggleMemEnabled(v: boolean) {
     setMemEnabled(v);
     await updateSettings({ memory_enabled: v ? 1 : 0 });
+  }
+
+  async function handleMemFlag(col: string, setter: (v: boolean) => void, v: boolean) {
+    setter(v);
+    await updateSettings({ [col]: v ? 1 : 0 });
   }
 
   async function handleThemeChange(v: string) {
@@ -468,6 +481,26 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
                   </div>
                   <Toggle checked={memEnabled} onChange={handleToggleMemEnabled} />
                 </div>
+
+                {memEnabled && (
+                  <div style={{ borderBottom: "1px solid var(--border)", paddingBottom: 4 }}>
+                    {[
+                      { label: "Suggested memories", sub: "Larund proposes things to remember from chats and tasks", checked: memSuggestions, col: "memory_suggestions", set: setMemSuggestions },
+                      { label: "Auto-save low-risk facts", sub: "Save preferences and habits automatically (client data still asks first)", checked: memAutoSave, col: "memory_auto_save", set: setMemAutoSave },
+                      { label: "Daily summary", sub: "Compress each day into one episodic memory at your chosen time", checked: memDailySummary, col: "memory_daily_summary", set: setMemDailySummary },
+                      { label: "Ask before saving client data", sub: "Client/business facts always go to review first", checked: memAskClient, col: "memory_ask_client_data", set: setMemAskClient },
+                    ].map((row) => (
+                      <div key={row.col} style={{ padding: "11px 0", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                        <div>
+                          <div style={{ fontSize: 13, color: "var(--text-primary)", fontWeight: 450 }}>{row.label}</div>
+                          <div style={{ fontSize: 11.5, color: "var(--text-hint)", marginTop: 2 }}>{row.sub}</div>
+                        </div>
+                        <Toggle checked={row.checked} onChange={(v: boolean) => handleMemFlag(row.col, row.set, v)} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div style={{ padding: "14px 0 8px", display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{user?.email?.split('@')[0] || 'User'}</span>
                   <span style={{ fontSize: 12, color: "var(--text-hint)", background: "var(--bg-elevated)", borderRadius: 6, padding: "3px 8px", border: "1px solid var(--border)" }}>{user?.email || ''}</span>

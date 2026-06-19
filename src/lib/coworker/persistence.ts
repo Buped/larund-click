@@ -72,22 +72,26 @@ function structuredCloneSafe<T>(value: T): T {
 
 // ── Active backend wiring ───────────────────────────────────────────────────
 
-let activeBackend: RecordBackend = new InMemoryBackend();
+// HMR-safe: keep the installed backend on globalThis so a Vite hot-reload of this
+// module doesn't silently revert to a fresh in-memory store (which would make all
+// coworker data — memory, tasks, evidence — appear empty until a full restart).
+const BACKEND_GLOBAL = globalThis as unknown as { __larundBackend?: RecordBackend };
 
 /** Install a backend (e.g. the SQLite adapter) for the running app. */
 export function setRecordBackend(backend: RecordBackend): void {
-  activeBackend = backend;
+  BACKEND_GLOBAL.__larundBackend = backend;
 }
 
 /** The currently installed backend. Stores call this lazily on every op so a
  *  late `setRecordBackend` (after DB init) is picked up transparently. */
 export function recordBackend(): RecordBackend {
-  return activeBackend;
+  if (!BACKEND_GLOBAL.__larundBackend) BACKEND_GLOBAL.__larundBackend = new InMemoryBackend();
+  return BACKEND_GLOBAL.__larundBackend;
 }
 
 /** Reset to a fresh in-memory backend. Test-only convenience. */
 export function resetRecordBackendForTests(): RecordBackend {
   const backend = new InMemoryBackend();
-  activeBackend = backend;
+  BACKEND_GLOBAL.__larundBackend = backend;
   return backend;
 }

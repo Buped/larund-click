@@ -4,8 +4,11 @@ import { Icon, ClickMark } from './icons';
 import { RichMessage } from './rich-message';
 import { Sidebar } from './sidebar';
 import { MODELS } from '../constants/models';
-import { getMessages, addMessage, createSession, updateMessage, touchSession, getSettings } from '../lib/database';
+import { getMessages, addMessage, createSession, updateMessage, touchSession, getSettings, setAutoSessionTitle } from '../lib/database';
 import { callOpenRouter, type ChatMessage } from '../lib/openrouter';
+import { buildChatSystemPrompt } from '../lib/assistant/persona';
+import { generateChatTitle } from '../lib/assistant/title';
+import { runMemoryExtraction } from '../lib/memory/pipeline';
 import { runAgentLoop, AgentStatus, AgentStep, AgentAbortSignal } from '../lib/agent-loop';
 import { v4 as uuidv4 } from 'uuid';
 import type { UserCredits } from '../lib/supabase';
@@ -561,9 +564,15 @@ function AgentMsgContent({
   askQuestion, askAnswer, onAskAnswerChange, onAskSubmit,
   onAskQuickAnswer, onStop, finalText, isError,
 }: AgentMsgContentProps) {
-  const [stepsOpen, setStepsOpen] = useState(true);
+  // Collapsed by default: the action timeline is evidence, not the headline. The
+  // human-readable narration carries the story; details expand on demand.
+  const [stepsOpen, setStepsOpen] = useState(false);
   const isRunning = status !== 'complete' && status !== 'error';
-  const callCount = steps.filter(s => s.type === 'tool_call').length;
+  // Narration = Larund explaining what it's doing; rendered as plain text.
+  // Everything else (tool calls/results/checks) lives in the collapsible timeline.
+  const narrationSteps = steps.filter(s => s.type === 'narration');
+  const timelineSteps = steps.filter(s => s.type !== 'narration');
+  const callCount = timelineSteps.filter(s => s.type === 'tool_call').length;
   const isApprovalPrompt = Boolean(askQuestion && /Approval needed|Approve action/i.test(askQuestion));
 
   const headerLabel = isRunning
@@ -575,10 +584,27 @@ function AgentMsgContent({
   return (
     <div style={{ width: '100%' }}>
 
+      {/* ── Narration: Larund explaining its work, as readable text ── */}
+      {narrationSteps.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+          {narrationSteps.map((step, i) => {
+            const isLatest = i === narrationSteps.length - 1;
+            return (
+              <div key={step.id} style={{
+                fontSize: 13.5, lineHeight: 1.6,
+                color: isLatest && isRunning ? 'var(--text-primary)' : 'var(--text-muted)',
+              }}>
+                {step.output}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* ── Disclosure header ── */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 7,
-        marginBottom: stepsOpen && (steps.length > 0 || isRunning) ? 8 : 2,
+        marginBottom: stepsOpen && (timelineSteps.length > 0 || isRunning) ? 8 : 2,
       }}>
         <button
           onClick={() => setStepsOpen(v => !v)}
@@ -631,18 +657,18 @@ function AgentMsgContent({
         )}
       </div>
 
-      {/* ── Steps list ── */}
-      {stepsOpen && (steps.length > 0 || isRunning) && (
+      {/* ── Steps list (collapsed by default) ── */}
+      {stepsOpen && (timelineSteps.length > 0 || isRunning) && (
         <div style={{
           borderLeft: '1.5px solid var(--border-md)',
           paddingLeft: 10,
           marginBottom: finalText || askQuestion ? 12 : 0,
           display: 'flex', flexDirection: 'column',
         }}>
-          {steps.map(step => <AgentStepItem key={step.id} step={step} />)}
+          {timelineSteps.map(step => <AgentStepItem key={step.id} step={step} />)}
 
           {/* Empty placeholder while starting */}
-          {isRunning && steps.length === 0 && (
+          {isRunning && timelineSteps.length === 0 && (
             <span style={{ fontSize: 11, color: 'var(--text-hint)', padding: '3px 0' }}>
               Getting ready…
             </span>
@@ -955,6 +981,7 @@ export function ChatScreen({
     asstMsgId: string,
     history: { role: 'user' | 'assistant'; content: string }[],
     taskReferences: ReferencedContext[],
+    firstExchange: boolean,
   ) {
     type AgentPersistState = {
       content: string;
@@ -1066,6 +1093,14 @@ export function ChatScreen({
           setSending(false);
           setRunningTask(prev => prev?.assistantMessageId === asstMsgId ? null : prev);
           onCreditsRefresh?.();
+          if (firstExchange) void maybeGenerateTitle(sessionId, task, summary);
+          void runMemoryExtraction({
+            userId: userId!,
+            workspaceId: localStorage.getItem('active_workspace_id') ?? undefined,
+            userText: task,
+            summary,
+            verified: true,
+          });
         },
 
         onError: (err) => {
@@ -1096,6 +1131,21 @@ export function ChatScreen({
     await persistQueue;
   }
 
+  // Semantic chat naming. Runs async after the first exchange so it never blocks
+  // the chat; skips silently if the user already renamed the chat (DB enforces
+  // the lock). Refreshes the sidebar so the new title appears.
+  async function maybeGenerateTitle(sessionId: string, userText: string, assistantText: string) {
+    if (!userId) return;
+    try {
+      const modelDef = MODELS.find(m => m.id === model) ?? MODELS[1];
+      const title = await generateChatTitle({ userText, assistantText }, modelDef.openrouter_id, userId);
+      const applied = await setAutoSessionTitle(sessionId, title);
+      if (applied) setSidebarRefreshKey(k => k + 1);
+    } catch (err) {
+      console.warn('Title generation failed:', err);
+    }
+  }
+
   async function handleSend() {
     const text = input.trim();
     const taskReferences = [...references];
@@ -1103,6 +1153,8 @@ export function ChatScreen({
     // Clean message for display/storage: only what the user wrote. Attached
     // references are shown as chips; the model gets their contents via ingest.
     const messageText = text || 'Use the referenced input(s).';
+    // First exchange in this session → generate a semantic title afterwards.
+    const isFirstExchange = messages.length === 0;
 
     let currentTaskId: string | null = null;
     let currentSessionId: string | null = null;
@@ -1182,7 +1234,7 @@ export function ChatScreen({
         agent_steps_json: '[]',
         agent_ask_question: null,
       }).catch(err => console.warn('Failed to save agent message shell:', err));
-      await handleAgentRun(text || messageText, sessionId, modelDef.openrouter_id, asstMsgId, agentHistory, taskReferences);
+      await handleAgentRun(text || messageText, sessionId, modelDef.openrouter_id, asstMsgId, agentHistory, taskReferences, isFirstExchange);
       return;
     }
 
@@ -1199,6 +1251,14 @@ export function ChatScreen({
     const history: ChatMessage[] = messages
       .filter(m => !m._loading && !m.streaming && !m._agent && m.content)
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+
+    // Give Larund its conversational identity + custom instructions. Without this
+    // the chat path had no system prompt at all (generic model voice).
+    const chatSettings = await getSettings().catch(() => null);
+    history.unshift({
+      role: 'system',
+      content: buildChatSystemPrompt({ customInstructions: chatSettings?.custom_instructions || undefined }),
+    });
 
     // When the request is ambiguous, ask one concise clarifying question instead
     // of silently guessing whether the user wanted an answer or an action.
@@ -1260,6 +1320,12 @@ export function ChatScreen({
         setSending(false);
         setRunningTask(prev => prev?.assistantMessageId === asstMsgId ? null : prev);
         onCreditsRefresh?.();
+        if (isFirstExchange) void maybeGenerateTitle(sessionId!, messageText, fullContent);
+        void runMemoryExtraction({
+          userId: userId!,
+          workspaceId: localStorage.getItem('active_workspace_id') ?? undefined,
+          userText: messageText,
+        });
       },
       (error) => {
         setMessages(prev => prev.map(m =>

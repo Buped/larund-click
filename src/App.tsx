@@ -16,6 +16,7 @@ import { getUserCredits } from './lib/supabase';
 import { initDatabase } from './lib/database';
 import { installSqlCoworkerBackend } from './lib/coworker/sql-backend';
 import { restoreAutomationScheduler } from './lib/automations/scheduler';
+import { restoreDailySummaryScheduler } from './lib/memory/daily-summary';
 import type { AuthUser } from './lib/auth';
 import type { UserCredits } from './lib/supabase';
 
@@ -29,6 +30,7 @@ async function initStores(userId: string): Promise<void> {
   await initDatabase(userId);
   await installSqlCoworkerBackend();
   await restoreAutomationScheduler(userId);
+  restoreDailySummaryScheduler(userId);
 }
 
 async function getOnboardingComplete(): Promise<boolean> {

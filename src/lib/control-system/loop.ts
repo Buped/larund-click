@@ -3,6 +3,7 @@ import { callOpenRouterWithTools, type MessageContent } from '../openrouter';
 import { supabase } from '../supabase';
 import { CONTROL_SYSTEM_PROMPT } from './prompt';
 import { parseControlAction, isLegacyVisualActionName } from './parser';
+import { extractNarration, isMeaningfulNarration } from '../assistant/narration';
 import type { ControlAction } from './types';
 import { runControlAction } from '../tools/run';
 import { MemoryAuditLogger } from '../tools/audit';
@@ -37,7 +38,7 @@ export type AutonomyMode = 'full' | 'semi' | 'manual';
 
 export interface AgentStep {
   id: string;
-  type: 'tool_call' | 'tool_result' | 'thinking' | 'complete' | 'error' | 'approval' | 'plan' | 'checklist' | 'verification' | 'handoff' | 'blocked';
+  type: 'tool_call' | 'tool_result' | 'thinking' | 'complete' | 'error' | 'approval' | 'plan' | 'checklist' | 'verification' | 'handoff' | 'blocked' | 'narration';
   tool?: string;
   input?: string;
   output?: string;
@@ -414,6 +415,14 @@ export async function runControlLoop(
       messages.push({ role: 'user', content: 'Invalid action JSON. Return exactly one allowed action object with an "action" field.' });
       emitStep({ id: nowStepId('parse-error'), type: 'error', error: 'invalid_control_action', output: aiResponse.slice(0, 500), timestamp: new Date().toISOString() });
       continue;
+    }
+
+    // Surface the model's reasoning prose as a human-readable narration line so
+    // the chat reads like a coworker, not a tool log. The tool call itself stays
+    // in the (collapsed-by-default) timeline.
+    const narration = extractNarration(aiResponse);
+    if (isMeaningfulNarration(narration)) {
+      emitStep({ id: nowStepId('narration'), type: 'narration', output: narration, timestamp: new Date().toISOString() });
     }
 
     const stepId = nowStepId('action');
