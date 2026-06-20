@@ -4,6 +4,7 @@ export type TaskQueueStatus =
   | 'queued'
   | 'running'
   | 'waiting_approval'
+  | 'waiting_user'
   | 'completed'
   | 'failed'
   | 'cancelled';
@@ -38,6 +39,7 @@ export interface TaskQueueProcessorResult {
   taskRunId?: string;
   summary?: string;
   waitingApproval?: boolean;
+  cancelled?: boolean;
 }
 
 export type TaskQueueProcessor = (item: TaskQueueItem) => Promise<TaskQueueProcessorResult>;

@@ -930,16 +930,39 @@ input[type="date"], input[type="time"] {
   border-color: rgba(74,158,255,.35);
   box-shadow: 0 0 0 3px rgba(74,158,255,.07);
 }
-.chat-input-box--working {
-  animation: working-pulse 2.2s ease-in-out infinite;
+.chat-input-box.composer-running {
+  border-color: rgba(74,158,255,0.32);
 }
-.chat-input-box--working::after {
+.chat-input-box.composer-running::before {
   content: "";
   position: absolute;
-  inset: 0;
+  inset: -2px;
+  border-radius: inherit;
   pointer-events: none;
-  background: linear-gradient(105deg, transparent 0%, rgba(74,158,255,0.10) 45%, transparent 68%);
-  animation: soft-shimmer 2.4s ease-in-out infinite;
+  background: conic-gradient(from 0deg, transparent 0deg, transparent 260deg, rgba(74,158,255,.95) 300deg, rgba(74,158,255,.25) 330deg, transparent 360deg);
+  animation: composer-border-spin 1.9s linear infinite;
+}
+.chat-input-box.composer-running::after {
+  content: "";
+  position: absolute;
+  inset: 1.5px;
+  border-radius: 14px;
+  pointer-events: none;
+  background: var(--glass-input);
+  z-index: 0;
+}
+.chat-input-box.composer-running > * {
+  position: relative;
+  z-index: 1;
+}
+@keyframes composer-border-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-input-box.composer-running::before {
+    animation: none;
+    background: linear-gradient(90deg, rgba(74,158,255,.75), rgba(74,158,255,.15), transparent);
+  }
 }
 .chat-textarea {
   width: 100%; display: block;

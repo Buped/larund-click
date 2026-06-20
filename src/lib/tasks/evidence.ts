@@ -17,6 +17,12 @@ export interface StepLike {
 /** Map an AgentStep.type to an EvidenceEntry.kind. */
 export function evidenceKindForStep(step: StepLike): EvidenceKind | null {
   switch (step.type) {
+    case 'thinking':
+    case 'narration':
+      return 'thinking';
+    case 'plan':
+    case 'checklist':
+      return 'plan';
     case 'tool_call':
       return 'tool_call';
     case 'tool_result':
@@ -30,8 +36,10 @@ export function evidenceKindForStep(step: StepLike): EvidenceKind | null {
       return 'manual_handoff';
     case 'error':
       return 'error';
+    case 'complete':
+      return 'complete';
     default:
-      // thinking / plan / checklist / complete are not persisted as evidence.
+      // Unknown UI-only steps are not persisted as evidence.
       return null;
   }
 }
@@ -75,6 +83,12 @@ function titleFor(kind: EvidenceKind, step: StepLike): string {
   switch (kind) {
     case 'tool_call':
       return `Called${tool}`;
+    case 'thinking':
+      return 'Thinking';
+    case 'plan':
+      return 'Plan';
+    case 'complete':
+      return 'Completed';
     case 'read_back':
       return `Read-back${tool}`;
     case 'file_output':

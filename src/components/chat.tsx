@@ -1515,7 +1515,7 @@ export function ChatScreen({
         <div className="chat-footer">
           <div className="chat-col">
             <div
-              className={`chat-input-box${runningTask ? ' chat-input-box--working' : ''}`}
+              className={`chat-input-box${sending || routing || runningTask ? ' composer-running' : ''}`}
               onDragOver={(e) => e.preventDefault()}
               onDrop={handleReferenceDrop}
             >

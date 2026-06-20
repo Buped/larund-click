@@ -108,7 +108,7 @@ describe('evidence mapping', () => {
     expect(evidenceKindForStep({ type: 'tool_result', tool: 'file.write' })).toBe('file_output');
     expect(evidenceKindForStep({ type: 'tool_result', tool: 'connection.call' })).toBe('connection_output');
     expect(evidenceKindForStep({ type: 'verification' })).toBe('verification');
-    expect(evidenceKindForStep({ type: 'thinking' })).toBeNull();
+    expect(evidenceKindForStep({ type: 'thinking' })).toBe('thinking');
   });
 
   it('builds evidence input from a step', () => {

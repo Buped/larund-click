@@ -3,20 +3,22 @@
 // Automation wizard, and a detail page. Built on the existing automation store /
 // runner / queue / evidence systems.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../icons';
 import { BrandIcon } from '../BrandIcon';
 import { MentionChip } from '../mentions/MentionEditor';
-import { listAutomations, pauseAutomation, resumeAutomation, getAutomation } from '../../lib/automations/store';
+import { listAutomations, pauseAutomation, resumeAutomation, getAutomation, listAutomationRuns } from '../../lib/automations/store';
 import { runAutomation } from '../../lib/automations/runner';
+import { cancelAutomationRun, ensureAutomationQueueProcessor, isAutomationQueueProcessorInstalled } from '../../lib/automations/agent-processor';
 import { normalizeAutomation } from '../../lib/automations/migrate';
 import { AUTOMATION_TEMPLATES, type AutomationTemplate } from '../../lib/automations/templates';
-import type { Automation } from '../../lib/automations/types';
+import type { Automation, AutomationRun } from '../../lib/automations/types';
 import { resourceToReference } from '../../lib/mentions/types';
 import { listCatalogProviders } from '../../lib/connections/catalog';
 import { triggerSummary } from './shared';
 import { NewAutomationWizard, type WizardInitial } from './NewAutomationWizard';
 import { AutomationDetail } from './AutomationDetail';
+import { RunMonitor } from './RunMonitor';
 import { PageFrame, PageHeader, SearchInput, Badge, card, btn, ghostBtn, statusColor, useAsyncList } from '../pages/ui';
 
 const TABS = ['All', 'Active', 'Paused', 'Failed', 'Manual', 'Scheduled', 'Event-triggered'] as const;
@@ -57,9 +59,22 @@ function TemplateGallery({ onPick }: { onPick: (t: AutomationTemplate) => void }
   );
 }
 
-function AutomationCard({ a, onOpen, onRun, onToggle }: { a: Automation; onOpen: () => void; onRun: () => void; onToggle: () => void }) {
+function isActiveRun(run?: AutomationRun): boolean {
+  return Boolean(run && ['queued', 'running', 'waiting_approval', 'waiting_user'].includes(run.status));
+}
+
+function AutomationCard({ a, run, onOpen, onRun, onToggle, onWatch, onStop }: {
+  a: Automation;
+  run?: AutomationRun;
+  onOpen: () => void;
+  onRun: () => void;
+  onToggle: () => void;
+  onWatch: () => void;
+  onStop: () => void;
+}) {
   const norm = normalizeAutomation(a);
   const status = statusOf(a);
+  const activeRun = isActiveRun(run);
   const last = a.lastRunAt ? new Date(a.lastRunAt).toLocaleString() : '—';
   const next = a.nextRunAt ? new Date(a.nextRunAt).toLocaleString() : '—';
   return (
@@ -69,6 +84,7 @@ function AutomationCard({ a, onOpen, onRun, onToggle }: { a: Automation; onOpen:
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <strong style={{ fontSize: 14, color: 'var(--text-primary)' }}>{a.name}</strong>
             <Badge text={status} color={statusColor(status)} />
+            {activeRun && <Badge text={run!.status.replace('_', ' ')} color="var(--accent)" />}
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-hint)', marginTop: 4 }}>{triggerSummary(a.trigger)}</div>
         </button>
@@ -80,7 +96,14 @@ function AutomationCard({ a, onOpen, onRun, onToggle }: { a: Automation; onOpen:
       )}
       <div style={{ fontSize: 10.5, color: 'var(--text-hint)', marginTop: 8 }}>Last run: {last} · Next: {next}</div>
       <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-        <button style={btn} onClick={onRun}>Run now</button>
+        {activeRun ? (
+          <>
+            <button style={btn} onClick={onWatch}><Icon name="eye" size={12} /> Watch live</button>
+            <button style={ghostBtn} onClick={onStop}><Icon name="stop" size={11} /> Stop</button>
+          </>
+        ) : (
+          <button style={btn} onClick={onRun}>Run now</button>
+        )}
         <button style={ghostBtn} onClick={onToggle}>{a.enabled ? 'Pause' : 'Resume'}</button>
         <button style={ghostBtn} onClick={onOpen}>Open</button>
       </div>
@@ -94,13 +117,33 @@ export function AutomationsPage({ userId, workspaceId }: { userId: string; works
   const [query, setQuery] = useState('');
   const [wizard, setWizard] = useState<{ open: boolean; initial?: WizardInitial; editId?: string }>({ open: false });
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [latestRuns, setLatestRuns] = useState<Record<string, AutomationRun | undefined>>({});
+  const [monitor, setMonitor] = useState<{ runId: string; automationName?: string; readonly?: boolean } | null>(null);
+  const [runnerConnected, setRunnerConnected] = useState(() => isAutomationQueueProcessorInstalled());
+
+  useEffect(() => {
+    ensureAutomationQueueProcessor();
+    setRunnerConnected(isAutomationQueueProcessorInstalled());
+  }, []);
+
+  async function loadLatestRuns(list = items) {
+    const entries = await Promise.all(list.map(async (a) => [a.id, (await listAutomationRuns(a.id))[0]] as const));
+    setLatestRuns(Object.fromEntries(entries));
+  }
+
+  useEffect(() => {
+    void loadLatestRuns(items);
+    const timer = window.setInterval(() => void loadLatestRuns(items), 1800);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.map((a) => a.id).join('|')]);
 
   async function editAutomation(id: string) {
     const a = await getAutomation(id);
     if (!a) return;
     const n = normalizeAutomation(a);
     setDetailId(null);
-    setWizard({ open: true, editId: id, initial: { name: n.name, prompt: n.prompt, references: n.referencedContext, trigger: n.trigger, verification: n.verificationChecklist, steps: n.steps, safety: n.safetyPolicy } });
+    setWizard({ open: true, editId: id, initial: { name: n.name, description: n.description, prompt: n.prompt, references: n.referencedContext, trigger: n.trigger, verification: n.verificationChecklist, steps: n.steps, safety: n.safetyPolicy } });
   }
 
   if (detailId) {
@@ -128,7 +171,18 @@ export function AutomationsPage({ userId, workspaceId }: { userId: string; works
     failed: items.filter((a) => statusOf(a) === 'failed').length,
   };
 
-  async function run(id: string) { await runAutomation(id, { reason: 'manual_run' }).catch(() => undefined); reload(); }
+  async function run(a: Automation) {
+    const result = await runAutomation(a.id, { reason: 'manual_run' }).catch(() => null);
+    void result;
+    reload();
+    void loadLatestRuns();
+  }
+  async function stop(run?: AutomationRun) {
+    if (!run) return;
+    await cancelAutomationRun(run.id);
+    reload();
+    void loadLatestRuns();
+  }
   async function toggle(a: Automation) { a.enabled ? await pauseAutomation(a.id) : await resumeAutomation(a.id); reload(); }
 
   return (
@@ -138,6 +192,12 @@ export function AutomationsPage({ userId, workspaceId }: { userId: string; works
         subtitle="Create recurring, scheduled, manual, and event-triggered AI workflows."
         actions={<button style={btn} onClick={() => setWizard({ open: true })}><Icon name="plus" size={13} stroke={2} /> New automation</button>}
       />
+
+      {!runnerConnected && (
+        <div style={{ ...card, borderColor: 'var(--warning)', color: 'var(--text-muted)', fontSize: 12.5 }}>
+          <strong style={{ color: 'var(--warning)' }}>Automation runner is not connected.</strong> Manual runs will only be queued until the agent queue processor is registered.
+        </div>
+      )}
 
       {items.length > 0 && (
         <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
@@ -170,7 +230,16 @@ export function AutomationsPage({ userId, workspaceId }: { userId: string; works
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
             {filtered.map((a) => (
-              <AutomationCard key={a.id} a={a} onOpen={() => setDetailId(a.id)} onRun={() => run(a.id)} onToggle={() => toggle(a)} />
+              <AutomationCard
+                key={a.id}
+                a={a}
+                run={latestRuns[a.id]}
+                onOpen={() => setDetailId(a.id)}
+                onRun={() => run(a)}
+                onToggle={() => toggle(a)}
+                onWatch={() => latestRuns[a.id] && setMonitor({ runId: latestRuns[a.id]!.id, automationName: a.name })}
+                onStop={() => stop(latestRuns[a.id])}
+              />
             ))}
           </div>
           {filtered.length === 0 && <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-hint)', fontSize: 13 }}>No automations match this filter.</div>}
@@ -179,6 +248,15 @@ export function AutomationsPage({ userId, workspaceId }: { userId: string; works
 
       {wizard.open && (
         <NewAutomationWizard userId={userId} workspaceId={workspaceId} initial={wizard.initial} editId={wizard.editId} onClose={() => setWizard({ open: false })} onSaved={reload} />
+      )}
+      {monitor && (
+        <RunMonitor
+          automationRunId={monitor.runId}
+          automationName={monitor.automationName}
+          readonly={monitor.readonly}
+          onClose={() => setMonitor(null)}
+          onChanged={() => { reload(); void loadLatestRuns(); }}
+        />
       )}
     </PageFrame>
   );

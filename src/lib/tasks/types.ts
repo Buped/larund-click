@@ -37,6 +37,9 @@ export interface OutputRef {
 export type EvidenceKind =
   | 'tool_call'
   | 'tool_result'
+  | 'thinking'
+  | 'plan'
+  | 'complete'
   | 'approval'
   | 'read_back'
   | 'verification'

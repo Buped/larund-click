@@ -37,7 +37,7 @@ describe('automation store with workflow fields', () => {
   it('persists referencedContext, steps, verification and safety', async () => {
     const refs = [connRef('github', 'GitHub')];
     const created = await createAutomation({
-      userId: 'u1', name: 'WF', trigger: { kind: 'manual' }, taskTemplate: { prompt: 'p' },
+      userId: 'u1', name: 'WF', description: 'Workflow description', trigger: { kind: 'manual' }, taskTemplate: { prompt: 'p' },
       prompt: 'Use @GitHub', referencedContext: refs,
       steps: [{ id: 's1', title: 'Read', instruction: 'read', referencedContext: refs, required: true, order: 0 }],
       verificationChecklist: [{ id: 'v1', title: 'read back', kind: 'file_read_back', required: true }],
@@ -45,6 +45,7 @@ describe('automation store with workflow fields', () => {
     });
     const fetched = await getAutomation(created.id);
     const n = normalizeAutomation(fetched!);
+    expect(n.description).toBe('Workflow description');
     expect(n.referencedContext).toHaveLength(1);
     expect(n.steps).toHaveLength(1);
     expect(referencedConnectionIds(n)).toContain('github');

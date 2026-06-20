@@ -44,6 +44,7 @@ const VERIFY_PRESETS: Array<{ kind: VerificationCheck['kind']; title: string }> 
 
 export interface WizardInitial {
   name?: string;
+  description?: string;
   prompt?: string;
   references?: ReferencedContext[];
   trigger?: AutomationTrigger;
@@ -57,6 +58,7 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
 }) {
   const [step, setStep] = useState(0);
   const [name, setName] = useState(initial?.name ?? '');
+  const [description, setDescription] = useState(initial?.description ?? '');
   const [prompt, setPrompt] = useState(initial?.prompt ?? '');
   const [references, setReferences] = useState<ReferencedContext[]>(initial?.references ?? []);
 
@@ -107,6 +109,7 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
     const now = new Date().toISOString();
     return {
       id: savedId ?? 'draft', userId, workspaceId, name: name || 'Untitled automation',
+      description,
       enabled: false, trigger: buildTrigger(),
       taskTemplate: { prompt, requiredConnectionIds: references.filter((r) => r.kind === 'connection').map((r) => r.refId), skillIds: references.filter((r) => r.kind === 'skill').map((r) => r.refId) },
       autonomyMode: safety.autonomyMode === 'manual' ? 'manual' : 'semi',
@@ -153,10 +156,10 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
 
   async function persist(enabled: boolean): Promise<string> {
     if (savedId) {
-      await updateAutomation(savedId, { name: name || 'Untitled automation', description: prompt.slice(0, 120), enabled, status: enabled ? 'active' : 'disabled', trigger: buildTrigger(), prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety, taskTemplate: draftAutomation().taskTemplate });
+      await updateAutomation(savedId, { name: name || 'Untitled automation', description, enabled, status: enabled ? 'active' : 'disabled', trigger: buildTrigger(), prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety, taskTemplate: draftAutomation().taskTemplate });
       return savedId;
     }
-    const created = await createAutomation({ userId, workspaceId, name: name || 'Untitled automation', description: prompt.slice(0, 120), enabled, trigger: buildTrigger(), taskTemplate: draftAutomation().taskTemplate, prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety });
+    const created = await createAutomation({ userId, workspaceId, name: name || 'Untitled automation', description, enabled, trigger: buildTrigger(), taskTemplate: draftAutomation().taskTemplate, prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety });
     setSavedId(created.id);
     return created.id;
   }
@@ -204,6 +207,13 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
             <div>
               <div style={{ ...labelStyle, marginBottom: 5 }}>Automation name</div>
               <input style={{ ...input, marginBottom: 14 }} value={name} onChange={(e) => setName(e.target.value)} placeholder="Daily executive brief" />
+              <div style={{ ...labelStyle, marginBottom: 5 }}>Description</div>
+              <textarea
+                style={{ ...input, minHeight: 68, resize: 'vertical', marginBottom: 14 }}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="What this automation is for..."
+              />
               <div style={{ ...labelStyle, marginBottom: 5 }}>What should Larund do?</div>
               <MentionEditor value={prompt} references={references} onChange={(t, r) => { setPrompt(t); setReferences(r); }} userId={userId} workspaceId={workspaceId} minHeight={120}
                 placeholder="Every morning, use @Gmail and @Google Calendar to summarize my day…" />

@@ -15,6 +15,7 @@ const DEFAULT_GLOBAL_MAX = 4;
 
 let processor: TaskQueueProcessor = defaultProcessor;
 let globalMax = DEFAULT_GLOBAL_MAX;
+let customProcessorConfigured = false;
 
 function id(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -39,8 +40,15 @@ export function configureTaskQueue(options: {
   processor?: TaskQueueProcessor;
   globalMax?: number;
 }): void {
-  if (options.processor) processor = options.processor;
+  if (options.processor) {
+    processor = options.processor;
+    customProcessorConfigured = true;
+  }
   if (typeof options.globalMax === 'number' && options.globalMax > 0) globalMax = options.globalMax;
+}
+
+export function isTaskQueueProcessorConfigured(): boolean {
+  return customProcessorConfigured;
 }
 
 export async function enqueueTask(input: EnqueueTaskInput): Promise<TaskQueueItem> {
@@ -145,6 +153,17 @@ async function runItem(item: TaskQueueItem): Promise<void> {
   try {
     const result = await processor(item);
     const finishedAt = new Date().toISOString();
+    if (result.cancelled) {
+      await save({
+        ...item,
+        status: 'cancelled',
+        taskRunId: result.taskRunId,
+        completedAt: finishedAt,
+        progress: result.summary ?? 'Cancelled',
+      });
+      await updateLinkedAutomationRun(item, 'cancelled', { taskRunId: result.taskRunId });
+      return;
+    }
     if (result.waitingApproval) {
       await save({ ...item, status: 'waiting_approval', taskRunId: result.taskRunId, progress: 'Waiting for approval' });
       return;
@@ -188,6 +207,9 @@ async function runItem(item: TaskQueueItem): Promise<void> {
 }
 
 async function defaultProcessor(item: TaskQueueItem): Promise<TaskQueueProcessorResult> {
+  if (item.source === 'automation') {
+    throw new Error('Automation runner is not connected. Restart the app or register the agent queue processor before running automations.');
+  }
   const run = await createTaskRun({
     userId: item.userId,
     workspaceId: item.workspaceId,
@@ -231,7 +253,7 @@ async function defaultProcessor(item: TaskQueueItem): Promise<TaskQueueProcessor
 
 async function updateLinkedAutomationRun(
   item: TaskQueueItem,
-  status: 'completed' | 'failed',
+  status: 'completed' | 'failed' | 'cancelled',
   extra: { taskRunId?: string; error?: string },
 ): Promise<void> {
   const automationRunId = item.metadata?.automationRunId;

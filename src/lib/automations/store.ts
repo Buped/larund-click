@@ -135,6 +135,11 @@ export async function updateAutomationRun(
   return run;
 }
 
+export async function getAutomationRun(id: string): Promise<AutomationRun | null> {
+  const row = await recordBackend().get(RUNS, id);
+  return row ? toRun(row) : null;
+}
+
 export async function listAutomationRuns(automationId: string): Promise<AutomationRun[]> {
   const rows = await recordBackend().all(RUNS);
   return rows

@@ -1,5 +1,6 @@
 import { createNotification } from '../notifications/store';
 import { enqueueTask } from '../queue/store';
+import { ensureAutomationQueueProcessor } from './agent-processor';
 import { normalizeAutomation, referencedConnectionIds, referencedSkillIds, referencedMcpIds, type NormalizedAutomation } from './migrate';
 import { resolveReferencedContext } from '../mentions/resolve';
 import {
@@ -13,6 +14,7 @@ export async function runAutomation(
   automationId: string,
   triggerPayload: Record<string, unknown> = {},
 ): Promise<{ automationRunId: string; queueItemId?: string }> {
+  ensureAutomationQueueProcessor();
   const automation = await getAutomation(automationId);
   if (!automation) throw new Error(`Automation not found: ${automationId}`);
   if (!automation.enabled || automation.status === 'paused' || automation.status === 'disabled') {
@@ -87,6 +89,7 @@ export async function runAutomation(
  */
 function renderAutomationPrompt(a: NormalizedAutomation, payload: Record<string, unknown>, resolvedContext = ''): string {
   const lines: string[] = [`Automation: ${a.name}`, '', a.prompt || a.taskTemplate.prompt];
+  if (a.description) lines.splice(1, 0, `Description: ${a.description}`);
 
   if (a.referencedContext.length) {
     lines.push('', 'Referenced context:');
@@ -99,6 +102,7 @@ function renderAutomationPrompt(a: NormalizedAutomation, payload: Record<string,
   if (resolvedContext) lines.push('', resolvedContext);
 
   if (a.steps.length) {
+    lines.push('', 'Step execution contract:', '- Execute the current step before moving to the next step.', '- Do not skip required steps. If a required step is blocked, use ask_user or report the blocker instead of silently continuing.', '- Before task.complete, every required step must have supporting evidence from tool calls/results.');
     lines.push('', 'Follow these steps in order (do not skip required steps):');
     for (const s of [...a.steps].sort((x, y) => x.order - y.order)) {
       lines.push(`${s.order + 1}. ${s.title}${s.required ? '' : ' (optional)'}: ${s.instruction}${s.verificationHint ? ` [verify: ${s.verificationHint}]` : ''}`);

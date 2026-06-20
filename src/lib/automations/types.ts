@@ -6,6 +6,7 @@ export type AutomationRunStatus =
   | 'queued'
   | 'running'
   | 'waiting_approval'
+  | 'waiting_user'
   | 'completed'
   | 'failed'
   | 'cancelled'

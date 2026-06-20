@@ -1,5 +1,5 @@
 // Automation detail: overview, trigger, prompt + referenced context, steps,
-// verification, safety, and run history (each run links to its TaskRun/evidence).
+// verification, safety, and clickable run history with evidence replay.
 
 import { useEffect, useState } from 'react';
 import { Icon } from '../icons';
@@ -9,43 +9,104 @@ import { runAutomation } from '../../lib/automations/runner';
 import { checkAutomationDependencies, type DependencyReport } from '../../lib/automations/dependencies';
 import { normalizeAutomation, type NormalizedAutomation } from '../../lib/automations/migrate';
 import { triggerSummary } from './shared';
+import { RunMonitor } from './RunMonitor';
 import type { AutomationRun } from '../../lib/automations/types';
 import { PageFrame, card, btn, ghostBtn, dangerBtn, labelStyle, Badge, Empty, statusColor } from '../pages/ui';
 
 export function AutomationDetail({ automationId, userId, workspaceId, onBack, onEdit, onChanged }: {
-  automationId: string; userId: string; workspaceId?: string; onBack: () => void; onEdit: () => void; onChanged: () => void;
+  automationId: string;
+  userId: string;
+  workspaceId?: string;
+  onBack: () => void;
+  onEdit: () => void;
+  onChanged: () => void;
 }) {
   const [auto, setAuto] = useState<NormalizedAutomation | null>(null);
   const [runs, setRuns] = useState<AutomationRun[]>([]);
   const [deps, setDeps] = useState<DependencyReport | null>(null);
   const [busy, setBusy] = useState(false);
+  const [monitor, setMonitor] = useState<{ runId: string; readonly?: boolean } | null>(null);
 
   async function load() {
     const a = await getAutomation(automationId);
-    if (!a) { onBack(); return; }
+    if (!a) {
+      onBack();
+      return;
+    }
     const norm = normalizeAutomation(a);
     setAuto(norm);
     setRuns(await listAutomationRuns(automationId));
     setDeps(await checkAutomationDependencies(a, { userId, workspaceId }));
   }
+
   useEffect(() => { void load(); /* eslint-disable-next-line */ }, [automationId]);
 
-  if (!auto) return <PageFrame><div style={{ color: 'var(--text-hint)', fontSize: 12.5 }}>Loading…</div></PageFrame>;
+  if (!auto) return <PageFrame><div style={{ color: 'var(--text-hint)', fontSize: 12.5 }}>Loading...</div></PageFrame>;
 
-  async function runNow() { setBusy(true); try { await runAutomation(automationId, { reason: 'manual_run' }); await load(); onChanged(); } finally { setBusy(false); } }
-  async function togglePause() { setBusy(true); try { auto!.enabled ? await pauseAutomation(automationId) : await resumeAutomation(automationId); await load(); onChanged(); } finally { setBusy(false); } }
+  async function runNow() {
+    setBusy(true);
+    try {
+      await runAutomation(automationId, { reason: 'manual_run' });
+      await load();
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function togglePause() {
+    setBusy(true);
+    try {
+      auto!.enabled ? await pauseAutomation(automationId) : await resumeAutomation(automationId);
+      await load();
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function duplicate() {
     setBusy(true);
     try {
-      await createAutomation({ userId, workspaceId, name: `${auto!.name} (copy)`, description: auto!.description, enabled: false, trigger: auto!.trigger, taskTemplate: auto!.taskTemplate, prompt: auto!.prompt, referencedContext: auto!.referencedContext, steps: auto!.steps, verificationChecklist: auto!.verificationChecklist, safetyPolicy: auto!.safetyPolicy });
-      onChanged(); onBack();
-    } finally { setBusy(false); }
+      await createAutomation({
+        userId,
+        workspaceId,
+        name: `${auto!.name} (copy)`,
+        description: auto!.description,
+        enabled: false,
+        trigger: auto!.trigger,
+        taskTemplate: auto!.taskTemplate,
+        prompt: auto!.prompt,
+        referencedContext: auto!.referencedContext,
+        steps: auto!.steps,
+        verificationChecklist: auto!.verificationChecklist,
+        safetyPolicy: auto!.safetyPolicy,
+      });
+      onChanged();
+      onBack();
+    } finally {
+      setBusy(false);
+    }
   }
-  async function remove() { setBusy(true); try { await deleteAutomation(automationId); onChanged(); onBack(); } finally { setBusy(false); } }
+
+  async function remove() {
+    setBusy(true);
+    try {
+      await deleteAutomation(automationId);
+      onChanged();
+      onBack();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function exportJson() {
     const blob = new Blob([JSON.stringify(auto, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `${auto!.name.replace(/\W+/g, '-')}.automation.json`; a.click();
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${auto!.name.replace(/\W+/g, '-')}.automation.json`;
+    a.click();
     URL.revokeObjectURL(url);
   }
 
@@ -61,6 +122,7 @@ export function AutomationDetail({ automationId, userId, workspaceId, onBack, on
             <Badge text={statusText} color={statusColor(statusText)} />
           </div>
           <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '5px 0 0' }}>{triggerSummary(auto.trigger)}</p>
+          {auto.description && <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '6px 0 0', lineHeight: 1.45 }}>{auto.description}</p>}
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <button style={btn} onClick={runNow} disabled={busy}>Run now</button>
@@ -75,13 +137,17 @@ export function AutomationDetail({ automationId, userId, workspaceId, onBack, on
       {deps && deps.blockers.length > 0 && (
         <div style={{ ...card, borderColor: 'var(--danger)' }}>
           <strong style={{ fontSize: 12.5, color: 'var(--danger)' }}>Dependencies missing</strong>
-          {deps.blockers.map((b, i) => <div key={i} style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>• {b.message}</div>)}
+          {deps.blockers.map((b, i) => <div key={i} style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>- {b.message}</div>)}
         </div>
       )}
 
       <Section title="Goal & context">
         <div style={{ fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{auto.prompt}</div>
-        {auto.referencedContext.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>{auto.referencedContext.map((r) => <MentionChip key={r.id} refItem={r} />)}</div>}
+        {auto.referencedContext.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+            {auto.referencedContext.map((r) => <MentionChip key={r.id} refItem={r} />)}
+          </div>
+        )}
       </Section>
 
       {auto.steps.length > 0 && (
@@ -96,13 +162,13 @@ export function AutomationDetail({ automationId, userId, workspaceId, onBack, on
       )}
 
       <Section title="Verification">
-        {auto.verificationChecklist.map((v) => <div key={v.id} style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>• {v.title} <span style={{ color: 'var(--text-hint)' }}>({v.kind})</span></div>)}
+        {auto.verificationChecklist.map((v) => <div key={v.id} style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>- {v.title} <span style={{ color: 'var(--text-hint)' }}>({v.kind})</span></div>)}
       </Section>
 
       <Section title="Safety">
         <div style={{ fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.7 }}>
-          Autonomy: <b>{auto.safetyPolicy.autonomyMode}</b> · External write: <b>{auto.safetyPolicy.externalWrite}</b> · External send: <b>{auto.safetyPolicy.externalSend}</b> · Destructive: <b>{auto.safetyPolicy.destructive}</b>
-          {auto.safetyPolicy.maxRuntimeMinutes ? ` · Max ${auto.safetyPolicy.maxRuntimeMinutes}min` : ''}{auto.safetyPolicy.maxToolCalls ? ` · Max ${auto.safetyPolicy.maxToolCalls} calls` : ''}
+          Autonomy: <b>{auto.safetyPolicy.autonomyMode}</b> / External write: <b>{auto.safetyPolicy.externalWrite}</b> / External send: <b>{auto.safetyPolicy.externalSend}</b> / Destructive: <b>{auto.safetyPolicy.destructive}</b>
+          {auto.safetyPolicy.maxRuntimeMinutes ? ` / Max ${auto.safetyPolicy.maxRuntimeMinutes}min` : ''}{auto.safetyPolicy.maxToolCalls ? ` / Max ${auto.safetyPolicy.maxToolCalls} calls` : ''}
         </div>
       </Section>
 
@@ -115,9 +181,22 @@ export function AutomationDetail({ automationId, userId, workspaceId, onBack, on
             <Badge text={r.status} color={statusColor(r.status)} />
           </div>
           {r.error && <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 4 }}>{r.error}</div>}
-          {r.taskRunId && <div style={{ fontSize: 11, color: 'var(--text-hint)', marginTop: 4 }}>TaskRun: {r.taskRunId} — open the Tasks page for its evidence timeline.</div>}
+          <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+            <button style={ghostBtn} onClick={() => setMonitor({ runId: r.id, readonly: true })}><Icon name="eye" size={12} /> Open run</button>
+            {r.taskRunId && <span style={{ fontSize: 11, color: 'var(--text-hint)', alignSelf: 'center' }}>TaskRun: {r.taskRunId}</span>}
+          </div>
         </div>
       ))}
+
+      {monitor && (
+        <RunMonitor
+          automationRunId={monitor.runId}
+          automationName={auto.name}
+          readonly={monitor.readonly}
+          onClose={() => setMonitor(null)}
+          onChanged={() => { void load(); onChanged(); }}
+        />
+      )}
     </PageFrame>
   );
 }

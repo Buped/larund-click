@@ -16,6 +16,7 @@ import { getUserCredits } from './lib/supabase';
 import { initDatabase, adoptOrphanSessions } from './lib/database';
 import { installSqlCoworkerBackend } from './lib/coworker/sql-backend';
 import { restoreAutomationScheduler } from './lib/automations/scheduler';
+import { configureAutomationQueueProcessor } from './lib/automations/agent-processor';
 import { restoreDailySummaryScheduler } from './lib/memory/daily-summary';
 import { createProject, listProjects, resolveActiveProject, setActiveProjectId as persistActiveProjectId } from './lib/projects/store';
 import type { AuthUser } from './lib/auth';
@@ -37,6 +38,7 @@ type ProjectState = {
 async function initStores(userId: string): Promise<void> {
   await initDatabase(userId);
   await installSqlCoworkerBackend();
+  configureAutomationQueueProcessor();
   await restoreAutomationScheduler(userId);
   restoreDailySummaryScheduler(userId);
 }
