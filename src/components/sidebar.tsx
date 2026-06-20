@@ -72,7 +72,7 @@ function ChatRow({ chat, active, onSelect, onRename, onDelete }: {
       >
         <span style={{
           width: 6, height: 6, borderRadius: '50%', flex: 'none',
-          background: active ? 'var(--accent)' : 'rgba(255,255,255,0.18)',
+          background: active ? 'var(--accent)' : 'rgba(var(--ov-color),0.18)',
           transition: 'background .15s',
         }} />
 
@@ -122,7 +122,7 @@ function ChatRow({ chat, active, onSelect, onRename, onDelete }: {
             style={{
               width: 22, height: 22, borderRadius: 5, flex: 'none',
               display: 'grid', placeItems: 'center',
-              background: 'rgba(255,255,255,0.08)',
+              background: 'rgba(var(--ov-color),0.08)',
               color: 'var(--text-muted)', cursor: 'pointer',
             }}
           >
@@ -179,17 +179,18 @@ function ChatRow({ chat, active, onSelect, onRename, onDelete }: {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-export function Sidebar({ activeChat, onChatChange, userEmail, refreshKey, credits }: {
+export function Sidebar({ activeChat, onChatChange, userEmail, projectId, refreshKey, credits }: {
   activeChat: string | null;
   onChatChange: (id: string | null) => void;
   userEmail?: string | null;
+  projectId?: string | null;
   refreshKey?: number;
   credits?: UserCredits | null;
 }) {
   const [chats, setChats] = useState<ChatItem[]>([]);
 
   function loadChats() {
-    getSessions().then(rows =>
+    getSessions(projectId).then(rows =>
       setChats(rows.map(r => ({
         id: r.id,
         title: r.title,
@@ -198,7 +199,7 @@ export function Sidebar({ activeChat, onChatChange, userEmail, refreshKey, credi
     );
   }
 
-  useEffect(() => { loadChats(); }, [refreshKey]);
+  useEffect(() => { loadChats(); }, [refreshKey, projectId]);
 
   async function handleRename(id: string, title: string) {
     await updateSessionTitle(id, title);
@@ -246,7 +247,7 @@ export function Sidebar({ activeChat, onChatChange, userEmail, refreshKey, credi
         >
           <span style={{
             display: 'grid', placeItems: 'center', flex: 'none',
-            color: isNewChat ? 'var(--warning)' : 'var(--text-hint)',
+            color: isNewChat ? 'var(--text-primary)' : 'var(--text-hint)',
             transition: 'color .15s',
           }}>
             <Icon name="plus" size={12} stroke={2.2} />

@@ -43,11 +43,11 @@ function MockDesktop({ actionStep }: { actionStep: number }) {
   return (
     <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden", background: "#0f1117" }}>
       <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column" }}>
-        <div style={{ height: 34, background: "#1A1D28", borderBottom: "1px solid rgba(255,255,255,.06)", display: "flex", alignItems: "center", padding: "0 14px", gap: 10, flex: "none" }}>
+        <div style={{ height: 34, background: "#1A1D28", borderBottom: "1px solid rgba(var(--ov-color),.06)", display: "flex", alignItems: "center", padding: "0 14px", gap: 10, flex: "none" }}>
           <div style={{ display: "flex", gap: 6 }}>
             {["#EC6A5E","#F5BE4E","#61C554"].map((c, i) => <div key={i} style={{ width: 11, height: 11, borderRadius: "50%", background: c }} />)}
           </div>
-          <div style={{ flex: 1, background: "rgba(255,255,255,.05)", borderRadius: 5, height: 22, display: "flex", alignItems: "center", padding: "0 10px", fontSize: 11, color: "rgba(255,255,255,.35)" }}>
+          <div style={{ flex: 1, background: "rgba(var(--ov-color),.05)", borderRadius: 5, height: 22, display: "flex", alignItems: "center", padding: "0 10px", fontSize: 11, color: "rgba(var(--ov-color),.35)" }}>
             https://vendor.example.com/signup
           </div>
         </div>

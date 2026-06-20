@@ -65,7 +65,7 @@ export async function gatherDailySources(userId: string, date: string, workspace
   const sources: DailySources = { date, chats: [], completedTasks: [], openTasks: [], corrections: [], newFacts: [] };
 
   try {
-    const sessions = await getSessions();
+    const sessions = await getSessions(workspaceId);
     for (const sess of sessions) {
       if (!onDate(sess.updated_at, date) && !onDate(sess.created_at, date)) continue;
       const msgs = await getMessages(sess.id).catch(() => []);

@@ -66,6 +66,7 @@ export interface McpToolDefinition {
 export interface McpToolSnapshot {
   id: string;
   serverId: string;
+  workspaceId?: string;
   name: string;
   title?: string;
   description?: string;

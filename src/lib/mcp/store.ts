@@ -78,8 +78,10 @@ export async function getMcpToolSnapshot(serverId: string, name: string): Promis
 }
 
 export async function upsertMcpToolSnapshot(snapshot: McpToolSnapshot): Promise<McpToolSnapshot> {
-  await recordBackend().put(TOOLS, snapshot as unknown as RecordRow);
-  return snapshot;
+  const server = await getMcpServer(snapshot.serverId);
+  const scoped = { ...snapshot, workspaceId: snapshot.workspaceId ?? server?.workspaceId };
+  await recordBackend().put(TOOLS, scoped as unknown as RecordRow);
+  return scoped;
 }
 
 export async function listMcpTools(serverId?: string): Promise<McpToolSnapshot[]> {

@@ -64,7 +64,8 @@
       "Bash(xxd)",
       "Bash(echo \"tsc exit: $?\")",
       "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\); console.log\\('vitest:', \\(p.devDependencies||{}\\).vitest || \\(p.dependencies||{}\\).vitest\\)\")",
-      "Bash(exit)"
+      "Bash(exit)",
+      "mcp__claude_ai_Supabase__get_advisors"
     ],
     "additionalDirectories": [
       "D:\\Larund-click\\src-tauri\\.cargo"

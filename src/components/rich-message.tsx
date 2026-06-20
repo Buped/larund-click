@@ -26,7 +26,7 @@ function parseInline(text: string): React.ReactNode[] {
       parts.push(
         <code key={'c' + ki++} style={{
           fontFamily: 'var(--font-mono)', fontSize: '0.875em',
-          background: 'rgba(74,158,255,0.13)', color: '#7BBFFF',
+          background: 'var(--accent-soft)', color: 'var(--accent)',
           padding: '2px 6px', borderRadius: 4,
         }}>
           {m[4]}

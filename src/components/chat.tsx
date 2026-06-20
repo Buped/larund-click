@@ -186,8 +186,8 @@ function InlineModelPicker({ model, setModel }: { model: string; setModel: (m: s
                 <span style={{
                   width: 30, height: 30, borderRadius: 8, flex: 'none',
                   display: 'grid', placeItems: 'center',
-                  background: active ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
-                  color: active ? '#04122a' : 'var(--text-muted)',
+                  background: active ? 'var(--accent)' : 'rgba(var(--ov-color),0.06)',
+                  color: active ? 'var(--on-accent)' : 'var(--text-muted)',
                 }}>
                   <Icon name={m.icon} size={14} stroke={1.5} />
                 </span>
@@ -257,16 +257,16 @@ function NewChatPanel({ onStarter }: { onStarter: (p: string) => void }) {
   return (
     <div className="new-chat-panel">
       <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, marginBottom: 40 }}>
-          <ClickMark size={54} radius={17} glow />
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, marginBottom: 32 }}>
+          <ClickMark size={48} radius={15} glow />
           <div style={{ textAlign: 'center' }}>
             <div style={{
-              fontSize: 26, fontWeight: 700, color: 'var(--text-primary)',
-              letterSpacing: '-.03em', marginBottom: 10, lineHeight: 1.2,
+              fontSize: 23, fontWeight: 700, color: 'var(--text-primary)',
+              letterSpacing: '-.03em', marginBottom: 8, lineHeight: 1.2,
             }}>
               How can I help you?
             </div>
-            <div style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.5, maxWidth: 380 }}>
+            <div style={{ fontSize: 13.5, color: 'var(--text-muted)', lineHeight: 1.5, maxWidth: 360 }}>
               Describe a task and Larund Click will handle it on your computer.
             </div>
           </div>
@@ -436,7 +436,7 @@ function AgentStepItem({ step }: { step: AgentStep }) {
           <span style={{
             width: 18, height: 18, borderRadius: 4, flex: 'none',
             display: 'grid', placeItems: 'center',
-            background: 'rgba(255,255,255,0.07)',
+            background: 'rgba(var(--ov-color),0.07)',
             color: 'var(--text-muted)',
           }}>
             <Icon name={iconName} size={9} stroke={1.8} />
@@ -819,12 +819,13 @@ function hydrateMessage(row: any): Message {
 // ─── Main ChatScreen ──────────────────────────────────────────────────────────
 
 export function ChatScreen({
-  model, setModel, userEmail, userId, credits, onCreditsRefresh,
+  model, setModel, userEmail, userId, projectId, credits, onCreditsRefresh,
 }: {
   model: string;
   setModel: (m: string) => void;
   userEmail?: string | null;
   userId?: string | null;
+  projectId?: string | null;
   credits?: UserCredits | null;
   onCreditsRefresh?: () => void;
 }) {
@@ -844,6 +845,7 @@ export function ChatScreen({
   const editorRef     = useRef<RichMentionEditorHandle>(null);
   const fileRef       = useRef<HTMLInputElement>(null);
   const bottomRef     = useRef<HTMLDivElement>(null);
+  const scrollRef     = useRef<HTMLDivElement>(null);
   const referencePickerTriggerRef = useRef<HTMLButtonElement>(null);
   const skipNextFetch = useRef(false);
   const abortRef      = useRef<AgentAbortSignal>({ aborted: false });
@@ -857,7 +859,16 @@ export function ChatScreen({
   }, [activeChat]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    setActiveChat(null);
+    setMessages([]);
+    setSidebarRefreshKey(k => k + 1);
+  }, [projectId]);
+
+  useEffect(() => {
+    // Scroll only the message list to its bottom — never via scrollIntoView,
+    // which would also scroll ancestor containers and push the whole layout up.
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
   const chatTitle = messages.find(m => m.role === 'user')?.content.slice(0, 80) ?? '';
@@ -1096,7 +1107,7 @@ export function ChatScreen({
           if (firstExchange) void maybeGenerateTitle(sessionId, task, summary);
           void runMemoryExtraction({
             userId: userId!,
-            workspaceId: localStorage.getItem('active_workspace_id') ?? undefined,
+            workspaceId: projectId ?? undefined,
             userText: task,
             summary,
             verified: true,
@@ -1122,7 +1133,7 @@ export function ChatScreen({
         // Active workspace/role/workflow chosen on the Coworker pages. All fall
         // back gracefully inside the loop when unset. A workflow template is
         // one-shot: it is consumed (cleared) once a run starts.
-        workspaceId: localStorage.getItem('active_workspace_id') ?? undefined,
+        workspaceId: projectId ?? undefined,
         roleId: localStorage.getItem('active_role_id') ?? undefined,
         workflowTemplateId: consumeActiveWorkflowTemplate(),
       },
@@ -1169,7 +1180,7 @@ export function ChatScreen({
     let sessionId = activeChat;
     if (!sessionId) {
       sessionId = uuidv4();
-      await createSession(sessionId, (text || taskReferences[0]?.label || 'Referenced task').slice(0, 40));
+      await createSession(sessionId, (text || taskReferences[0]?.label || 'Referenced task').slice(0, 40), projectId);
       skipNextFetch.current = true;
       setActiveChat(sessionId);
       setSidebarRefreshKey(k => k + 1);
@@ -1277,7 +1288,7 @@ export function ChatScreen({
       const resolved = await resolveReferencedContext({
         references: taskReferences,
         userId,
-        workspaceId: localStorage.getItem('active_workspace_id') ?? undefined,
+        workspaceId: projectId ?? undefined,
       });
       if (resolved.blockers.length > 0) {
         throw new Error(`Referenced context is not ready:\n${resolved.blockers.map((b) => `- ${b}`).join('\n')}`);
@@ -1323,7 +1334,7 @@ export function ChatScreen({
         if (isFirstExchange) void maybeGenerateTitle(sessionId!, messageText, fullContent);
         void runMemoryExtraction({
           userId: userId!,
-          workspaceId: localStorage.getItem('active_workspace_id') ?? undefined,
+          workspaceId: projectId ?? undefined,
           userText: messageText,
         });
       },
@@ -1373,6 +1384,7 @@ export function ChatScreen({
         activeChat={activeChat}
         onChatChange={setActiveChat}
         userEmail={userEmail}
+        projectId={projectId}
         refreshKey={sidebarRefreshKey}
         credits={credits}
       />
@@ -1393,7 +1405,7 @@ export function ChatScreen({
             <NewChatPanel onStarter={handleStarter} />
           </div>
         ) : (
-          <div className="scroll" style={{ flex: 1, minHeight: 0 }}>
+          <div ref={scrollRef} className="scroll" style={{ flex: 1, minHeight: 0 }}>
             <div className="chat-col" style={{ padding: '28px 0 24px' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
 
@@ -1540,7 +1552,7 @@ export function ChatScreen({
                 references={references}
                 onChange={handleEditorChange}
                 userId={userId ?? ''}
-                workspaceId={localStorage.getItem('active_workspace_id') ?? undefined}
+                workspaceId={projectId ?? undefined}
                 onKeyDown={onKeyDown}
                 placeholder="Ask Larund anything, or describe a task…"
                 minHeight={36}

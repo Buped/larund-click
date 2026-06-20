@@ -84,8 +84,8 @@ export function OverlayApp() {
             placeholder="Type your answer..."
             autoFocus
             style={{
-              width: '100%', background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.12)',
+              width: '100%', background: 'rgba(var(--ov-color),0.06)',
+              border: '1px solid rgba(var(--ov-color),0.12)',
               borderRadius: 8, padding: '8px 12px',
               fontSize: 13, color: '#ECE8E3',
               outline: 'none', fontFamily: 'inherit',
@@ -96,7 +96,7 @@ export function OverlayApp() {
             onClick={handleAnswerSubmit}
             style={{
               marginTop: 8, width: '100%', height: 34,
-              background: '#4A9EFF', color: '#04122a',
+              background: '#4A9EFF', color: 'var(--on-accent)',
               border: 'none', borderRadius: 8,
               fontSize: 13, fontWeight: 600, cursor: 'pointer',
               display: 'flex', alignItems: 'center',
@@ -111,7 +111,7 @@ export function OverlayApp() {
       {/* Main status panel */}
       <div style={{
         background: 'rgba(17,17,16,0.94)',
-        border: '1px solid rgba(255,255,255,0.10)',
+        border: '1px solid rgba(var(--ov-color),0.10)',
         borderRadius: 14, overflow: 'hidden',
         backdropFilter: 'blur(24px)',
       }}>
@@ -119,7 +119,7 @@ export function OverlayApp() {
         <div style={{
           display: 'flex', alignItems: 'center',
           padding: '12px 14px', gap: 10,
-          borderBottom: collapsed ? 'none' : '1px solid rgba(255,255,255,0.07)',
+          borderBottom: collapsed ? 'none' : '1px solid rgba(var(--ov-color),0.07)',
         }}>
           <ClickMark size={20} radius={6} glow />
           <div style={{ flex: 1 }}>

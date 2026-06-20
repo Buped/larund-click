@@ -1,6 +1,9 @@
-// Workspace store. Persists workspaces through the shared coworker backend and
-// tracks the active workspace per session. Falls back to an auto-created default
-// workspace so the agent always has a context, even before the user creates one.
+// Workspace store. Internal data-scoping plumbing for coworker records,
+// automations, skills and the gateway — each scopes data by the active workspace
+// id, which App.tsx keeps pointed at the active project id. This is local-only;
+// user-facing collaboration (members, invites, ownership) lives in
+// src/lib/projects, backed by Supabase. Falls back to an auto-created default
+// workspace so the agent always has a context.
 
 import { recordBackend, type RecordRow } from '../coworker/persistence';
 import type { CreateWorkspaceInput, Workspace, WorkspacePatch } from './types';

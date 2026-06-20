@@ -165,7 +165,7 @@ export function AutomationsPage({ userId, workspaceId }: { userId: string; works
           <SearchInput value={query} onChange={setQuery} placeholder="Search automations…" />
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
             {TABS.map((t) => (
-              <button key={t} onClick={() => setTab(t)} style={{ ...ghostBtn, ...(tab === t ? { background: 'var(--accent)', color: '#04122a', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }}>{t}</button>
+              <button key={t} onClick={() => setTab(t)} style={{ ...ghostBtn, ...(tab === t ? { background: 'var(--accent)', color: 'var(--on-accent)', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }}>{t}</button>
             ))}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>

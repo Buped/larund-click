@@ -15,7 +15,7 @@ import { generateDailySummary, localDateKey } from '../../lib/memory/daily-summa
 import type { MemoryEntry, MemoryType, MemoryScope, MemorySource } from '../../lib/memory/types';
 import {
   PageFrame, PageHeader, Empty, Loading, ErrorBox, Tabs, SearchInput, Badge,
-  card, btn, ghostBtn, dangerBtn, input, statusColor, useAsyncList, getActiveWorkspaceId,
+  card, btn, ghostBtn, dangerBtn, input, statusColor, useAsyncList,
 } from './ui';
 
 const TYPES: MemoryType[] = ['preference', 'correction', 'procedural', 'project', 'client_profile', 'workspace', 'user_profile', 'evidence', 'episodic', 'sensitive_reference'];
@@ -49,7 +49,7 @@ function timeAgo(iso?: string): string {
 
 // ── Add memory ────────────────────────────────────────────────────────────────
 
-function AddMemoryForm({ userId, onAdded }: { userId: string; onAdded: () => void }) {
+function AddMemoryForm({ userId, projectId, onAdded }: { userId: string; projectId?: string | null; onAdded: () => void }) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -58,7 +58,7 @@ function AddMemoryForm({ userId, onAdded }: { userId: string; onAdded: () => voi
 
   async function add() {
     if (!title.trim() || !content.trim()) return;
-    await createMemory({ userId, type, title, content, source: 'user', scope, workspaceId: scope === 'workspace' ? getActiveWorkspaceId() : undefined });
+    await createMemory({ userId, type, title, content, source: 'user', scope, workspaceId: scope === 'workspace' ? projectId ?? undefined : undefined });
     setTitle(''); setContent(''); setOpen(false); onAdded();
   }
   if (!open) return <button style={{ ...ghostBtn, marginBottom: 12 }} onClick={() => setOpen(true)}><Icon name="plus" size={13} stroke={2} /> Add memory</button>;
@@ -120,7 +120,7 @@ function DetailModal({ m, onChange, onClose }: { m: MemoryEntry; onChange: () =>
 
         {m.tags.length > 0 && (
           <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 12 }}>
-            {m.tags.map((t) => <span key={t} style={{ fontSize: 10.5, color: 'var(--text-hint)', background: 'rgba(255,255,255,.05)', borderRadius: 5, padding: '2px 6px' }}>#{t}</span>)}
+            {m.tags.map((t) => <span key={t} style={{ fontSize: 10.5, color: 'var(--text-hint)', background: 'rgba(var(--ov-color),.05)', borderRadius: 5, padding: '2px 6px' }}>#{t}</span>)}
           </div>
         )}
 
@@ -173,7 +173,7 @@ function MemoryCard({ m, onOpen }: { m: MemoryEntry; onOpen: () => void }) {
 
 type Tab = 'active' | 'suggested' | 'summaries' | 'archived';
 
-export function MemoryPage({ userId }: { userId: string }) {
+export function MemoryPage({ userId, projectId }: { userId: string; projectId?: string | null }) {
   const [tab, setTab] = useState<Tab>('active');
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<MemoryType | ''>('');
@@ -194,7 +194,7 @@ export function MemoryPage({ userId }: { userId: string }) {
   async function handleSummarizeToday() {
     setBusy('summary');
     try {
-      const res = await generateDailySummary(userId, localDateKey(), { workspaceId: getActiveWorkspaceId(), force: true });
+      const res = await generateDailySummary(userId, localDateKey(), { workspaceId: projectId ?? undefined, force: true });
       reloadAll();
       if (res.created) setTab('summaries');
     } finally { setBusy(null); }
@@ -212,7 +212,7 @@ export function MemoryPage({ userId }: { userId: string }) {
   async function handleMergeDuplicates() {
     setBusy('merge');
     try {
-      const groups = await detectDuplicates(userId, { workspaceId: getActiveWorkspaceId() });
+      const groups = await detectDuplicates(userId, { workspaceId: projectId ?? undefined });
       for (const g of groups) {
         const [target, ...rest] = g;
         await mergeMemories(target.id, rest.map((r) => r.id));
@@ -250,7 +250,7 @@ export function MemoryPage({ userId }: { userId: string }) {
 
       {tab === 'active' && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <AddMemoryForm userId={userId} onAdded={reloadAll} />
+          <AddMemoryForm userId={userId} projectId={projectId} onAdded={reloadAll} />
           <div style={{ flex: 1 }} />
           <button style={ghostBtn} onClick={handleMergeDuplicates} disabled={busy === 'merge'}>{busy === 'merge' ? 'Merging…' : 'Merge duplicates'}</button>
         </div>

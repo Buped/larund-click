@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Icon } from '../icons';
-import { Empty, SearchInput, btn, ghostBtn, getActiveWorkspaceId, useAsyncList } from '../pages/ui';
+import { Empty, SearchInput, btn, ghostBtn, useAsyncList } from '../pages/ui';
 import { SkillCard } from './SkillCard';
 import { SkillDetailModal } from './SkillDetailModal';
 import { NewSkillWizard } from './NewSkillWizard';
@@ -10,8 +10,8 @@ import { listSkillPackages, setSkillPackageEnabled } from '../../lib/skills/pack
 const FILTERS = ['All', 'Built-in', 'Created by you', 'Suggested', 'Documents', 'Development', 'Marketing', 'Data', 'Operations', 'Creative'] as const;
 type Filter = typeof FILTERS[number];
 
-export function SkillDirectory({ userId }: { userId: string }) {
-  const workspaceId = getActiveWorkspaceId();
+export function SkillDirectory({ userId, projectId }: { userId: string; projectId?: string | null }) {
+  const workspaceId = projectId ?? undefined;
   const skills = useAsyncList<SkillPackage>(() => listSkillPackages({ userId, workspaceId, includeSuggested: true }), [userId, workspaceId]);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('All');
@@ -39,7 +39,7 @@ export function SkillDirectory({ userId }: { userId: string }) {
         <button style={{ ...btn, height: 36 }} onClick={() => setCreating(true)}><Icon name="plus" size={13} stroke={2} /> New skill</button>
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
-        {FILTERS.map((f) => <button key={f} style={{ ...ghostBtn, ...(filter === f ? { background: 'var(--accent)', color: '#04122a', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }} onClick={() => setFilter(f)}>{f}</button>)}
+        {FILTERS.map((f) => <button key={f} style={{ ...ghostBtn, ...(filter === f ? { background: 'var(--accent)', color: 'var(--on-accent)', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }} onClick={() => setFilter(f)}>{f}</button>)}
       </div>
       {filtered.length === 0 && !skills.loading && <Empty text="No skills match this view." icon="sparkle" />}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>

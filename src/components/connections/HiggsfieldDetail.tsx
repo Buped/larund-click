@@ -7,7 +7,6 @@ import { useEffect, useState } from 'react';
 import { Icon } from '../icons';
 import { BrandIcon } from '../BrandIcon';
 import { card, btn, ghostBtn, dangerBtn, input, labelStyle, Badge, PageFrame } from '../pages/ui';
-import { getActiveWorkspaceId } from '../pages/ui';
 import type { McpToolSnapshot, McpServerConfig } from '../../lib/mcp/types';
 import { setMcpToolApproval } from '../../lib/mcp/store';
 import { mcpClient } from '../../lib/mcp/client';
@@ -42,8 +41,8 @@ function toolStatus(t: McpToolSnapshot): { text: string; color: string } {
   return { text: 'pending review', color: 'var(--text-hint)' };
 }
 
-export function HiggsfieldDetail({ onBack }: { onBack: () => void }) {
-  const ctx = { userId: 'local', workspaceId: getActiveWorkspaceId() };
+export function HiggsfieldDetail({ projectId, onBack }: { projectId?: string | null; onBack: () => void }) {
+  const ctx = { userId: 'local', workspaceId: projectId ?? undefined };
   const [state, setState] = useState<HiggsfieldState>('not_configured');
   const [server, setServer] = useState<McpServerConfig | undefined>();
   const [tools, setTools] = useState<McpToolSnapshot[]>([]);
@@ -56,7 +55,7 @@ export function HiggsfieldDetail({ onBack }: { onBack: () => void }) {
     const s = await higgsfieldConnectionState(ctx);
     setState(s.state); setServer(s.server); setTools(s.tools);
   }
-  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [projectId]);
 
   async function run(label: string, fn: () => Promise<{ state: HiggsfieldState; server?: McpServerConfig; tools: McpToolSnapshot[]; message: string }>) {
     setBusy(label); setMessage('');

@@ -120,7 +120,7 @@ export function TasksPage({ userId }: { userId: string }) {
       <SearchInput value={query} onChange={setQuery} placeholder="Search tasks…" />
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
         {STATUS_FILTERS.map((f) => (
-          <button key={f} onClick={() => setFilter(f)} style={{ ...ghostBtn, ...(filter === f ? { background: 'var(--accent)', color: '#04122a', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }}>{f.replace('_', ' ')}</button>
+          <button key={f} onClick={() => setFilter(f)} style={{ ...ghostBtn, ...(filter === f ? { background: 'var(--accent)', color: 'var(--on-accent)', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }}>{f.replace('_', ' ')}</button>
         ))}
       </div>
 

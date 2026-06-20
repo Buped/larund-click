@@ -103,6 +103,7 @@ export interface Automation {
 export interface AutomationRun {
   id: string;
   automationId: string;
+  workspaceId?: string;
   taskRunId?: string;
   queueItemId?: string;
   status: AutomationRunStatus;

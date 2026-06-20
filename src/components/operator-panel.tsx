@@ -6,7 +6,7 @@ import { TOOL_CATALOG } from '../lib/tools/registry';
 
 const card: React.CSSProperties = {
   border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px',
-  display: 'flex', flexDirection: 'column', gap: 4, background: 'rgba(255,255,255,0.02)',
+  display: 'flex', flexDirection: 'column', gap: 4, background: 'rgba(var(--ov-color),0.02)',
 };
 const badge = (color: string): React.CSSProperties => ({
   fontSize: 10, fontWeight: 700, color, border: `1px solid ${color}`,

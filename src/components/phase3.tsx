@@ -22,11 +22,11 @@ import type { GatewayChannel, GatewayMessage } from '../lib/gateway/types';
 import { listWorkspaces } from '../lib/workspaces/store';
 import type { Workspace } from '../lib/workspaces/types';
 
-const card: React.CSSProperties = { background: 'rgba(22,22,20,0.72)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 8, padding: 14, marginBottom: 10, boxShadow: '0 14px 34px rgba(0,0,0,0.18)' };
-const btn: React.CSSProperties = { background: 'var(--accent)', color: '#04122a', border: 'none', borderRadius: 8, padding: '7px 12px', fontSize: 12.5, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 650 };
-const ghostBtn: React.CSSProperties = { background: 'rgba(255,255,255,0.045)', color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 8, padding: '6px 10px', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' };
+const card: React.CSSProperties = { background: 'var(--glass-panel)', border: '1px solid rgba(var(--ov-color),0.09)', borderRadius: 8, padding: 14, marginBottom: 10, boxShadow: '0 14px 34px rgba(0,0,0,0.18)' };
+const btn: React.CSSProperties = { background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 8, padding: '7px 12px', fontSize: 12.5, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 650 };
+const ghostBtn: React.CSSProperties = { background: 'rgba(var(--ov-color),0.045)', color: 'var(--text-muted)', border: '1px solid rgba(var(--ov-color),0.09)', borderRadius: 8, padding: '6px 10px', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' };
 const dangerBtn: React.CSSProperties = { ...ghostBtn, color: 'var(--danger)' };
-const input: React.CSSProperties = { background: 'rgba(10,10,8,0.46)', border: '1px solid rgba(255,255,255,0.10)', borderRadius: 8, padding: '8px 10px', fontSize: 12.5, color: 'var(--text-primary)', fontFamily: 'inherit', outline: 'none', width: '100%' };
+const input: React.CSSProperties = { background: 'var(--bg-field)', border: '1px solid rgba(var(--ov-color),0.10)', borderRadius: 8, padding: '8px 10px', fontSize: 12.5, color: 'var(--text-primary)', fontFamily: 'inherit', outline: 'none', width: '100%' };
 const labelStyle: React.CSSProperties = { fontSize: 11, color: 'var(--text-hint)', textTransform: 'uppercase', letterSpacing: '.05em' };
 
 function tone(status: string): string {

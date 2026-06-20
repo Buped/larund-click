@@ -82,6 +82,7 @@ async function initSchema(db: Database): Promise<void> {
   // Set to 1 once the user renames a chat by hand, so auto title generation
   // never overwrites a manual title.
   await ensureColumn(db, 'sessions', 'title_locked', 'INTEGER DEFAULT 0');
+  await ensureColumn(db, 'sessions', 'project_id', 'TEXT DEFAULT NULL');
 
   // Memory behaviour settings (Memory workstream). Added via ensureColumn so
   // existing user DBs migrate forward without losing data.
@@ -224,18 +225,40 @@ export async function updateSettings(patch: Record<string, any>) {
 
 // ── SESSIONS ──────────────────────────────────────────────
 
-export async function getSessions() {
+export async function getSessions(projectId?: string | null) {
   const db = await getDb();
+  if (projectId) {
+    return db.select<any[]>(
+      'SELECT * FROM sessions WHERE is_archived = 0 AND project_id = ? ORDER BY updated_at DESC',
+      [projectId],
+    );
+  }
   return db.select<any[]>(
-    'SELECT * FROM sessions WHERE is_archived = 0 ORDER BY updated_at DESC'
+    'SELECT * FROM sessions WHERE is_archived = 0 AND project_id IS NULL ORDER BY updated_at DESC'
   );
 }
 
-export async function createSession(id: string, title: string) {
+/**
+ * Adopt legacy chats into a project. Sessions created before the projects feature
+ * have `project_id IS NULL` and would otherwise be invisible once a project is
+ * active. Assign those orphans to `projectId` (one-time; later runs are no-ops).
+ * Returns how many sessions were migrated.
+ */
+export async function adoptOrphanSessions(projectId: string): Promise<number> {
+  if (!projectId) return 0;
+  const db = await getDb();
+  const res = await db.execute(
+    'UPDATE sessions SET project_id = ? WHERE project_id IS NULL',
+    [projectId],
+  );
+  return res?.rowsAffected ?? 0;
+}
+
+export async function createSession(id: string, title: string, projectId?: string | null) {
   const db = await getDb();
   await db.execute(
-    'INSERT INTO sessions (id, title) VALUES (?, ?)',
-    [id, title]
+    'INSERT INTO sessions (id, title, project_id) VALUES (?, ?, ?)',
+    [id, title, projectId ?? null]
   );
 }
 

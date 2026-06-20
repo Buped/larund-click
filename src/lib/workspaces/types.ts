@@ -8,6 +8,7 @@
 export type WorkspaceKind = 'personal' | 'company' | 'client' | 'project' | 'custom';
 export type AutonomyMode = 'manual' | 'semi' | 'full';
 export type MemoryScope = 'workspace';
+export type WorkspaceRole = 'owner' | 'editor' | 'viewer';
 
 export type WorkspaceRootKind =
   | 'local_folder'
@@ -29,15 +30,19 @@ export interface WorkspaceRoot {
 export interface Workspace {
   id: string;
   userId: string;
+  ownerId?: string;
+  role?: WorkspaceRole;
   name: string;
   description?: string;
   kind: WorkspaceKind;
   rootPaths: WorkspaceRoot[];
   connectedProviderIds: string[];
+  requiredConnectionIds?: string[];
   enabledSkillIds: string[];
   memoryScope: MemoryScope;
   autonomyMode: AutonomyMode;
   defaultModelId?: string;
+  workflowConfig?: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string;

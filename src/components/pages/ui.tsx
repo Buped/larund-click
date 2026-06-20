@@ -5,11 +5,11 @@
 import React, { useEffect, useState } from 'react';
 import { Icon } from '../icons';
 
-export const card: React.CSSProperties = { background: 'rgba(22,22,20,0.72)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 10, padding: 14, marginBottom: 10, boxShadow: '0 14px 34px rgba(0,0,0,0.18)' };
-export const btn: React.CSSProperties = { background: 'var(--accent)', color: '#04122a', border: 'none', borderRadius: 8, padding: '7px 12px', fontSize: 12.5, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 650, display: 'inline-flex', alignItems: 'center', gap: 6 };
-export const ghostBtn: React.CSSProperties = { background: 'rgba(255,255,255,0.045)', color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 8, padding: '6px 10px', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 6 };
+export const card: React.CSSProperties = { background: 'var(--glass-panel)', border: '1px solid rgba(var(--ov-color),0.09)', borderRadius: 10, padding: 14, marginBottom: 10, boxShadow: '0 14px 34px rgba(0,0,0,0.18)' };
+export const btn: React.CSSProperties = { background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 8, padding: '7px 12px', fontSize: 12.5, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 650, display: 'inline-flex', alignItems: 'center', gap: 6 };
+export const ghostBtn: React.CSSProperties = { background: 'rgba(var(--ov-color),0.045)', color: 'var(--text-muted)', border: '1px solid rgba(var(--ov-color),0.09)', borderRadius: 8, padding: '6px 10px', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 6 };
 export const dangerBtn: React.CSSProperties = { ...ghostBtn, color: 'var(--danger)' };
-export const input: React.CSSProperties = { background: 'rgba(10,10,8,0.46)', border: '1px solid rgba(255,255,255,0.10)', borderRadius: 8, padding: '8px 10px', fontSize: 12.5, color: 'var(--text-primary)', fontFamily: 'inherit', outline: 'none', width: '100%' };
+export const input: React.CSSProperties = { background: 'var(--bg-field)', border: '1px solid rgba(var(--ov-color),0.10)', borderRadius: 8, padding: '8px 10px', fontSize: 12.5, color: 'var(--text-primary)', fontFamily: 'inherit', outline: 'none', width: '100%' };
 export const labelStyle: React.CSSProperties = { fontSize: 11, color: 'var(--text-hint)', textTransform: 'uppercase', letterSpacing: '.05em' };
 
 export function statusColor(s: string): string {
@@ -44,7 +44,7 @@ export function PageFrame({ children }: { children: React.ReactNode }) {
 export function Empty({ text, icon = 'sparkle' }: { text: string; icon?: string }) {
   return (
     <div style={{ padding: '36px 20px', textAlign: 'center', color: 'var(--text-hint)', fontSize: 13, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-      <span style={{ width: 38, height: 38, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(255,255,255,0.05)' }}>
+      <span style={{ width: 38, height: 38, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(var(--ov-color),0.05)' }}>
         <Icon name={icon} size={17} stroke={1.6} />
       </span>
       <span>{text}</span>
@@ -70,7 +70,7 @@ export function Pills<T extends string>({ value, options, onChange, danger }: { 
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
       {options.map((o) => (
-        <button key={o} onClick={() => onChange(o)} style={{ ...ghostBtn, ...(value === o ? { background: accent, color: '#04122a', borderColor: accent, fontWeight: 650 } : {}) }}>
+        <button key={o} onClick={() => onChange(o)} style={{ ...ghostBtn, ...(value === o ? { background: accent, color: 'var(--on-accent)', borderColor: accent, fontWeight: 650 } : {}) }}>
           {String(o).replace(/_/g, ' ')}
         </button>
       ))}
@@ -81,7 +81,7 @@ export function Pills<T extends string>({ value, options, onChange, danger }: { 
 /** Segmented tab control. */
 export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: Array<{ id: T; label: string; count?: number }>; value: T; onChange: (v: T) => void }) {
   return (
-    <div style={{ display: 'inline-flex', gap: 2, background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)', borderRadius: 10, padding: 3, marginBottom: 16 }}>
+    <div style={{ display: 'inline-flex', gap: 2, background: 'rgba(var(--ov-color),0.04)', border: '1px solid var(--border)', borderRadius: 10, padding: 3, marginBottom: 16 }}>
       {tabs.map((t) => {
         const active = t.id === value;
         return (

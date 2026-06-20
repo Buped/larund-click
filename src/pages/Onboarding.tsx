@@ -35,7 +35,7 @@ function StepDot({ n, current }: { n: number; current: number }) {
       width: 26, height: 26, borderRadius: '50%', display: 'grid', placeItems: 'center',
       fontSize: 11, fontWeight: 700, flex: 'none', transition: 'all .2s',
       background: active ? 'var(--accent)' : done ? 'rgba(62,207,142,.18)' : 'var(--bg-elevated)',
-      color: active ? '#04122a' : done ? 'var(--success)' : 'var(--text-hint)',
+      color: active ? 'var(--on-accent)' : done ? 'var(--success)' : 'var(--text-hint)',
       border: `1.5px solid ${active ? 'var(--accent)' : done ? 'rgba(62,207,142,.45)' : 'var(--border-md)'}`,
     }}>
       {done ? <Icon name="check" size={11} stroke={2.5} /> : n}
@@ -121,7 +121,7 @@ function PermCard({ icon, title, desc, granted, onGrant }: {
     }}>
       <div style={{
         width: 36, height: 36, borderRadius: 9, flex: 'none',
-        background: granted ? 'rgba(62,207,142,.12)' : 'rgba(255,255,255,.05)',
+        background: granted ? 'rgba(62,207,142,.12)' : 'rgba(var(--ov-color),.05)',
         display: 'grid', placeItems: 'center',
       }}>
         <Icon name={icon} size={17} stroke={1.5}
@@ -252,7 +252,7 @@ function StepAutonomy({ mode, setMode, onNext }: {
                 background: sel ? 'var(--accent)' : 'transparent',
                 display: 'grid', placeItems: 'center',
               }}>
-                {sel && <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#04122a' }} />}
+                {sel && <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--on-accent)' }} />}
               </div>
             </button>
           );
@@ -402,7 +402,7 @@ function StepAllSet({ user, mode, screenGranted, accessGranted, onComplete }: {
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{
               width: 18, height: 18, borderRadius: '50%', flex: 'none',
-              background: item.ok ? 'rgba(62,207,142,.15)' : 'rgba(255,255,255,.05)',
+              background: item.ok ? 'rgba(62,207,142,.15)' : 'rgba(var(--ov-color),.05)',
               border: `1px solid ${item.ok ? 'rgba(62,207,142,.35)' : 'var(--border)'}`,
               display: 'grid', placeItems: 'center',
             }}>

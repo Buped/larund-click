@@ -12,13 +12,14 @@ import { OperatorPanel } from './operator-panel';
 import { GOOGLE_WORKSPACE_SCOPES } from '../lib/connections/providers/google-workspace/auth';
 import { listConnections } from '../lib/connections/registry';
 import { loadPersistentSecret, setPersistentSecret } from '../lib/connections/secrets';
-import { listWorkspaces, createWorkspace, archiveWorkspace } from '../lib/workspaces/store';
-import type { Workspace } from '../lib/workspaces/types';
+import type { Project } from '../lib/projects/types';
+import { ProjectSettings, type ProjectSection } from './settings/project/ProjectSettings';
 import { runDoctor } from '../lib/doctor/run';
 import type { DoctorReport } from '../lib/doctor/types';
 import { BUILTIN_SANDBOX_PROFILES } from '../lib/sandbox/profiles';
 import { GatewayTab } from './phase3';
 import { McpHubTab, CustomApiTab, LocalCatalogTab } from './phase4';
+import { setTheme as applyTheme, getStoredThemePref, themeLabel, themePrefFromSetting } from '../lib/theme';
 
 function emailInitials(email: string): string {
   const local = email.split('@')[0];
@@ -45,38 +46,45 @@ type MemEntry = {
   created_at: string;
 };
 
+type Area = 'personal' | 'project';
 type SectionDef = { id: string; icon: string; label: string; dev?: boolean };
-const ALL_SECTIONS: SectionDef[] = [
-  { id: "general",    icon: "settings",  label: "General"    },
-  { id: "appearance", icon: "eye",       label: "Appearance" },
-  { id: "account",    icon: "user",      label: "Account"    },
-  { id: "workspaces", icon: "folder",    label: "Workspaces" },
-  { id: "automation", icon: "zap",       label: "Automation" },
-  { id: "behavior",   icon: "sparkle",   label: "Behavior"   },
-  { id: "memory",     icon: "cpu",       label: "Memory"     },
-  { id: "connections", icon: "globe",    label: "Connections"},
-  { id: "apps",       icon: "globe",     label: "Apps"       },
-  { id: "safety",     icon: "shield",    label: "Safety"     },
-  { id: "diagnostics", icon: "search",   label: "Diagnostics"},
-  { id: "developer",  icon: "command",   label: "Developer", dev: true },
-  { id: "operator",   icon: "cpu",       label: "Operator", dev: true },
-  { id: "danger",     icon: "alert",     label: "Danger zone"},
+
+// Personal = the signed-in user's own settings.
+const PERSONAL_SECTIONS: SectionDef[] = [
+  { id: "account",     icon: "user",    label: "Account"     },
+  { id: "appearance",  icon: "eye",     label: "Appearance"  },
+  { id: "assistant",   icon: "sparkle", label: "Assistant"   },
+  { id: "memory",      icon: "cpu",     label: "Memory"      },
+  { id: "connections", icon: "globe",   label: "Connections" },
+  { id: "apps",        icon: "globe",   label: "Apps"        },
+  { id: "notifications", icon: "alert", label: "Notifications" },
+  { id: "advanced",    icon: "command", label: "Advanced"    },
+];
+
+// Current Project = settings for the active project (shared with members).
+const PROJECT_SECTIONS: SectionDef[] = [
+  { id: "overview",     icon: "folder",  label: "Overview"     },
+  { id: "members",      icon: "user",    label: "Members"      },
+  { id: "automations",  icon: "zap",     label: "Automations"  },
+  { id: "skills",       icon: "sparkle", label: "Skills"       },
+  { id: "requirements", icon: "link",    label: "Requirements" },
+  { id: "danger",       icon: "alert",   label: "Danger zone"  },
 ];
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
-    <button onClick={() => onChange(!checked)} style={{ width: 38, height: 22, borderRadius: 11, background: checked ? "var(--accent)" : "rgba(255,255,255,.12)", border: "none", cursor: "pointer", position: "relative", transition: "background .2s", flex: "none" }}>
-      <span style={{ position: "absolute", top: 3, left: checked ? 19 : 3, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left .2s", display: "block" }} />
+    <button onClick={() => onChange(!checked)} style={{ width: 38, height: 22, borderRadius: 11, background: checked ? "var(--accent)" : "rgba(var(--ov-color),.12)", border: "none", cursor: "pointer", position: "relative", transition: "background .2s", flex: "none" }}>
+      <span style={{ position: "absolute", top: 3, left: checked ? 19 : 3, width: 16, height: 16, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,0.28)", transition: "left .2s", display: "block" }} />
     </button>
   );
 }
 
 function SettingRow({ label, sub, children }: { label: string; sub?: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderBottom: "1px solid var(--border)" }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "14px 0", borderBottom: "1px solid var(--border-soft)" }}>
       <div>
         <div style={{ fontSize: 13.5, color: "var(--text-primary)", fontWeight: 450 }}>{label}</div>
-        {sub && <div style={{ fontSize: 12, color: "var(--text-hint)", marginTop: 2 }}>{sub}</div>}
+        {sub && <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 3, lineHeight: 1.45 }}>{sub}</div>}
       </div>
       {children}
     </div>
@@ -135,7 +143,7 @@ function AppFormModal({ app, onSave, onClose }: { app: AppEntry | null; onSave: 
             <div className="sec-label" style={{ marginBottom: 5 }}>Type</div>
             <div style={{ display: "flex", gap: 6 }}>
               {(["web","desktop"] as const).map(t => (
-                <button key={t} onClick={() => setAppType(t)} style={{ flex: 1, padding: "7px 0", borderRadius: 7, border: "1px solid", fontSize: 12.5, fontWeight: 500, cursor: "pointer", background: appType === t ? "var(--accent)" : "var(--bg-surface)", borderColor: appType === t ? "var(--accent)" : "var(--border-md)", color: appType === t ? "#04122a" : "var(--text-muted)", textTransform: "capitalize", transition: "all .12s" }}>{t}</button>
+                <button key={t} onClick={() => setAppType(t)} style={{ flex: 1, padding: "7px 0", borderRadius: 7, border: "1px solid", fontSize: 12.5, fontWeight: 500, cursor: "pointer", background: appType === t ? "var(--accent)" : "var(--bg-surface)", borderColor: appType === t ? "var(--accent)" : "var(--border-md)", color: appType === t ? "var(--on-accent)" : "var(--text-muted)", textTransform: "capitalize", transition: "all .12s" }}>{t}</button>
               ))}
             </div>
           </div>
@@ -196,13 +204,13 @@ function AppCard({ app, onEdit, onDelete }: { app: AppEntry; onEdit: () => void;
   return (
     <div style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: 10, padding: "13px 14px" }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-        <span style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(255,255,255,.06)", display: "grid", placeItems: "center", flex: "none", color: "var(--text-muted)" }}>
+        <span style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(var(--ov-color),.06)", display: "grid", placeItems: "center", flex: "none", color: "var(--text-muted)" }}>
           <Icon name={app.app_type === "web" ? "globe" : "monitor"} size={16} stroke={1.5} />
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-primary)" }}>{app.name}</span>
-            <span style={{ fontSize: 10.5, color: "var(--text-hint)", background: "rgba(255,255,255,.06)", borderRadius: 5, padding: "2px 7px", textTransform: "capitalize" }}>{app.app_type}</span>
+            <span style={{ fontSize: 10.5, color: "var(--text-hint)", background: "rgba(var(--ov-color),.06)", borderRadius: 5, padding: "2px 7px", textTransform: "capitalize" }}>{app.app_type}</span>
           </div>
           {app.description && <div style={{ fontSize: 12, color: "var(--text-hint)", marginTop: 4, lineHeight: 1.45 }}>{app.description.slice(0, 80)}{app.description.length > 80 ? "…" : ""}</div>}
         </div>
@@ -221,18 +229,22 @@ function AppCard({ app, onEdit, onDelete }: { app: AppEntry; onEdit: () => void;
   );
 }
 
-export function SettingsScreen({ onClose, user, credits, onSignOut }: {
+export function SettingsScreen({ onClose, user, credits, onSignOut, activeProject, onProjectsChanged }: {
   onClose: () => void;
   user?: AuthUser | null;
   credits?: UserCredits | null;
   onSignOut?: () => void;
+  activeProject?: Project | null;
+  onProjectsChanged?: () => Promise<void> | void;
 }) {
-  const [section,    setSection   ] = useState("general");
+  const [area,       setArea      ] = useState<Area>("personal");
+  const [section,    setSection   ] = useState("account");
+  const [projectSection, setProjectSection] = useState<ProjectSection>("overview");
   const [apps,       setApps      ] = useState<AppEntry[]>([]);
   const [memories,   setMemories  ] = useState<MemEntry[]>([]);
   const [appModal,   setAppModal  ] = useState<{ open: boolean; app: AppEntry | null }>({ open: false, app: null });
   const [delModal,   setDelModal  ] = useState<{ open: boolean; app: AppEntry | null }>({ open: false, app: null });
-  const [theme,      setTheme     ] = useState("Dark");
+  const [theme,      setTheme     ] = useState(() => themeLabel(getStoredThemePref()));
   const [fontSize,   setFontSize  ] = useState("Medium");
   const [startupApp, setStartupApp] = useState("Last chat");
   const [autonomyMode, setAutonomyMode] = useState("Semi-automatic");
@@ -252,25 +264,19 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
   const [googleEmail, setGoogleEmail] = useState("");
   const [googleStatus, setGoogleStatus] = useState("");
   const [devMode, setDevMode] = useState(localStorage.getItem('developer_mode') === 'true');
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [newWsName, setNewWsName] = useState("");
-  const [activeWsId, setActiveWsId] = useState<string | null>(localStorage.getItem('active_workspace_id'));
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [doctorRunning, setDoctorRunning] = useState(false);
   const [devTool, setDevTool] = useState<'mcp' | 'gateway' | 'customApi' | 'catalog'>('mcp');
   const uid = user?.id ?? 'local';
 
-  const SECTIONS = ALL_SECTIONS.filter(s => !s.dev || devMode);
+  // Developer/admin surfaces require a VERIFIED admin (from Supabase via
+  // AuthUser.isAdmin) AND the developer-mode opt-in. A non-admin never sees them,
+  // and the localStorage flag alone can no longer reveal them.
+  const isAdmin = user?.isAdmin === true;
+  const refreshProjects = onProjectsChanged ?? (() => {});
 
   function toggleDevMode(v: boolean) { setDevMode(v); localStorage.setItem('developer_mode', String(v)); }
 
-  async function loadWorkspaces() { setWorkspaces(await listWorkspaces(uid)); }
-  async function addWorkspace() {
-    if (!newWsName.trim()) return;
-    await createWorkspace({ userId: uid, name: newWsName.trim(), kind: 'project' });
-    setNewWsName(''); loadWorkspaces();
-  }
-  function setActiveWorkspace(id: string) { localStorage.setItem('active_workspace_id', id); setActiveWsId(id); }
   async function runDiagnostics() { setDoctorRunning(true); try { setDoctor(await runDoctor('unknown')); } finally { setDoctorRunning(false); } }
 
   useEffect(() => {
@@ -282,14 +288,17 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
       setMemAutoSave(s.memory_auto_save === 1);
       setMemDailySummary(s.memory_daily_summary !== 0);
       setMemAskClient(s.memory_ask_client_data !== 0);
-      if (s.theme) setTheme(s.theme === 'dark' ? 'Dark' : s.theme === 'light' ? 'Light' : 'System');
+      if (s.theme) {
+        const pref = themePrefFromSetting(s.theme);
+        setTheme(themeLabel(pref));
+        applyTheme(pref); // reconcile applied theme with the saved (cross-device) preference
+      }
       if (s.autonomy_mode) {
         setAutonomyMode(s.autonomy_mode === 'manual' ? 'Manual' : s.autonomy_mode === 'full' ? 'Full autonomous' : 'Semi-automatic');
       }
     });
     getApps().then(setApps);
     getMemoryEntries().then(setMemories);
-    loadWorkspaces();
     Promise.all([
       loadPersistentSecret('GOOGLE_WORKSPACE_ACCESS_TOKEN'),
       loadPersistentSecret('GOOGLE_WORKSPACE_ACCOUNT_EMAIL'),
@@ -353,6 +362,7 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
 
   async function handleThemeChange(v: string) {
     setTheme(v);
+    applyTheme(themePrefFromSetting(v)); // flip the whole app immediately
     await updateSettings({ theme: v.toLowerCase() });
   }
 
@@ -410,13 +420,21 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
 
   return (
     <div style={{ position: "absolute", inset: 0, zIndex: 60, display: "grid", placeItems: "center", background: "rgba(0,0,0,.65)" }}>
-      <div className="modal-pop" style={{ width: 700, height: 500, background: "var(--bg-surface)", border: "1px solid var(--border-md)", borderRadius: 14, overflow: "hidden", display: "flex", boxShadow: "0 40px 100px rgba(0,0,0,.75)", position: "relative" }}>
-        <aside style={{ width: 180, flex: "none", background: "var(--bg-app)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", padding: "16px 10px 12px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 6px 16px", borderBottom: "1px solid var(--border)", marginBottom: 8 }}>
+      <div className="modal-pop" style={{ width: 720, height: 524, background: "var(--bg-surface)", border: "1px solid var(--border-md)", borderRadius: "var(--radius-lg)", overflow: "hidden", display: "flex", boxShadow: "var(--shadow-modal)", position: "relative" }}>
+        <aside style={{ width: 188, flex: "none", background: "var(--bg-app)", borderRight: "1px solid var(--border-soft)", display: "flex", flexDirection: "column", padding: "16px 10px 12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 6px 14px" }}>
             <ClickMark size={20} radius={6} />
             <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>Settings</span>
           </div>
-          {SECTIONS.map(s => (
+          {/* Segmented control: Personal vs Current Project */}
+          <div style={{ display: "flex", gap: 3, padding: 3, background: "var(--bg-app)", border: "1px solid var(--border-soft)", borderRadius: 9, marginBottom: 12 }}>
+            {([["personal", "Personal"], ["project", "Project"]] as const).map(([id, lbl]) => (
+              <button key={id} onClick={() => setArea(id)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", background: area === id ? "var(--bg-elevated)" : "transparent", color: area === id ? "var(--text-primary)" : "var(--text-muted)", boxShadow: area === id ? "0 1px 2px rgba(0,0,0,0.25), inset 0 0 0 1px var(--border-soft)" : "none", transition: "all .14s" }}>
+                {lbl}
+              </button>
+            ))}
+          </div>
+          {area === "personal" && PERSONAL_SECTIONS.map(s => (
             <button key={s.id} onClick={() => setSection(s.id)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, padding: "9px 10px", borderRadius: 8, border: "none", textAlign: "left", cursor: "pointer", background: section === s.id ? "var(--bg-elevated)" : "transparent", color: section === s.id ? "var(--text-primary)" : "var(--text-muted)", fontSize: 13, fontWeight: section === s.id ? 500 : 400, transition: "all .1s" }}
               onMouseEnter={e => { if (section !== s.id) (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"; }}
               onMouseLeave={e => { if (section !== s.id) (e.currentTarget as HTMLElement).style.background = "transparent"; }}>
@@ -424,55 +442,63 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
               {s.label}
             </button>
           ))}
+          {area === "project" && PROJECT_SECTIONS.map(s => (
+            <button key={s.id} onClick={() => setProjectSection(s.id as ProjectSection)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, padding: "9px 10px", borderRadius: 8, border: "none", textAlign: "left", cursor: "pointer", background: projectSection === s.id ? "var(--bg-elevated)" : "transparent", color: projectSection === s.id ? "var(--text-primary)" : "var(--text-muted)", fontSize: 13, fontWeight: projectSection === s.id ? 500 : 400, transition: "all .1s" }}
+              onMouseEnter={e => { if (projectSection !== s.id) (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"; }}
+              onMouseLeave={e => { if (projectSection !== s.id) (e.currentTarget as HTMLElement).style.background = "transparent"; }}>
+              <Icon name={s.icon} size={14} stroke={1.5} />
+              {s.label}
+            </button>
+          ))}
         </aside>
 
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-          <div style={{ height: 44, borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", padding: "0 20px", flex: "none", gap: 10 }}>
-            <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)", flex: 1 }}>{SECTIONS.find(s => s.id === section)?.label}</span>
-            <button onClick={onClose} style={{ color: "var(--text-hint)", background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", padding: 5, borderRadius: 6, transition: "color .1s" }}
-              onMouseEnter={e => (e.currentTarget.style.color = "var(--text-primary)")}
-              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-hint)")}>
+          <div style={{ height: 46, borderBottom: "1px solid var(--border-soft)", display: "flex", alignItems: "center", padding: "0 22px", flex: "none", gap: 10 }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)", flex: 1 }}>
+              {area === "personal"
+                ? PERSONAL_SECTIONS.find(s => s.id === section)?.label
+                : `Project · ${PROJECT_SECTIONS.find(s => s.id === projectSection)?.label}`}
+            </span>
+            <button onClick={onClose} aria-label="Close settings" style={{ color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", width: 30, height: 30, borderRadius: 7, transition: "color .12s, background .12s" }}
+              onMouseEnter={e => { e.currentTarget.style.color = "var(--text-primary)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={e => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.background = "none"; }}>
               <Icon name="x" size={16} stroke={2} />
             </button>
           </div>
 
-          <div className="scroll" style={{ flex: 1, minHeight: 0, padding: "6px 20px 20px" }}>
-            {section === "general" && (
+          <div className="scroll" style={{ flex: 1, minHeight: 0, padding: "8px 22px 22px" }}>
+            {area === "personal" && section === "account" && (
               <>
                 <SettingRow label="Startup screen" sub="Screen to show when the app launches"><Select value={startupApp} options={["Last chat","New chat","Tasks"]} onChange={setStartupApp} /></SettingRow>
                 <SettingRow label="Pause automation" sub="Temporarily suspend all tasks"><Select value={pauseHrs} options={["1 hour","4 hours","8 hours","Until tomorrow"]} onChange={setPauseHrs} /></SettingRow>
                 <SettingRow label="Launch at startup" sub="Start Click when you log in"><Toggle checked={autoStart} onChange={handleToggleAutoStart} /></SettingRow>
-                <SettingRow label="Notification sound" sub="Play a sound when tasks complete"><Toggle checked={notifSound} onChange={setNotifSound} /></SettingRow>
-                <SettingRow label="Developer mode" sub="Show diagnostics, mock MCP/gateway, custom APIs and the raw tool registry"><Toggle checked={devMode} onChange={toggleDevMode} /></SettingRow>
+                {isAdmin && (
+                  <SettingRow label="Developer mode" sub="Show diagnostics, mock MCP/gateway, custom APIs and the raw tool registry"><Toggle checked={devMode} onChange={toggleDevMode} /></SettingRow>
+                )}
                 <SettingRow label="Version" sub="Current installed build"><span style={{ fontSize: 12.5, color: "var(--text-hint)", fontFamily: "var(--font-mono)" }}>v1.9.0</span></SettingRow>
               </>
             )}
 
-            {section === "appearance" && (
+            {area === "personal" && section === "appearance" && (
               <>
                 <SettingRow label="Theme" sub="Colour scheme for the app"><Select value={theme} options={["Dark","System","Light"]} onChange={handleThemeChange} /></SettingRow>
                 <SettingRow label="Font size" sub="Size of text across the app"><Select value={fontSize} options={["Small","Medium","Large"]} onChange={setFontSize} /></SettingRow>
               </>
             )}
 
-            {section === "automation" && (
+            {area === "personal" && section === "assistant" && (
               <>
                 <SettingRow label="Control system" sub="No-mouse operator: CLI, files, browser DOM, connections and skills"><span style={{ fontSize: 12.5, color: "var(--text-hint)" }}>Always on</span></SettingRow>
                 <SettingRow label="Autonomy mode" sub="Controls when the operator asks before tool calls"><Select value={autonomyMode} options={["Semi-automatic","Manual","Full autonomous"]} onChange={handleAutonomyChange} /></SettingRow>
                 <SettingRow label="External writes" sub="Semi asks before remote writes, sends and logins; full acts silently except genuinely destructive actions"><span style={{ fontSize: 12.5, color: "var(--text-hint)" }}>Policy enforced</span></SettingRow>
                 <SettingRow label="Max task duration" sub="Abort task if it runs longer than this"><Select value="15 minutes" options={["5 minutes","10 minutes","15 minutes","30 minutes","No limit"]} onChange={() => {}} /></SettingRow>
-              </>
-            )}
-
-            {section === "behavior" && (
-              <>
                 <SettingRow label="Proactive suggestions" sub="Click suggests follow-up tasks based on context"><Toggle checked={true} onChange={() => {}} /></SettingRow>
                 <SettingRow label="Learning mode" sub="Improve task performance from your corrections"><Toggle checked={true} onChange={() => {}} /></SettingRow>
                 <SettingRow label="Verbose output" sub="Show detailed step-by-step actions in chat"><Toggle checked={false} onChange={() => {}} /></SettingRow>
               </>
             )}
 
-            {section === "memory" && (
+            {area === "personal" && section === "memory" && (
               <>
                 <div style={{ padding: "12px 0", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div>
@@ -551,7 +577,7 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
               </>
             )}
 
-            {section === "connections" && (
+            {area === "personal" && section === "connections" && (
               <>
                 <div style={{ padding: "12px 0 14px", borderBottom: "1px solid var(--border)" }}>
                   <div style={{ fontSize: 13.5, color: "var(--text-primary)", fontWeight: 600 }}>Google Workspace</div>
@@ -588,14 +614,14 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
                         <div style={{ fontSize: 12.5, color: "var(--text-primary)", fontWeight: 600 }}>{c.name}</div>
                         <div style={{ fontSize: 11.5, color: "var(--text-hint)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.description}</div>
                       </div>
-                      <span style={{ fontSize: 11, color: "var(--text-hint)", background: "rgba(255,255,255,.06)", borderRadius: 6, padding: "3px 7px" }}>{c.status}</span>
+                      <span style={{ fontSize: 11, color: "var(--text-hint)", background: "rgba(var(--ov-color),.06)", borderRadius: 6, padding: "3px 7px" }}>{c.status}</span>
                     </div>
                   ))}
                 </div>
               </>
             )}
 
-            {section === "apps" && (
+            {area === "personal" && section === "apps" && (
               <>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0 14px" }}>
                   <span style={{ fontSize: 13, color: "var(--text-hint)" }}>{apps.length} apps connected</span>
@@ -613,36 +639,16 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
               </>
             )}
 
-            {section === "workspaces" && (
+            {area === "personal" && section === "notifications" && (
               <>
                 <div style={{ fontSize: 12.5, color: "var(--text-hint)", padding: "12px 0", lineHeight: 1.5 }}>
-                  Workspaces give Larund one focused context — its own memory, connections, skills and autonomy. A default workspace always exists; switch the active one from the sidebar.
+                  Project invitations and ownership transfers arrive here and in the bell in the sidebar. Accept or decline them from the notification panel.
                 </div>
-                <div style={{ display: "flex", gap: 8, padding: "0 0 14px", borderBottom: "1px solid var(--border)" }}>
-                  <input value={newWsName} onChange={e => setNewWsName(e.target.value)} placeholder="New workspace name" onKeyDown={e => e.key === 'Enter' && addWorkspace()}
-                    style={{ flex: 1, background: "var(--bg-elevated)", border: "1px solid var(--border-md)", borderRadius: 8, padding: "8px 10px", fontSize: 13, color: "var(--text-primary)", outline: "none" }} />
-                  <button onClick={addWorkspace} className="btn btn-primary" style={{ height: 34, fontSize: 12 }}>Create</button>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 10 }}>
-                  {workspaces.map(w => (
-                    <div key={w.id} style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: 9, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
-                      <Icon name="folder" size={14} stroke={1.5} style={{ color: activeWsId === w.id ? "var(--accent)" : "var(--text-hint)" }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12.5, color: "var(--text-primary)", fontWeight: 600 }}>{w.name}</div>
-                        <div style={{ fontSize: 11, color: "var(--text-hint)" }}>{w.kind} · autonomy: {w.autonomyMode}</div>
-                      </div>
-                      {activeWsId === w.id
-                        ? <span className="pill pill-blue" style={{ fontSize: 11 }}>Active</span>
-                        : <button onClick={() => setActiveWorkspace(w.id)} className="btn btn-ghost" style={{ height: 28, fontSize: 11.5 }}>Set active</button>}
-                      <button onClick={() => archiveWorkspace(w.id).then(loadWorkspaces)} className="btn btn-ghost" style={{ height: 28, fontSize: 11.5, color: "var(--text-hint)" }}>Archive</button>
-                    </div>
-                  ))}
-                  {workspaces.length === 0 && <div style={{ fontSize: 12.5, color: "var(--text-hint)", padding: 12 }}>No workspaces yet.</div>}
-                </div>
+                <SettingRow label="Notification sound" sub="Play a sound when tasks complete"><Toggle checked={notifSound} onChange={setNotifSound} /></SettingRow>
               </>
             )}
 
-            {section === "safety" && (
+            {area === "personal" && section === "advanced" && (
               <>
                 <SettingRow label="Autonomy mode" sub="Controls when Larund asks before tool calls"><Select value={autonomyMode} options={["Semi-automatic","Manual","Full autonomous"]} onChange={handleAutonomyChange} /></SettingRow>
                 <SettingRow label="No-mouse guarantee" sub="Larund never controls mouse/pixels; it acts through structured tools only"><span style={{ fontSize: 12.5, color: "var(--success)" }}>Enforced</span></SettingRow>
@@ -659,7 +665,7 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
               </>
             )}
 
-            {section === "diagnostics" && (
+            {area === "personal" && section === "advanced" && (
               <>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 0" }}>
                   <div>
@@ -683,14 +689,14 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
               </>
             )}
 
-            {section === "developer" && (
+            {area === "personal" && section === "advanced" && isAdmin && devMode && (
               <>
                 <div style={{ background: "rgba(245,165,36,.06)", border: "1px solid rgba(245,165,36,.25)", borderRadius: 10, padding: "12px 14px", margin: "12px 0", fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
                   Advanced developer surfaces — mock servers and raw registries for testing. These never run in normal product flows.
                 </div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
                   {([["mcp","Mock MCP"],["gateway","Channels (gateway)"],["customApi","Custom API"],["catalog","Tool registry"]] as const).map(([id, label]) => (
-                    <button key={id} onClick={() => setDevTool(id)} className="btn btn-ghost" style={{ height: 28, fontSize: 11.5, ...(devTool === id ? { background: "var(--accent)", color: "#04122a", borderColor: "var(--accent)" } : {}) }}>{label}</button>
+                    <button key={id} onClick={() => setDevTool(id)} className="btn btn-ghost" style={{ height: 28, fontSize: 11.5, ...(devTool === id ? { background: "var(--accent)", color: "var(--on-accent)", borderColor: "var(--accent)" } : {}) }}>{label}</button>
                   ))}
                 </div>
                 {devTool === "mcp" && <McpHubTab userId={uid} />}
@@ -700,12 +706,12 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
               </>
             )}
 
-            {section === "operator" && <OperatorPanel />}
+            {area === "personal" && section === "advanced" && isAdmin && devMode && <OperatorPanel />}
 
-            {section === "account" && (
+            {area === "personal" && section === "account" && (
               <>
                 <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "16px 0 18px", borderBottom: "1px solid var(--border)" }}>
-                  <span style={{ width: 52, height: 52, borderRadius: "50%", background: "#1A2535", display: "grid", placeItems: "center", fontSize: 16, fontWeight: 700, color: "var(--text-primary)", border: "1px solid var(--border-md)", flex: "none" }}>
+                  <span style={{ width: 52, height: 52, borderRadius: "50%", background: "var(--accent-soft)", display: "grid", placeItems: "center", fontSize: 16, fontWeight: 700, color: "var(--accent)", border: "1px solid var(--border-md)", flex: "none" }}>
                     {user?.email ? emailInitials(user.email) : 'U'}
                   </span>
                   <div>
@@ -731,9 +737,9 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
               </>
             )}
 
-            {section === "danger" && (
+            {area === "personal" && section === "advanced" && (
               <>
-                <div style={{ background: "rgba(229,72,77,.06)", border: "1px solid rgba(229,72,77,.25)", borderRadius: 10, padding: "14px 16px", marginTop: 12, marginBottom: 12 }}>
+                <div style={{ background: "rgba(229,72,77,.06)", border: "1px solid rgba(229,72,77,.25)", borderRadius: 10, padding: "14px 16px", marginTop: 16, marginBottom: 12 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 600, color: "#E5484D", marginBottom: 6 }}>Danger zone</div>
                   <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.55 }}>These actions are permanent and cannot be undone.</div>
                 </div>
@@ -744,6 +750,12 @@ export function SettingsScreen({ onClose, user, credits, onSignOut }: {
                   <button className="btn btn-danger" style={{ height: 30, fontSize: 12 }}>Delete account</button>
                 </SettingRow>
               </>
+            )}
+
+            {area === "project" && (
+              activeProject
+                ? <ProjectSettings section={projectSection} project={activeProject} userId={uid} onProjectsChanged={refreshProjects} />
+                : <div style={{ fontSize: 12.5, color: "var(--text-hint)", padding: "20px 0", lineHeight: 1.5 }}>No active project. Create or select a project from the sidebar to manage its settings.</div>
             )}
           </div>
         </div>

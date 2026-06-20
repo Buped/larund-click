@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../icons';
 import { BrandIcon } from '../BrandIcon';
+import { isDeveloperUiEnabled } from '../../lib/admin';
 import { getProvider } from '../../lib/connections/hub/status';
 import type { ConnectionProvider } from '../../lib/connections/hub/types';
 import type { ToolRisk } from '../../lib/control-system/types';
@@ -36,7 +37,7 @@ import {
 } from '../../lib/mcp/connect-provider';
 import {
   PageFrame, PageHeader, Empty, SearchInput, Badge,
-  card, btn, ghostBtn, input, labelStyle, getActiveWorkspaceId,
+  card, btn, ghostBtn, input, labelStyle,
 } from './ui';
 
 const FILTERS = ['All', 'Connected', 'Needs setup', 'Native API', 'MCP available', 'Productivity', 'Marketing', 'Development', 'Communication', 'Data'] as const;
@@ -127,8 +128,8 @@ const MCP_STATE_LABEL: Record<McpProviderState, { text: string; color: string }>
   error: { text: 'Error', color: 'var(--danger)' },
 };
 
-function McpConnectCard({ providerId, name, defaultUrl, onChanged }: { providerId: string; name: string; defaultUrl?: string; onChanged: () => void }) {
-  const ctx = { userId: 'local', workspaceId: getActiveWorkspaceId() };
+function McpConnectCard({ providerId, name, defaultUrl, projectId, onChanged }: { providerId: string; name: string; defaultUrl?: string; projectId?: string | null; onChanged: () => void }) {
+  const ctx = { userId: 'local', workspaceId: projectId ?? undefined };
   const [url, setUrl] = useState(defaultUrl ?? '');
   const [state, setState] = useState<McpProviderState>('not_configured');
   const [serverId, setServerId] = useState<string | undefined>();
@@ -187,11 +188,13 @@ function McpConnectCard({ providerId, name, defaultUrl, onChanged }: { providerI
 
 // ── Setup modal: developer setup (app creds) + user connection ─────────────────
 
-function SetupModal({ providerId, provider, name, onClose, onSaved }: { providerId: string; provider: ResolvedCatalogProvider; name: string; onClose: () => void; onSaved: () => void }) {
+function SetupModal({ providerId, provider, name, isAdmin, projectId, onClose, onSaved }: { providerId: string; provider: ResolvedCatalogProvider; name: string; isAdmin: boolean; projectId?: string | null; onClose: () => void; onSaved: () => void }) {
   const schema = envSchemaForProvider(providerId);
   const auth = getProviderAuthConfig(providerId);
   const devReady = isDeveloperSetupReady(providerId);
-  const devMode = (() => { try { return localStorage.getItem('developer_mode') === 'true'; } catch { return false; } })();
+  // Developer setup (raw app credentials) is an admin-only surface: requires
+  // verified Supabase admin state AND developer mode.
+  const devMode = isDeveloperUiEnabled(isAdmin);
   const isOAuth = auth.supportsOAuth;
   const isUserKey = auth.supportsUserApiKey;
 
@@ -263,7 +266,7 @@ function SetupModal({ providerId, provider, name, onClose, onSaved }: { provider
   }
 
   const appKeys = [...auth.appCredentials.requiredEnv, ...auth.appCredentials.optionalEnv];
-  const showDevCard = appKeys.length > 0 && (devMode || !devReady);
+  const showDevCard = appKeys.length > 0 && devMode;
 
   return (
     <div className="scrim" style={{ position: 'fixed', inset: 0, display: 'grid', placeItems: 'center', zIndex: 90, background: 'rgba(0,0,0,.65)' }}>
@@ -325,7 +328,7 @@ function SetupModal({ providerId, provider, name, onClose, onSaved }: { provider
 
         {/* One-click MCP connect for any provider that supports a remote MCP server */}
         {provider.supportsMcp && (
-          <McpConnectCard providerId={provider.id} name={provider.name} defaultUrl={defaultMcpUrl(provider)} onChanged={onSaved} />
+          <McpConnectCard providerId={provider.id} name={provider.name} defaultUrl={defaultMcpUrl(provider)} projectId={projectId} onChanged={onSaved} />
         )}
 
         {/* Developer setup (app-level OAuth creds) — only when missing or in Developer Mode */}
@@ -371,7 +374,7 @@ function SetupModal({ providerId, provider, name, onClose, onSaved }: { provider
 
 // ── Detail ────────────────────────────────────────────────────────────────────
 
-function ProviderDetail({ provider, onBack, onChanged }: { provider: ResolvedCatalogProvider; onBack: () => void; onChanged: () => void }) {
+function ProviderDetail({ provider, isAdmin, projectId, onBack, onChanged }: { provider: ResolvedCatalogProvider; isAdmin: boolean; projectId?: string | null; onBack: () => void; onChanged: () => void }) {
   const [setup, setSetup] = useState(false);
   const [, force] = useState(0);
   const st = RUNTIME_LABEL[provider.runtime];
@@ -473,7 +476,7 @@ function ProviderDetail({ provider, onBack, onChanged }: { provider: ResolvedCat
                           <button key={opt} onClick={() => setToolPolicy(t.name, opt)} style={{
                             fontSize: 10.5, padding: '4px 8px', borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', border: '1px solid var(--border)',
                             background: pol === opt ? (opt === 'block' ? 'var(--danger)' : opt === 'ask' ? 'var(--warning)' : 'var(--success)') : 'transparent',
-                            color: pol === opt ? '#04122a' : 'var(--text-hint)', fontWeight: pol === opt ? 650 : 400,
+                            color: pol === opt ? 'var(--on-accent)' : 'var(--text-hint)', fontWeight: pol === opt ? 650 : 400,
                           }}>{opt === 'ask' ? 'Ask' : opt === 'allow' ? 'Allow' : 'Block'}</button>
                         ))}
                       </div>
@@ -492,14 +495,14 @@ function ProviderDetail({ provider, onBack, onChanged }: { provider: ResolvedCat
         )
       )}
 
-      {setup && <SetupModal providerId={setupProviderId} provider={provider} name={provider.parentProviderId ? 'Google Workspace' : provider.name} onClose={() => setSetup(false)} onSaved={onChanged} />}
+      {setup && <SetupModal providerId={setupProviderId} provider={provider} name={provider.parentProviderId ? 'Google Workspace' : provider.name} isAdmin={isAdmin} projectId={projectId} onClose={() => setSetup(false)} onSaved={onChanged} />}
     </PageFrame>
   );
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export function ConnectionsPage() {
+export function ConnectionsPage({ isAdmin, projectId }: { isAdmin: boolean; projectId?: string | null }) {
   const [base, setBase] = useState<ResolvedCatalogProvider[]>(() => listCatalogProviders());
   // Live runtime overrides for MCP/CLI-backed providers, whose real state lives in
   // the async MCP store and can't be seen by the synchronous catalog resolver.
@@ -512,7 +515,7 @@ export function ConnectionsPage() {
   function refresh() { setBase(listCatalogProviders()); void loadMcpRuntime(); }
 
   async function loadMcpRuntime() {
-    const ctx = { userId: 'local', workspaceId: getActiveWorkspaceId() };
+    const ctx = { userId: 'local', workspaceId: projectId ?? undefined };
     const overrides: Record<string, RuntimeConnectionState> = {};
     for (const p of listCatalogProviders()) {
       // Only MCP-primary providers; native-first ones keep their registry state so
@@ -528,13 +531,13 @@ export function ConnectionsPage() {
     }
     setMcpRuntime(overrides);
   }
-  useEffect(() => { void loadMcpRuntime(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { void loadMcpRuntime(); /* eslint-disable-next-line */ }, [projectId]);
 
   // Overlay live MCP state onto the catalog base.
   const providers = base.map((p) => (mcpRuntime[p.id] ? { ...p, runtime: mcpRuntime[p.id] } : p));
   const selected = providers.find((p) => p.id === selectedId);
-  if (selected?.id === 'higgsfield') return <HiggsfieldDetail onBack={() => { setSelectedId(null); refresh(); }} />;
-  if (selected) return <ProviderDetail provider={selected} onBack={() => { setSelectedId(null); refresh(); }} onChanged={refresh} />;
+  if (selected?.id === 'higgsfield') return <HiggsfieldDetail projectId={projectId} onBack={() => { setSelectedId(null); refresh(); }} />;
+  if (selected) return <ProviderDetail provider={selected} isAdmin={isAdmin} projectId={projectId} onBack={() => { setSelectedId(null); refresh(); }} onChanged={refresh} />;
 
   const NEEDS_SETUP: RuntimeConnectionState[] = ['ready_to_connect', 'api_key_required', 'developer_setup_missing', 'needs_reconnect'];
   function matches(p: ResolvedCatalogProvider): boolean {
@@ -596,7 +599,7 @@ export function ConnectionsPage() {
       <SearchInput value={query} onChange={setQuery} placeholder="Search connections…" />
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16, alignItems: 'center' }}>
         {FILTERS.map((c) => (
-          <button key={c} onClick={() => setFilter(c)} style={{ ...ghostBtn, ...(filter === c ? { background: 'var(--accent)', color: '#04122a', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }}>{c}</button>
+          <button key={c} onClick={() => setFilter(c)} style={{ ...ghostBtn, ...(filter === c ? { background: 'var(--accent)', color: 'var(--on-accent)', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }}>{c}</button>
         ))}
         <div style={{ flex: 1 }} />
         <button onClick={() => setShowUpcoming((v) => !v)} style={{ ...ghostBtn, ...(showUpcoming ? { color: 'var(--accent)', borderColor: 'rgba(74,158,255,.4)' } : {}) }}>

@@ -190,7 +190,7 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '14px 18px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
           {STEPS.map((s, i) => (
             <button key={s} onClick={() => i <= step && setStep(i)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: i <= step ? 'pointer' : 'default', fontFamily: 'inherit' }}>
-              <span style={{ width: 20, height: 20, borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700, background: i === step ? 'var(--accent)' : i < step ? 'rgba(62,207,142,.2)' : 'rgba(255,255,255,.07)', color: i === step ? '#04122a' : i < step ? 'var(--success)' : 'var(--text-hint)' }}>{i < step ? '✓' : i + 1}</span>
+              <span style={{ width: 20, height: 20, borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700, background: i === step ? 'var(--accent)' : i < step ? 'rgba(62,207,142,.2)' : 'rgba(var(--ov-color),.07)', color: i === step ? 'var(--on-accent)' : i < step ? 'var(--success)' : 'var(--text-hint)' }}>{i < step ? '✓' : i + 1}</span>
               <span style={{ fontSize: 12, color: i === step ? 'var(--text-primary)' : 'var(--text-hint)', fontWeight: i === step ? 600 : 400 }}>{s}</span>
               {i < STEPS.length - 1 && <span style={{ width: 12, height: 1, background: 'var(--border)', margin: '0 2px' }} />}
             </button>
@@ -214,7 +214,7 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
             <div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
                 {TRIGGER_CARDS.map((t) => (
-                  <button key={t.kind} disabled={t.disabled} onClick={() => setTkind(t.kind)} style={{ textAlign: 'left', padding: 12, borderRadius: 10, cursor: t.disabled ? 'default' : 'pointer', fontFamily: 'inherit', background: tkind === t.kind ? 'rgba(74,158,255,.1)' : 'rgba(255,255,255,.03)', border: `1px solid ${tkind === t.kind ? 'var(--accent)' : 'var(--border)'}`, opacity: t.disabled ? 0.5 : 1 }}>
+                  <button key={t.kind} disabled={t.disabled} onClick={() => setTkind(t.kind)} style={{ textAlign: 'left', padding: 12, borderRadius: 10, cursor: t.disabled ? 'default' : 'pointer', fontFamily: 'inherit', background: tkind === t.kind ? 'rgba(74,158,255,.1)' : 'rgba(var(--ov-color),.03)', border: `1px solid ${tkind === t.kind ? 'var(--accent)' : 'var(--border)'}`, opacity: t.disabled ? 0.5 : 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{t.label}</div>
                     <div style={{ fontSize: 11.5, color: 'var(--text-hint)', marginTop: 3 }}>{t.desc}</div>
                   </button>
@@ -349,7 +349,7 @@ function SafetyRow({ label, value, options, onChange }: { label: string; value: 
       <div style={{ ...labelStyle, marginBottom: 6 }}>{label}</div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {options.map(([v, lbl]) => (
-          <button key={v} onClick={() => onChange(v)} style={{ ...ghostBtn, ...(value === v ? { background: 'var(--accent)', color: '#04122a', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }}>{lbl}</button>
+          <button key={v} onClick={() => onChange(v)} style={{ ...ghostBtn, ...(value === v ? { background: 'var(--accent)', color: 'var(--on-accent)', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }}>{lbl}</button>
         ))}
       </div>
     </div>

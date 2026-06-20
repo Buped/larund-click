@@ -109,9 +109,11 @@ export async function createAutomationRun(input: {
   status?: AutomationRunStatus;
   triggerPayload?: Record<string, unknown>;
 }): Promise<AutomationRun> {
+  const automation = await getAutomation(input.automationId);
   const run: AutomationRun = {
     id: id('auto-run'),
     automationId: input.automationId,
+    workspaceId: automation?.workspaceId,
     status: input.status ?? 'queued',
     startedAt: input.status === 'skipped' ? undefined : new Date().toISOString(),
     completedAt: input.status === 'skipped' ? new Date().toISOString() : undefined,

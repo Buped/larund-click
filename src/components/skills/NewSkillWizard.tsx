@@ -83,7 +83,7 @@ export function NewSkillWizard({ userId, workspaceId, onClose, onSaved }: {
     <div className="scrim" style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(0,0,0,.72)', display: 'grid', placeItems: 'center' }}>
       <div className="modal-pop" style={{ width: 780, maxWidth: '94vw', maxHeight: '92vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-surface)', border: '1px solid var(--border-md)', borderRadius: 14, overflow: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: 14, borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
-          {STEPS.map((s, i) => <button key={s} onClick={() => setStep(i)} style={{ ...ghostBtn, ...(i === step ? { background: 'var(--accent)', color: '#04122a', borderColor: 'var(--accent)' } : {}) }}>{i + 1}. {s}</button>)}
+          {STEPS.map((s, i) => <button key={s} onClick={() => setStep(i)} style={{ ...ghostBtn, ...(i === step ? { background: 'var(--accent)', color: 'var(--on-accent)', borderColor: 'var(--accent)' } : {}) }}>{i + 1}. {s}</button>)}
           <div style={{ flex: 1 }} />
           <button style={ghostBtn} onClick={onClose}><Icon name="x" size={14} /></button>
         </div>

@@ -7,10 +7,11 @@
 
 import { getDb } from '../database';
 import { InMemoryBackend, setRecordBackend, type RecordBackend, type RecordRow } from './persistence';
+import { HybridWorkflowRecordBackend, SupabaseWorkflowRecordBackend } from './supabase-workflow-backend';
 
 const TABLE = 'coworker_kv';
 
-class SqlBackend implements RecordBackend {
+export class SqlBackend implements RecordBackend {
   async all(collection: string): Promise<RecordRow[]> {
     const db = await getDb();
     const rows = await db.select<Array<{ data: string }>>(
@@ -67,7 +68,7 @@ export async function installSqlCoworkerBackend(): Promise<void> {
         PRIMARY KEY (collection, id)
       )
     `);
-    setRecordBackend(new SqlBackend());
+    setRecordBackend(new HybridWorkflowRecordBackend(new SqlBackend(), new SupabaseWorkflowRecordBackend()));
     installed = true;
   } catch (err) {
     console.warn('Coworker SQL backend unavailable, using in-memory store:', err);

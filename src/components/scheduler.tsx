@@ -158,7 +158,7 @@ function MentionInput({ value, onChange, placeholder, apps }: {
               style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, padding: "8px 10px", borderRadius: 6, fontSize: 13, color: "var(--text-primary)", background: "none", border: "none", cursor: "pointer", transition: "background .1s" }}
               onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
               onMouseLeave={e => (e.currentTarget.style.background = "none")}>
-              <span style={{ width: 20, height: 20, borderRadius: 5, background: "rgba(255,255,255,.07)", display: "grid", placeItems: "center", flex: "none" }}>
+              <span style={{ width: 20, height: 20, borderRadius: 5, background: "rgba(var(--ov-color),.07)", display: "grid", placeItems: "center", flex: "none" }}>
                 <Icon name={a.app_type === "web" ? "globe" : "monitor"} size={12} stroke={1.5} style={{ color: "var(--accent)" }} />
               </span>
               {a.name}
@@ -241,7 +241,7 @@ function TaskEditor({ task, apps, onSave, onClose, onDelete }: {
           <div className="sec-label" style={{ marginBottom: 8 }}>Frequency</div>
           <div style={{ display: "flex", gap: 5 }}>
             {FREQ_OPTS.map(opt => (
-              <button key={opt} onClick={() => setFreq(opt)} style={{ flex: 1, padding: "7px 0", borderRadius: 7, border: "1px solid", fontSize: 12, fontWeight: 500, cursor: "pointer", background: freq === opt ? "var(--accent)" : "var(--bg-elevated)", borderColor: freq === opt ? "var(--accent)" : "var(--border-md)", color: freq === opt ? "#04122a" : "var(--text-muted)", transition: "all .12s" }}>{opt}</button>
+              <button key={opt} onClick={() => setFreq(opt)} style={{ flex: 1, padding: "7px 0", borderRadius: 7, border: "1px solid", fontSize: 12, fontWeight: 500, cursor: "pointer", background: freq === opt ? "var(--accent)" : "var(--bg-elevated)", borderColor: freq === opt ? "var(--accent)" : "var(--border-md)", color: freq === opt ? "var(--on-accent)" : "var(--text-muted)", transition: "all .12s" }}>{opt}</button>
             ))}
           </div>
         </div>
@@ -264,7 +264,7 @@ function TaskEditor({ task, apps, onSave, onClose, onDelete }: {
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--bg-elevated)", borderRadius: 10, padding: "11px 14px", border: "1px solid var(--border)" }}>
           <span style={{ fontSize: 13, color: "var(--text-primary)" }}>Enable task</span>
-          <button onClick={() => setEnabled(v => !v)} style={{ width: 38, height: 22, borderRadius: 11, background: enabled ? "var(--accent)" : "rgba(255,255,255,.1)", border: "none", cursor: "pointer", position: "relative", transition: "background .2s" }}>
+          <button onClick={() => setEnabled(v => !v)} style={{ width: 38, height: 22, borderRadius: 11, background: enabled ? "var(--accent)" : "rgba(var(--ov-color),.1)", border: "none", cursor: "pointer", position: "relative", transition: "background .2s" }}>
             <span style={{ position: "absolute", top: 3, left: enabled ? 19 : 3, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left .2s", display: "block" }} />
           </button>
         </div>

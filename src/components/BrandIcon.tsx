@@ -20,12 +20,14 @@ export function BrandIcon({ providerId, size = 38, radius = 10 }: { providerId: 
   const glyph = Math.round(size * 0.56);
 
   if (icon.source === 'simple-icons' && icon.path) {
-    // Keep the brand colour, but lighten near-black marks so they read on a dark tile.
-    const fill = luminance(icon.hex) < 0.16 ? '#e9e9ec' : `#${icon.hex}`;
+    // Keep the brand colour, but nudge near-black/near-white marks so they read
+    // on the tile in either theme (lighten on dark, darken on light).
+    const isLight = typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'light';
+    const fill = luminance(icon.hex) < 0.16 ? (isLight ? '#1B1A17' : '#e9e9ec') : `#${icon.hex}`;
     return (
       <span
         title={icon.title}
-        style={{ width: size, height: size, borderRadius: radius, background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-md, rgba(255,255,255,0.10))', display: 'grid', placeItems: 'center', flex: 'none' }}
+        style={{ width: size, height: size, borderRadius: radius, background: 'rgba(var(--ov-color),0.06)', border: '1px solid var(--border-md, rgba(var(--ov-color),0.10))', display: 'grid', placeItems: 'center', flex: 'none' }}
       >
         <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill={fill} aria-hidden="true" role="img">
           <path d={icon.path} />

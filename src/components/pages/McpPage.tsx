@@ -26,7 +26,7 @@ function dangerousRisk(r: ToolRisk): boolean {
   return r === 'external_send' || r === 'destructive' || r === 'process_exec';
 }
 
-function AddServerModal({ userId, onClose, onCreated }: { userId: string; onClose: () => void; onCreated: (id: string) => void }) {
+function AddServerModal({ userId, projectId, onClose, onCreated }: { userId: string; projectId?: string | null; onClose: () => void; onCreated: (id: string) => void }) {
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [transport, setTransport] = useState<'streamable_http' | 'stdio'>('streamable_http');
@@ -57,7 +57,7 @@ function AddServerModal({ userId, onClose, onCreated }: { userId: string; onClos
       }
       const server = await createMcpServer({
         userId,
-        workspaceId: localStorage.getItem('active_workspace_id') ?? undefined,
+        workspaceId: projectId ?? undefined,
         name: name.trim(),
         description: transport === 'streamable_http' ? url.trim() : command.trim(),
         transport,
@@ -84,7 +84,7 @@ function AddServerModal({ userId, onClose, onCreated }: { userId: string; onClos
         <Field label="Transport">
           <div style={{ display: 'flex', gap: 6 }}>
             {(['streamable_http', 'stdio'] as const).map((t) => (
-              <button key={t} onClick={() => setTransport(t)} style={{ ...ghostBtn, ...(transport === t ? { background: 'var(--accent)', color: '#04122a', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }}>{t === 'streamable_http' ? 'Remote HTTP' : 'Local stdio (advanced)'}</button>
+              <button key={t} onClick={() => setTransport(t)} style={{ ...ghostBtn, ...(transport === t ? { background: 'var(--accent)', color: 'var(--on-accent)', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }}>{t === 'streamable_http' ? 'Remote HTTP' : 'Local stdio (advanced)'}</button>
             ))}
           </div>
         </Field>
@@ -97,7 +97,7 @@ function AddServerModal({ userId, onClose, onCreated }: { userId: string; onClos
         <Field label="Trust level">
           <div style={{ display: 'flex', gap: 6 }}>
             {(['untrusted', 'trusted'] as McpTrustLevel[]).map((t) => (
-              <button key={t} onClick={() => setTrust(t)} style={{ ...ghostBtn, ...(trust === t ? { background: 'var(--accent)', color: '#04122a', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }}>{t}</button>
+              <button key={t} onClick={() => setTrust(t)} style={{ ...ghostBtn, ...(trust === t ? { background: 'var(--accent)', color: 'var(--on-accent)', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }}>{t}</button>
             ))}
           </div>
         </Field>
@@ -203,8 +203,8 @@ function maskUrl(url?: string): string {
   try { const u = new URL(url); return `${u.protocol}//${u.host}${u.pathname}`; } catch { return url; }
 }
 
-export function McpPage({ userId }: { userId: string }) {
-  const servers = useAsyncList<McpServerConfig>(() => listMcpServers({ userId }), [userId]);
+export function McpPage({ userId, projectId }: { userId: string; projectId?: string | null }) {
+  const servers = useAsyncList<McpServerConfig>(() => listMcpServers({ userId, workspaceId: projectId ?? undefined }), [userId, projectId]);
   const [adding, setAdding] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -244,7 +244,7 @@ export function McpPage({ userId }: { userId: string }) {
         </button>
       ))}
 
-      {adding && <AddServerModal userId={userId} onClose={() => setAdding(false)} onCreated={(id) => { setAdding(false); servers.reload(); setSelectedId(id); }} />}
+      {adding && <AddServerModal userId={userId} projectId={projectId} onClose={() => setAdding(false)} onCreated={(id) => { setAdding(false); servers.reload(); setSelectedId(id); }} />}
     </PageFrame>
   );
 }
