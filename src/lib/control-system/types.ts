@@ -55,6 +55,27 @@ export type ControlAction =
   | { action: 'doc.write_txt'; path: string; content: string }
   | { action: 'doc.write_docx'; path: string; content: string; title?: string; tables?: string[][][] }
 
+  // Local artifact generation. These actions create first-class, verified files
+  // under Larund's local artifact storage instead of plain placeholder text.
+  | { action: 'artifact.plan'; request: string; references?: string[] }
+  | { action: 'artifact.render_pdf'; model: import('../artifacts').DocumentArtifactModel | import('../artifacts').InvoiceArtifactModel; template_id?: string; output_name?: string; title?: string }
+  | { action: 'artifact.design_lint'; path: string; kind?: string; model?: unknown }
+  | { action: 'artifact.render_docx'; model: import('../artifacts').DocumentArtifactModel; template_id?: string; output_name?: string; title?: string }
+  | { action: 'artifact.render_pptx'; model: import('../artifacts').PresentationArtifactModel | import('../artifacts/presentation').PresentationDeckModel; template_id?: string; output_name?: string; title?: string }
+  | { action: 'presentation.quality_lint'; model: import('../artifacts/presentation').PresentationDeckModel; expected_slide_count?: number }
+  | { action: 'artifact.convert'; from_path: string; to: 'pdf' | 'docx' | 'pptx' | 'html'; output_name?: string }
+  | { action: 'artifact.preview'; path: string; pages?: number[] }
+  | { action: 'artifact.verify'; path: string; expected_text?: string[]; expected_kind?: import('../artifacts').ArtifactKind }
+  | { action: 'artifact.list'; workspace_id?: string; task_id?: string }
+  | { action: 'artifact.open'; path: string }
+  | { action: 'artifact.copy_to'; artifact_id?: string; from_path?: string; target_dir: string }
+  | { action: 'artifact.pdf_merge'; paths: string[]; output_path: string }
+  | { action: 'artifact.pdf_split'; path: string; output_dir: string; pages?: number[] }
+  | { action: 'artifact.pdf_watermark'; path: string; output_path: string; text: string }
+  | { action: 'artifact.pdf_extract_text'; path: string }
+  | { action: 'artifact.pdf_metadata'; path: string }
+  | { action: 'artifact.pdf_page_count'; path: string }
+
   // ── Clipboard ─────────────────────────────────────────────────────────
   | { action: 'clipboard.get' }
   | { action: 'clipboard.set'; text: string }

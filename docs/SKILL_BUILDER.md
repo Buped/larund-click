@@ -67,3 +67,6 @@ ranking + runtime inclusion, disabled exclusion, dry-run, suggestion thresholds.
 - No arbitrary code execution; a skill is instructions + an allowed-tool list.
 - `inputSchema`/`outputSchema` are stored but not yet enforced at runtime.
 - Skill versioning is a simple patch bump on edits to steps/tools/verification.
+## v2 Authoring Notes
+
+Builder-created skills compile to `SKILL.md` and run through the same parser, router, `skill.run`, allowed-tool gate, and completion guard as bundled skills. Authors should declare `when_to_use`, `when_not_to_use`, `allowed_tools`, required connections/MCP servers, risk, and a verification checklist. See `docs/SKILL_AUTHORING_GUIDE.md`.

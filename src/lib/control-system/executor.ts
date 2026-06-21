@@ -6,6 +6,8 @@ import { readDocument, readManyDocuments, summarizeReadResults, scanFolder, read
 import { getCredentialForDomain, getCredential, resolveCredentialPassword, markCredentialUsed, normalizeDomain } from '../credentials/store';
 import { getApp, markAppUsed } from '../apps/store';
 import { getBrowserProfile, DEFAULT_BROWSER_PROFILE } from '../browser/profiles';
+import { planArtifact } from '../artifacts/planner';
+import { lintPresentation } from '../artifacts/presentation/quality-lint';
 
 /** Resolve a browser-profile id to the launch config the Rust layer expects. The
  *  managed default needs no config (Rust defaults to Agent Chrome). */
@@ -245,6 +247,94 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
         title: action.title ?? null,
         tables: action.tables ?? null,
       });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+
+    case 'artifact.plan': {
+      return { success: true, output: JSON.stringify(planArtifact(action.request, action.references ?? []), null, 2) };
+    }
+    case 'artifact.render_pdf': {
+      const r = await tryInvoke<string>('artifact_render_pdf', {
+        title: action.title ?? action.model.title,
+        model: action.model,
+        templateId: action.template_id ?? null,
+        outputName: action.output_name ?? null,
+        options: null,
+      });
+      return r.ok ? { success: true, output: r.value, details: { artifact: JSON.parse(r.value) } } : ERR(r.error);
+    }
+    case 'artifact.render_docx': {
+      const r = await tryInvoke<string>('artifact_render_docx', {
+        title: action.title ?? action.model.title,
+        model: action.model,
+        templateId: action.template_id ?? null,
+        outputName: action.output_name ?? null,
+      });
+      return r.ok ? { success: true, output: r.value, details: { artifact: JSON.parse(r.value) } } : ERR(r.error);
+    }
+    case 'artifact.render_pptx': {
+      const r = await tryInvoke<string>('artifact_render_pptx', {
+        title: action.title ?? action.model.title,
+        model: action.model,
+        templateId: action.template_id ?? null,
+        outputName: action.output_name ?? null,
+      });
+      return r.ok ? { success: true, output: r.value, details: { artifact: JSON.parse(r.value) } } : ERR(r.error);
+    }
+    case 'artifact.convert': {
+      const r = await tryInvoke<string>('artifact_convert', { fromPath: action.from_path, to: action.to, outputName: action.output_name ?? null });
+      return r.ok ? { success: true, output: r.value, details: { artifact: JSON.parse(r.value) } } : ERR(r.error);
+    }
+    case 'artifact.preview': {
+      const r = await tryInvoke<string>('artifact_preview', { path: action.path, pages: action.pages ?? null });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'artifact.verify': {
+      const r = await tryInvoke<string>('artifact_verify', { path: action.path, expectedText: action.expected_text ?? [], expectedKind: action.expected_kind ?? null });
+      return r.ok ? { success: true, output: r.value, details: { artifactVerification: JSON.parse(r.value) } } : ERR(r.error);
+    }
+    case 'artifact.design_lint': {
+      const r = await tryInvoke<string>('artifact_design_lint', { path: action.path, kind: action.kind ?? null, model: action.model ?? null });
+      return r.ok ? { success: true, output: r.value, details: { artifactDesignLint: JSON.parse(r.value) } } : ERR(r.error);
+    }
+    case 'presentation.quality_lint': {
+      const result = lintPresentation(action.model, action.expected_slide_count);
+      return { success: true, output: JSON.stringify(result, null, 2), details: { presentationLint: result } };
+    }
+    case 'artifact.list': {
+      const r = await tryInvoke<string>('artifact_list', { workspaceId: action.workspace_id ?? null, taskId: action.task_id ?? null });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'artifact.open': {
+      const r = await tryInvoke<string>('artifact_open', { path: action.path });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'artifact.copy_to': {
+      const r = await tryInvoke<string>('artifact_copy_to', { artifactId: action.artifact_id ?? null, fromPath: action.from_path ?? null, targetDir: action.target_dir });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'artifact.pdf_extract_text': {
+      const r = await tryInvoke<string>('artifact_pdf_extract_text', { path: action.path });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'artifact.pdf_metadata': {
+      const r = await tryInvoke<string>('artifact_pdf_metadata', { path: action.path });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'artifact.pdf_page_count': {
+      const r = await tryInvoke<number>('artifact_pdf_page_count', { path: action.path });
+      return r.ok ? { success: true, output: String(r.value) } : ERR(r.error);
+    }
+    case 'artifact.pdf_merge': {
+      const r = await tryInvoke<string>('artifact_pdf_merge', { paths: action.paths, outputPath: action.output_path });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'artifact.pdf_split': {
+      const r = await tryInvoke<string>('artifact_pdf_split', { path: action.path, outputDir: action.output_dir, pages: action.pages ?? null });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'artifact.pdf_watermark': {
+      const r = await tryInvoke<string>('artifact_pdf_watermark', { path: action.path, outputPath: action.output_path, text: action.text });
       return r.ok ? { success: true, output: r.value } : ERR(r.error);
     }
 

@@ -52,3 +52,6 @@ skills and workflows — never by controlling a mouse or cursor.
 The design follows OpenClaw architecturally (gateway / agent runtime / tools /
 skills / connections / workflows / approvals / audit) rather than copying code.
 See [ROADMAP_OPENCLAW_STYLE.md](ROADMAP_OPENCLAW_STYLE.md).
+## Skill Runtime Layer
+
+The operator loop builds coworker context, routes skills with `src/lib/skills/router.ts`, preloads the primary skill when confidence is high, and adds `task-verification` for write/external work. `skill.run` returns structured runtime context. `src/lib/tools/run.ts` enforces active-skill allowed tools, and `src/lib/control-system/completion-guard.ts` blocks completion until read-back evidence satisfies active skill verification. See `docs/SKILL_ENGINE_V2.md`.

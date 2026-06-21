@@ -13,7 +13,7 @@ export function loadSkillFromMarkdown(text: string, source: SkillSource): Skill 
       error: parsed.error,
     };
   }
-  return { manifest: parsed.manifest, body: parsed.body, source, enabled: true };
+  return { manifest: parsed.manifest, body: parsed.body, source, enabled: parsed.manifest.status !== 'disabled' && parsed.manifest.status !== 'blocked' };
 }
 
 /**

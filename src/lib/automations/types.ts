@@ -17,7 +17,16 @@ export type AutomationTrigger =
   | { kind: 'manual' }
   | { kind: 'webhook'; secretRef?: string }
   | { kind: 'connection_event'; providerId: string; eventType: string; filter?: Record<string, unknown> }
-  | { kind: 'folder_watch'; path: string; pattern?: string };
+  | {
+      kind: 'folder_watch';
+      path: string;
+      pattern?: string;
+      event?: 'file_created' | 'file_modified' | 'file_created_or_modified';
+      debounceMs?: number;
+      stableForMs?: number;
+      includeSubfolders?: boolean;
+      pollIntervalMs?: number;
+    };
 
 export interface AutomationTaskTemplate {
   prompt: string;

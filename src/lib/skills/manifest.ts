@@ -7,7 +7,7 @@
 import type { ToolRisk } from '../control-system/types';
 import type { Skill, SkillSource } from './types';
 
-export type SkillManifestSource = 'bundled' | 'workspace' | 'user' | 'marketplace';
+export type SkillManifestSource = 'bundled' | 'workspace' | 'user' | 'marketplace' | 'imported';
 
 export interface RichSkillManifest {
   id: string;
@@ -25,6 +25,12 @@ export interface RichSkillManifest {
   whenNotToUse: string[];
   enabledByDefault: boolean;
   source: SkillManifestSource;
+  status?: string;
+  originRepo?: string;
+  originPath?: string;
+  tags: string[];
+  supportsAutomation: boolean;
+  supportsManualRun: boolean;
 }
 
 const DEFAULT_VERSION = '1.0.0';
@@ -95,5 +101,11 @@ export function toRichManifest(skill: Skill): RichSkillManifest {
     whenNotToUse: m.when_not_to_use ?? [],
     enabledByDefault: m.enabled_by_default ?? true,
     source,
+    status: m.status,
+    originRepo: m.origin_repo,
+    originPath: m.origin_path,
+    tags: m.tags ?? [],
+    supportsAutomation: m.supports_automation ?? true,
+    supportsManualRun: m.supports_manual_run ?? true,
   };
 }

@@ -83,6 +83,23 @@ export function SkillDetailModal({ skill, userId, workspaceId, onClose, onChange
     onChanged();
   }
 
+  function dryRun() {
+    localStorage.setItem('pending_skill_dry_run', JSON.stringify({
+      skillId: skill.id,
+      name: skill.name,
+      allowedTools: skill.allowedTools,
+      requiredConnections: skill.requiredConnections,
+      verificationChecklist: skill.verificationChecklist.map((v) => v.title),
+      createdAt: new Date().toISOString(),
+    }));
+  }
+
+  async function mention() {
+    const text = `@${skill.name}`;
+    localStorage.setItem('pending_chat_skill_mention', text);
+    await navigator.clipboard?.writeText(text).catch(() => undefined);
+  }
+
   return (
     <div className="scrim" style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(0,0,0,.72)', display: 'grid', placeItems: 'center' }}>
       <div className="modal-pop" style={{ width: 900, maxWidth: '94vw', maxHeight: '92vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-surface)', border: '1px solid var(--border-md)', borderRadius: 14, overflow: 'hidden' }}>
@@ -132,7 +149,9 @@ export function SkillDetailModal({ skill, userId, workspaceId, onClose, onChange
         <div style={{ display: 'flex', gap: 8, padding: 14, borderTop: '1px solid var(--border)' }}>
           <button style={ghostBtn} onClick={() => void toggle(!skill.enabled)}>{skill.enabled ? 'Disable' : 'Enable'}</button>
           <button style={ghostBtn} onClick={duplicate} disabled={saving}>Duplicate as custom skill</button>
+          <button style={ghostBtn} onClick={dryRun}>Test skill</button>
           <button style={ghostBtn} onClick={() => localStorage.setItem('pending_chat_skill_id', skill.id)}>Use in chat</button>
+          <button style={ghostBtn} onClick={mention}>Mention as @skill</button>
           <button style={ghostBtn} onClick={() => localStorage.setItem('pending_automation_skill_id', skill.id)}>Use in automation</button>
           <div style={{ flex: 1 }} />
           {editable && <button style={dangerBtn} onClick={() => deleteSkillPackage(skill.id).then(onChanged)}>Delete</button>}

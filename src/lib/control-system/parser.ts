@@ -13,6 +13,12 @@ export const ALLOWED_ACTIONS: ReadonlySet<ControlActionName> = new Set<ControlAc
   // data
   'sheet.read', 'sheet.write', 'sheet.append', 'sheet.export_csv', 'sheet.to_json',
   'doc.read', 'doc.write_txt', 'doc.write_docx',
+  // artifacts
+  'artifact.plan', 'artifact.render_pdf', 'artifact.render_docx', 'artifact.render_pptx',
+  'artifact.convert', 'artifact.preview', 'artifact.verify', 'artifact.design_lint', 'artifact.list',
+  'artifact.open', 'artifact.copy_to', 'artifact.pdf_merge', 'artifact.pdf_split',
+  'artifact.pdf_watermark', 'artifact.pdf_extract_text', 'artifact.pdf_metadata',
+  'artifact.pdf_page_count', 'presentation.quality_lint',
   // clipboard
   'clipboard.get', 'clipboard.set',
   // apps / windows / keyboard

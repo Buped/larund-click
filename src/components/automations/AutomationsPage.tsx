@@ -173,7 +173,7 @@ export function AutomationsPage({ userId, workspaceId }: { userId: string; works
 
   async function run(a: Automation) {
     const result = await runAutomation(a.id, { reason: 'manual_run' }).catch(() => null);
-    void result;
+    if (result) setMonitor({ runId: result.automationRunId, automationName: a.name });
     reload();
     void loadLatestRuns();
   }

@@ -1,4 +1,4 @@
-import type { AutomationTrigger } from '../../lib/automations/types';
+import type { AutomationRun, AutomationTrigger } from '../../lib/automations/types';
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -19,6 +19,17 @@ export function triggerSummary(trigger: AutomationTrigger): string {
       return trigger.cron ? cronToText(trigger.cron) : 'Scheduled';
     }
   }
+}
+
+export function runTriggerSummary(run: AutomationRun): string | null {
+  const payload = run.triggerPayload;
+  if (!payload || payload.kind !== 'folder_watch') return null;
+  const fileName = typeof payload.fileName === 'string'
+    ? payload.fileName
+    : typeof payload.filePath === 'string'
+      ? payload.filePath.split(/[\\/]/).pop() ?? payload.filePath
+      : 'matching file';
+  return `Triggered by folder: ${fileName}`;
 }
 
 /** Best-effort human text for the simple cron strings the wizard generates. */

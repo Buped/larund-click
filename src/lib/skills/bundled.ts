@@ -1,3 +1,5 @@
+import { GENERATED_BUNDLED_SKILL_FILES } from './generated-bundled';
+
 // Bundled skills. Kept inline (not `?raw`) so the runtime and the test runner
 // have a single, dependency-free source of truth. The matching human-facing
 // SKILL.md files live under /skills and document the same workflows.
@@ -325,6 +327,146 @@ Use this skill to compile recurring or one-off marketing performance reports fro
 - Confirm required sections and key metrics are present.
 - Never screenshot dashboards or rely on visual-only evidence.`;
 
+const artifactPdfDocument = `---
+name: artifact-pdf-document
+description: "Create beautiful local PDF documents from structured artifact models, templates, verification, and previews."
+allowed_tools: ["artifact.plan", "artifact.render_pdf", "artifact.verify", "artifact.preview", "artifact.open", "artifact.copy_to", "document.read", "folder.scan", "ask_user"]
+requires_connections: []
+risk: "local_write"
+trigger: "pdf dokumentum riport proposal ajanlat ajánlat szamla számla one-pager letoltheto letölthető"
+---
+
+# Artifact PDF Document
+Use this skill when the user asks for a local PDF, beautiful downloadable document, report, proposal, invoice, one-pager, or formatted PDF output.
+
+## Process
+1. Read referenced inputs first with document.read or folder.scan.
+2. Run artifact.plan and choose the best PDF template.
+3. Build a DocumentArtifactModel with cover, sections, tables, callouts, metrics, and page settings.
+4. Render with artifact.render_pdf; do not use plain txt/markdown as the final artifact.
+5. Verify with artifact.verify, including expected text when the user named content.
+
+## Verification
+- Confirm the PDF exists, is readable, has page count when available, and contains expected strings.
+- Completion is allowed only after artifact.verify succeeds.`;
+
+const artifactPresentation = `---
+name: artifact-presentation
+description: "Create local PPTX presentations/decks from structured slide models with verification."
+allowed_tools: ["artifact.plan", "artifact.render_pptx", "artifact.verify", "artifact.preview", "artifact.open", "artifact.copy_to", "document.read", "ask_user"]
+requires_connections: []
+risk: "local_write"
+trigger: "prezentacio prezentáció diavetites diavetítés slide pptx pitch deck dia"
+---
+
+# Artifact Presentation
+Use this skill when the user asks for a PPTX, presentation, slide deck, pitch deck, or a specific number of slides.
+
+## Process
+1. Plan the artifact and default to 16:9 unless asked otherwise.
+2. Build a PresentationArtifactModel with title, bullets, cards, timeline, comparison, quote, metrics, and closing slides.
+3. Keep slides concise; prefer cards/timelines over dense bullet walls.
+4. Render with artifact.render_pptx.
+5. Verify with artifact.verify and match requested slide count exactly.
+
+## Verification
+- Completion requires artifact.verify with readable true and the requested slideCount.`;
+
+const artifactWordDocument = `---
+name: artifact-word-document
+description: "Create editable local DOCX/Word documents from structured models with headings, tables, and verification."
+allowed_tools: ["artifact.plan", "artifact.render_docx", "artifact.convert", "artifact.verify", "artifact.preview", "artifact.open", "artifact.copy_to", "document.read", "ask_user"]
+requires_connections: []
+risk: "local_write"
+trigger: "word docx szerkesztheto szerkeszthető szerzodes szerződés dokumentacio dokumentáció"
+---
+
+# Artifact Word Document
+Use this skill when the user asks for editable Word/DOCX output, contracts, project plans, or formatted editable documents.
+
+## Process
+1. Make DOCX the primary output.
+2. Build a DocumentArtifactModel with headings, paragraphs, page breaks, tables, and simple callouts.
+3. Render with artifact.render_docx.
+4. Export PDF only when the user asks for it too, using artifact.convert if LibreOffice is available.
+
+## Verification
+- Run artifact.verify and confirm expected text is extractable.`;
+
+const artifactInvoice = `---
+name: artifact-invoice
+description: "Create professional local invoice PDFs/DOCX files while avoiding invented legal-critical invoice data."
+allowed_tools: ["artifact.plan", "artifact.render_pdf", "artifact.render_docx", "artifact.verify", "artifact.preview", "ask_user"]
+requires_connections: []
+risk: "local_write"
+trigger: "szamla számla invoice dijbekero díjbekérő fizetesi bizonylat fizetési bizonylat arajanlat árajánlat"
+---
+
+# Artifact Invoice
+Use this skill for invoices, test invoices, fee requests, receipts, and invoice-like offers.
+
+## Rules
+1. If real invoice data is missing, ask for it or clearly mark the output as TESZT/MINTA.
+2. Never invent legally critical issuer, tax number, bank, VAT, or invoice number data for a real invoice.
+3. Include line items, VAT/tax, subtotal, total, payment terms, and issuer/client blocks.
+4. Verify invoice number or test marker, issuer/client, and total amount when provided.`;
+
+const artifactBusinessReport = `---
+name: artifact-business-report
+description: "Create polished business reports as local PDF/DOCX artifacts with metrics, tables, callouts, and verification."
+allowed_tools: ["artifact.plan", "artifact.render_pdf", "artifact.render_docx", "artifact.verify", "artifact.preview", "document.read", "folder.scan", "ask_user"]
+requires_connections: []
+risk: "local_write"
+trigger: "business report uzleti riport üzleti riport executive summary osszefoglalo összefoglaló"
+---
+
+# Artifact Business Report
+Use this skill for business reports, executive summaries, performance reports, and decision docs.
+
+## Process
+1. Read referenced sources.
+2. Use a structured model with cover, executive summary, metrics, tables, risks, and next steps.
+3. Prefer premium-dark-report or modern-light-report based on the user's style request.
+4. Render and verify before completion.`;
+
+const artifactProposal = `---
+name: artifact-proposal
+description: "Create local proposal/offer artifacts in PDF and/or DOCX from one structured source model."
+allowed_tools: ["artifact.plan", "artifact.render_pdf", "artifact.render_docx", "artifact.verify", "artifact.preview", "ask_user"]
+requires_connections: []
+risk: "local_write"
+trigger: "proposal ajanlat ajánlat offer scope timeline pricing"
+---
+
+# Artifact Proposal
+Use this skill for proposals, offers, commercial documents, and scope/pricing artifacts.
+
+## Process
+1. Build one source DocumentArtifactModel.
+2. Include summary, scope, deliverables, timeline, pricing table, assumptions, and next steps.
+3. If PDF and Word are both requested, render both from the same source model.
+4. Verify every output file separately.`;
+
+const artifactVerification = `---
+name: artifact-verification
+description: "Verify local artifact files before completion: existence, readability, expected text, counts, preview, and manifest."
+allowed_tools: ["artifact.verify", "artifact.preview", "artifact.list", "artifact.pdf_extract_text", "artifact.pdf_metadata", "artifact.pdf_page_count", "file.exists", "file.metadata"]
+requires_connections: []
+risk: "read_only"
+trigger: "artifact verify ellenoriz ellenőriz preview thumbnail manifest page count slide count"
+---
+
+# Artifact Verification
+Use this skill after every artifact render and before task.complete.
+
+## Checklist
+1. File exists and size is greater than zero.
+2. File is readable by artifact.verify.
+3. Page count or slide count is present when relevant.
+4. Expected text is checked when the user provided concrete content.
+5. Preview/thumbnail exists when generated.
+6. Manifest appears in artifact.list.`;
+
 export const BUNDLED_SKILL_FILES: string[] = [
   fileOrganizer,
   browserAutomation,
@@ -339,4 +481,12 @@ export const BUNDLED_SKILL_FILES: string[] = [
   githubMaintainer,
   notionWorkspace,
   marketingReport,
+  artifactPdfDocument,
+  artifactPresentation,
+  artifactWordDocument,
+  artifactInvoice,
+  artifactBusinessReport,
+  artifactProposal,
+  artifactVerification,
+  ...GENERATED_BUNDLED_SKILL_FILES,
 ];

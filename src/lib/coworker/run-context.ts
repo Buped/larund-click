@@ -10,7 +10,8 @@ import type { Workspace } from '../workspaces/types';
 import { getRelevantMemory, markMemoryUsed } from '../memory/store';
 import { renderRelevantMemory } from '../memory/prompt';
 import { listRichSkillManifestsAsync } from '../skills/runner';
-import { rankSkillsForTask, renderRelevantSkills } from '../skills/ranking';
+import { routeSkills, renderSkillRoutePrompt, type SkillRouterResult } from '../skills/router';
+import { TOOL_CATALOG } from '../tools/registry';
 import { availableConnectionIds } from '../connections/hub/store';
 import {
   addEvidence,
@@ -35,6 +36,7 @@ export interface CoworkerPromptContext {
   /** Role + workflow template selected for this run, for task metadata. */
   roleId?: string;
   workflowTemplateId?: string;
+  skillRoute?: SkillRouterResult;
 }
 
 /**
@@ -86,13 +88,16 @@ export async function buildCoworkerPromptContext(args: {
     // Relevant, workspace-enabled skills (bundled + custom builder skills),
     // biased by the selected role's preferred skills/categories.
     const manifests = await listRichSkillManifestsAsync(args.userId, workspace.id);
-    const ranked = rankSkillsForTask(manifests, args.task, {
-      enabledSkillIds: workspace.enabledSkillIds.length ? workspace.enabledSkillIds : undefined,
-      availableConnectionIds: connIds,
-      boostSkillNames: role?.defaultSkills,
-      boostCategories: role?.categories,
+    const route = routeSkills(manifests, {
+      task: args.task,
+      userMessage: args.task,
+      activeWorkspaceId: workspace.id,
+      availableConnections: connIds,
+      availableTools: TOOL_CATALOG.map((tool) => tool.name),
+      enabledSkillIds: workspace.enabledSkillIds.length ? workspace.enabledSkillIds : [],
+      currentSurface: 'unknown',
     });
-    const skillsBlock = renderRelevantSkills(ranked);
+    const skillsBlock = renderSkillRoutePrompt(route);
     if (skillsBlock) sections.push(skillsBlock);
 
     // Workflow template steps + verification, when one was selected.
@@ -112,6 +117,7 @@ export async function buildCoworkerPromptContext(args: {
       usedMemoryIds: scored.map((s) => s.entry.id),
       roleId: role?.id,
       workflowTemplateId,
+      skillRoute: route,
     };
   } catch (err) {
     console.warn('Coworker prompt context unavailable:', err);

@@ -43,3 +43,6 @@ Each tool call goes through `tools/run.ts → runControlAction`:
 3. Add a risk case in `assessRisk` and an entry to `TOOL_CATALOG`.
 4. Implement the dispatch in `executor.ts` (and a Rust command if needed).
 5. Add a test.
+## Skills and Tool Allow-Lists
+
+When a skill is active, normal actions must be present in the active skill `allowed_tools` union. Control actions (`skill.run`, `ask_user`, `approval.request`, `task.complete`) remain available so the agent can load skills, request help, ask approval, or attempt completion through the guard. Imported skills may not introduce mouse/cursor/screenshot/pixel tools. See `docs/SKILL_IMPORT_SAFETY.md`.

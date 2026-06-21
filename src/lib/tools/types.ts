@@ -1,5 +1,6 @@
 import type { ControlAction, ControlActionName, ControlToolResult, ToolRisk } from '../control-system/types';
 import type { DocumentReference } from '../references/types';
+import type { SkillRuntimeContext } from '../skills/types';
 
 export type { ToolRisk } from '../control-system/types';
 
@@ -7,6 +8,7 @@ export type ToolCategory =
   | 'runtime'
   | 'files'
   | 'documents'
+  | 'artifacts'
   | 'browser'
   | 'apps'
   | 'data'
@@ -100,6 +102,7 @@ export interface ToolContext {
   skills?: SkillRunner;
   workflows?: WorkflowRunner;
   onAskUser?: (question: string) => Promise<string>;
+  activeSkills?: SkillRuntimeContext[];
 }
 
 export interface ToolDefinition<TArgs extends ControlAction = ControlAction> {

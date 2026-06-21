@@ -178,10 +178,42 @@ function buildTimeline(snapshot: AutomationRunSnapshot | null): Array<{
   time: string;
 }> {
   if (!snapshot) return [];
+  const prefix = folderTriggerItem(snapshot);
   if (snapshot.live?.steps.length) {
-    return snapshot.live.steps.map((step) => stepToItem(step));
+    return [...prefix, ...snapshot.live.steps.map((step) => stepToItem(step))];
   }
-  return snapshot.evidence.map((ev) => evidenceToItem(ev));
+  return [...prefix, ...snapshot.evidence.map((ev) => evidenceToItem(ev))];
+}
+
+function folderTriggerItem(snapshot: AutomationRunSnapshot): Array<{
+  id: string;
+  kind: string;
+  label: string;
+  preview: string;
+  raw: string;
+  time: string;
+}> {
+  const payload = snapshot.run?.triggerPayload;
+  if (!payload || payload.kind !== 'folder_watch') return [];
+  const fileName = typeof payload.fileName === 'string'
+    ? payload.fileName
+    : typeof payload.filePath === 'string'
+      ? payload.filePath.split(/[\\/]/).pop() ?? payload.filePath
+      : 'matching file';
+  const createdAt = typeof payload.detectedAt === 'string' ? payload.detectedAt : snapshot.run?.startedAt ?? new Date().toISOString();
+  return [{
+    id: `${snapshot.run?.id ?? 'run'}-folder-trigger`,
+    kind: 'trigger',
+    label: `New file detected: ${fileName}`,
+    preview: [
+      payload.filePath ? `File: ${String(payload.filePath)}` : undefined,
+      payload.folderPath || payload.watchedPath ? `Folder: ${String(payload.folderPath ?? payload.watchedPath)}` : undefined,
+      payload.eventType ? `Event: ${String(payload.eventType)}` : undefined,
+      payload.pattern ? `Pattern: ${String(payload.pattern)}` : undefined,
+    ].filter(Boolean).join('\n'),
+    raw: JSON.stringify(payload, null, 2),
+    time: new Date(createdAt).toLocaleTimeString(),
+  }];
 }
 
 function stepToItem(step: AgentStep) {
@@ -219,7 +251,7 @@ const backdropStyle: React.CSSProperties = {
   position: 'fixed',
   inset: 0,
   background: 'rgba(0,0,0,.46)',
-  zIndex: 80,
+  zIndex: 140,
   display: 'grid',
   placeItems: 'center',
   padding: 22,

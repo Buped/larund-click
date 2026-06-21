@@ -23,6 +23,12 @@ async function saveAutomation(auto: Automation): Promise<Automation> {
   return auto;
 }
 
+async function syncAutomationTimer(auto: Automation): Promise<void> {
+  const scheduler = await import('./scheduler');
+  if (auto.enabled && auto.status === 'active') await scheduler.restoreAutomation(auto);
+  else scheduler.stopAutomationTimer(auto.id);
+}
+
 export async function createAutomation(input: CreateAutomationInput): Promise<Automation> {
   const now = new Date().toISOString();
   const automation: Automation = {
@@ -51,6 +57,7 @@ export async function createAutomation(input: CreateAutomationInput): Promise<Au
   };
   automation.nextRunAt = calculateNextRun(automation.trigger, new Date(now))?.toISOString();
   await recordBackend().put(AUTOMATIONS, automation as unknown as RecordRow);
+  await syncAutomationTimer(automation);
   return automation;
 }
 
@@ -78,27 +85,35 @@ export async function updateAutomation(id: string, patch: Partial<Omit<Automatio
   if (!automation) return null;
   const updated = { ...automation, ...patch };
   if (patch.trigger) updated.nextRunAt = calculateNextRun(updated.trigger, new Date())?.toISOString();
-  return saveAutomation(updated);
+  const saved = await saveAutomation(updated);
+  await syncAutomationTimer(saved);
+  return saved;
 }
 
 export async function pauseAutomation(id: string): Promise<Automation | null> {
   const automation = await getAutomation(id);
   if (!automation) return null;
-  return saveAutomation({ ...automation, enabled: false, status: 'paused' });
+  const saved = await saveAutomation({ ...automation, enabled: false, status: 'paused' });
+  await syncAutomationTimer(saved);
+  return saved;
 }
 
 export async function resumeAutomation(id: string): Promise<Automation | null> {
   const automation = await getAutomation(id);
   if (!automation) return null;
-  return saveAutomation({
+  const saved = await saveAutomation({
     ...automation,
     enabled: true,
     status: 'active',
     nextRunAt: calculateNextRun(automation.trigger, new Date())?.toISOString(),
   });
+  await syncAutomationTimer(saved);
+  return saved;
 }
 
 export async function deleteAutomation(id: string): Promise<void> {
+  const scheduler = await import('./scheduler');
+  scheduler.stopAutomationTimer(id);
   const runs = await listAutomationRuns(id);
   await Promise.all(runs.map((r) => recordBackend().delete(RUNS, r.id)));
   await recordBackend().delete(AUTOMATIONS, id);

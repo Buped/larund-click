@@ -49,6 +49,17 @@ export function missingConnectionDeps(refs: ReferencedContext[], isConnected: (r
   return refs.filter((r) => r.kind === 'connection' && !isConnected(r.refId)).map((r) => r.label);
 }
 
+function fallbackInstruction(title: string, goal: string): string {
+  const cleanGoal = goal.trim() || 'the automation goal';
+  return `Complete "${title}" for this automation. Use the available tools and referenced context, then leave evidence that the step was actually done. Goal: ${cleanGoal}`;
+}
+
+function referenceSummary(ref: ReferencedContext): string {
+  const doc = ref.metadata?.documentReference as { path?: string; url?: string; kind?: string } | undefined;
+  const target = doc?.path ?? doc?.url ?? ref.refId;
+  return `${doc?.kind ?? ref.kind}:${ref.label}${target && target !== ref.label ? ` (${target})` : ''}`;
+}
+
 const PLANNER_SYSTEM = `You plan an AI coworker automation into concrete, ordered steps. You DO NOT execute anything — you only plan.
 Rules:
 - Larund is a no-mouse operator: use APIs/connections/MCP/files; never mouse/pixels/screenshots.
@@ -70,7 +81,7 @@ export async function generateAutomationSteps(
 ): Promise<PlanResult> {
   const missing = missingConnectionDeps(input.referencedContext, isConnected);
   try {
-    const refLine = input.referencedContext.length ? `\nReferences: ${input.referencedContext.map((r) => `${r.kind}:${r.label}`).join(', ')}` : '';
+    const refLine = input.referencedContext.length ? `\nReferences: ${input.referencedContext.map(referenceSummary).join(', ')}` : '';
     const { content } = await callOpenRouterJson(
       [
         { role: 'system', content: PLANNER_SYSTEM },
@@ -83,7 +94,11 @@ export async function generateAutomationSteps(
     if (raw.length === 0) throw new Error('empty plan');
     const steps: AutomationStep[] = raw.map((s, i) => {
       const x = s as Record<string, unknown>;
-      return mkStep(i, String(x.title ?? `Step ${i + 1}`), String(x.instruction ?? ''), i === 0 ? input.referencedContext : [], typeof x.verificationHint === 'string' ? x.verificationHint : undefined, x.required !== false);
+      const title = String(x.title ?? `Step ${i + 1}`).trim() || `Step ${i + 1}`;
+      const instruction = typeof x.instruction === 'string' && x.instruction.trim()
+        ? x.instruction.trim()
+        : fallbackInstruction(title, input.prompt);
+      return mkStep(i, title, instruction, i === 0 ? input.referencedContext : [], typeof x.verificationHint === 'string' ? x.verificationHint : undefined, x.required !== false);
     });
     // Guarantee a verification step exists.
     if (!steps.some((s) => /verif|read.?back|confirm/i.test(s.title))) {

@@ -82,6 +82,12 @@ export interface ActiveTaskState {
   };
   referencedInputs?: import('../references/types').DocumentReference[];
   filesRead?: string[];
+  activeSkills?: import('../skills/types').SkillRuntimeContext[];
+  skillVerification?: {
+    requiredEvidence: string[];
+    completedEvidence: string[];
+    blockedReason?: string;
+  };
   requiresAuth?: boolean;
   lastKnownState?: string;
   failedAttempts: FailedAttempt[];

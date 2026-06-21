@@ -17,6 +17,7 @@ import { createWorkflowRunner } from '../workflows/runner';
 import { resolveActiveTask, setActiveTask } from '../agent-state/session-memory';
 import { renderTaskStatePrompt, recordFailedAttempt } from '../agent-state/task-state';
 import type { RecentAction } from '../agent-state/types';
+import type { SkillRuntimeContext } from '../skills/types';
 import { verifyBeforeComplete, rejectionMessage } from './completion-guard';
 import { detectPageState } from '../browser-workflows/detect-page-state';
 import { manualHandoffMessage } from '../browser-workflows/manual-blockers';
@@ -293,7 +294,7 @@ export async function runControlLoop(
   }
 
   taskState.referencedInputs = resolvedReferences.documentReferences;
-  const ctx = { userId, sessionId, workspaceRoot, task, references: resolvedReferences.documentReferences, audit, approvals, connections, skills, workflows, onAskUser, addCost: (usd: number) => { totalCostUsd += usd; } };
+  const ctx = { userId, sessionId, workspaceRoot, task, references: resolvedReferences.documentReferences, audit, approvals, connections, skills, workflows, onAskUser, activeSkills: taskState.activeSkills ?? [] as SkillRuntimeContext[], addCost: (usd: number) => { totalCostUsd += usd; } };
   if (resolved.isCorrection) {
     emitStep({
       id: nowStepId('correction'),
@@ -309,6 +310,50 @@ export async function runControlLoop(
     recentActions.push(rec);
     if (recentActions.length > MAX_RECENT) recentActions.shift();
   };
+
+  const preloadedSkillBlocks: string[] = [];
+  const autoSkillNames = new Set<string>();
+  const primaryRoute = coworker.skillRoute?.primarySkill;
+  const autoPrimarySelected = Boolean(primaryRoute && primaryRoute.confidence >= 0.6);
+  if (primaryRoute && autoPrimarySelected) autoSkillNames.add(primaryRoute.name);
+  for (const route of coworker.skillRoute?.selectedSkills ?? []) {
+    if (route.reason.includes('explicit @skill mention')) autoSkillNames.add(route.name);
+  }
+  const primaryRisk = primaryRoute?.manifest.risk;
+  if (autoPrimarySelected && primaryRisk && primaryRisk !== 'read_only') autoSkillNames.add('task-verification');
+
+  for (const skillName of autoSkillNames) {
+    const action: ControlAction = { action: 'skill.run', skill: skillName, input: { task, autoSelected: true } };
+    emitStep({ id: nowStepId('skill-run'), type: 'tool_call', tool: 'skill.run', input: JSON.stringify(action), timestamp: new Date().toISOString() });
+    const result = await runControlAction(action, ctx, policy);
+    emitStep({
+      id: nowStepId('skill-result'),
+      type: result.success ? 'tool_result' : 'error',
+      tool: 'skill.run',
+      output: result.output,
+      error: result.error,
+      timestamp: new Date().toISOString(),
+      details: result.details,
+    });
+    recordAction({
+      action: 'skill.run',
+      argsSummary: skillName,
+      success: result.success,
+      output: result.output,
+      error: result.error,
+    });
+    const runtimeContext = result.details?.runtimeContext as SkillRuntimeContext | undefined;
+    if (result.success && runtimeContext) {
+      ctx.activeSkills = [...(ctx.activeSkills ?? []), runtimeContext];
+      taskState.activeSkills = ctx.activeSkills;
+      taskState.skillVerification = {
+        requiredEvidence: ctx.activeSkills.flatMap((skill) => skill.verificationChecklist.filter((check) => check.required).map((check) => check.title)),
+        completedEvidence: [],
+      };
+      preloadedSkillBlocks.push(result.output);
+      setActiveTask(sessionId, taskState);
+    }
+  }
 
   // Read attached references into model-ready content (text + image blocks).
   // Shared with the normal chat path via ../references/ingest.
@@ -347,9 +392,10 @@ export async function runControlLoop(
 
   const coworkerBlock = [coworker.promptBlock, resolvedReferences.promptBlock].filter(Boolean).join('\n\n');
   const coworkerPromptBlock = coworkerBlock ? `\n\n${coworkerBlock}` : '';
+  const activeSkillPromptBlock = preloadedSkillBlocks.length ? `\n\n${preloadedSkillBlocks.join('\n\n')}` : '';
   const systemPrompt =
     `${CONTROL_SYSTEM_PROMPT}\n\n## Tool catalog\n${toolCatalogSummary()}\n\n## Workspace\n${workspaceRoot}${coworkerPromptBlock}` +
-    `${historyBlock}\n\n${renderTaskStatePrompt(taskState)}\n\n## Current message\n${task}`;
+    `${activeSkillPromptBlock}${historyBlock}\n\n${renderTaskStatePrompt(taskState)}\n\n## Current message\n${task}`;
 
   // Surfaced memory counts as used (drives recency boost), fire-and-forget.
   void recordMemoryUsage(coworker.usedMemoryIds);
@@ -508,6 +554,17 @@ export async function runControlLoop(
     await updateOverlay({ active: true, status: 'executing', task, steps });
 
     // Record evidence for the completion guard.
+    if (result.success && action.action === 'skill.run') {
+      const runtimeContext = result.details?.runtimeContext as SkillRuntimeContext | undefined;
+      if (runtimeContext && !(ctx.activeSkills ?? []).some((skill) => skill.skillId === runtimeContext.skillId)) {
+        ctx.activeSkills = [...(ctx.activeSkills ?? []), runtimeContext];
+        taskState.activeSkills = ctx.activeSkills;
+        taskState.skillVerification = {
+          requiredEvidence: ctx.activeSkills.flatMap((skill) => skill.verificationChecklist.filter((check) => check.required).map((check) => check.title)),
+          completedEvidence: taskState.skillVerification?.completedEvidence ?? [],
+        };
+      }
+    }
     rememberExpectedSheetData(taskState, action as ControlAction);
     setActiveTask(sessionId, taskState);
     recordAction({

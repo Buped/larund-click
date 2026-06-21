@@ -81,3 +81,8 @@ Optional frontmatter fields are now parsed too: `version`, `categories`,
 
 `skill.run` behavior is unchanged. UI: Coworker → **Skills** tab lists every skill with
 risk, version, categories, allowed tools and required connections.
+## Skill Engine v2
+
+See `docs/SKILL_ENGINE_V2.md` for the current runtime model. Skills now feed the router, `skill.run` returns structured active-skill context, allowed tools are enforced while a skill is active, and completion is blocked until the skill verification checklist has read-back evidence.
+
+Bundled skills are loaded from `src/lib/skills/bundled.ts`, including the generated v2 catalog in `src/lib/skills/generated-bundled.ts`. Custom/user/workspace skills compile through the same `SKILL.md` parser and runner path.

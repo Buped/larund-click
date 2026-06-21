@@ -186,3 +186,46 @@ describe('completion guard — after a correction', () => {
     expect(r.reason).toMatch(/corrected/i);
   });
 });
+describe('completion guard - active skills', () => {
+  it('rejects completion when a skill is loaded but no work ran', () => {
+    const s = stateFor('Irj egy helyi dokumentumot.');
+    s.activeSkills = [{
+      skillId: 'bundled:docx-writer',
+      name: 'docx-writer',
+      version: '1.0.0',
+      body: 'Body',
+      allowedTools: ['doc.write_docx', 'document.read'],
+      requiredConnections: [],
+      requiredMcpServers: [],
+      risk: 'local_write',
+      verificationChecklist: [{ id: 'v1', title: 'Read back output', required: true }],
+      references: [],
+      templates: [],
+      missingRequirements: [],
+    }];
+    const r = verifyBeforeComplete(s, [ok('skill.run', 'loaded')]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/skill was loaded/i);
+  });
+
+  it('rejects active skill completion without read-back evidence', () => {
+    const s = stateFor('Irj egy helyi dokumentumot.');
+    s.activeSkills = [{
+      skillId: 'bundled:docx-writer',
+      name: 'docx-writer',
+      version: '1.0.0',
+      body: 'Body',
+      allowedTools: ['doc.write_docx', 'document.read'],
+      requiredConnections: [],
+      requiredMcpServers: [],
+      risk: 'local_write',
+      verificationChecklist: [{ id: 'v1', title: 'Read back output', required: true }],
+      references: [],
+      templates: [],
+      missingRequirements: [],
+    }];
+    const r = verifyBeforeComplete(s, [ok('skill.run'), ok('doc.write_docx', 'Wrote test.docx')]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/read-back/i);
+  });
+});

@@ -28,6 +28,50 @@ describe('skills', () => {
     expect(parseSkillFile('---\nname: x\ndescription: y\nrisk: nope\n---\nbody').error).toBe('invalid_risk:nope');
   });
 
+  it('parses rich frontmatter including nested metadata and block lists', () => {
+    const parsed = parseSkillFile(`---
+name: rich
+description: Rich skill
+version: "2.0.0"
+author: Larund
+license: MIT
+category: documents
+tags: [pdf, "szamla"]
+status: pending_review
+origin:
+  repo: alirezarezvani/claude-skills
+  path: examples/rich
+metadata:
+  owner: ops
+when_to_use:
+  - Read invoices
+when_not_to_use:
+  - Google Sheets without connection
+verification_checklist:
+  - Read back output
+required_connections: [google-workspace]
+required_mcp_servers: [drive-mcp]
+allowed_tools: ["document.read", "connection.call"]
+risk: external_write
+enabled_by_default: false
+supports_automation: true
+supports_manual_run: true
+---
+Body`);
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.manifest?.version).toBe('2.0.0');
+    expect(parsed.manifest?.tags).toEqual(['pdf', 'szamla']);
+    expect(parsed.manifest?.requires_connections).toEqual(['google-workspace']);
+    expect(parsed.manifest?.origin_repo).toBe('alirezarezvani/claude-skills');
+    expect(parsed.manifest?.metadata).toMatchObject({ owner: 'ops' });
+    expect(parsed.manifest?.enabled_by_default).toBe(false);
+  });
+
+  it('rejects forbidden visual control tools while allowing browser.click', () => {
+    expect(parseSkillFile('---\nname: x\ndescription: y\nallowed_tools: ["browser.click"]\nrisk: read_only\n---\nbody').error).toBeUndefined();
+    expect(parseSkillFile('---\nname: x\ndescription: y\nallowed_tools: ["mouse.click"]\nrisk: read_only\n---\nbody').error).toBe('forbidden_tool:mouse.click');
+  });
+
   it('applies precedence: workspace overrides bundled', () => {
     const bundled = loadSkillFromMarkdown(GOOD, 'bundled');
     const ws = loadSkillFromMarkdown(GOOD.replace('A demo skill', 'WS override'), 'workspace');
@@ -37,9 +81,9 @@ describe('skills', () => {
     expect(merged[0].manifest.description).toContain('WS override');
   });
 
-  it('loads at least 5 bundled skills incl. expected names', () => {
+  it('loads the expanded bundled catalog incl. expected names', () => {
     const all = loadAllSkills();
-    expect(all.length).toBeGreaterThanOrEqual(5);
+    expect(all.length).toBeGreaterThanOrEqual(60);
     const names = all.map((s) => s.manifest.name);
     for (const n of ['file-organizer', 'browser-automation', 'vscode-project', 'github-maintainer', 'marketing-report']) {
       expect(names).toContain(n);
@@ -58,6 +102,11 @@ describe('skills', () => {
     const result = await createSkillRunner().run('document-accounting');
     expect(result.success).toBe(true);
     expect(result.output).toContain('Document Accounting');
+    expect(result.details?.runtimeContext).toMatchObject({
+      name: 'document-accounting',
+      allowedTools: expect.arrayContaining(['document.read', 'sheet.read']),
+      risk: 'local_write',
+    });
   });
 
   it('finds a relevant skill by trigger', () => {

@@ -19,6 +19,18 @@ export interface SkillManifest {
   when_not_to_use?: string[];
   required_mcp_servers?: string[];
   enabled_by_default?: boolean;
+  license?: string;
+  author?: string;
+  category?: string;
+  tags?: string[];
+  updated?: string;
+  status?: 'pending_review' | 'reviewed' | 'enabled' | 'disabled' | 'blocked' | 'deprecated';
+  origin_repo?: string;
+  origin_path?: string;
+  source?: string;
+  supports_automation?: boolean;
+  supports_manual_run?: boolean;
+  metadata?: Record<string, unknown>;
 }
 
 export interface Skill {
@@ -28,4 +40,42 @@ export interface Skill {
   enabled: boolean;
   /** Set when frontmatter validation failed; skill is listed but unusable. */
   error?: string;
+}
+
+export interface MissingRequirement {
+  kind: 'tool' | 'connection' | 'mcp_server' | 'status';
+  id: string;
+  reason: string;
+}
+
+export interface SkillReference {
+  name: string;
+  path?: string;
+  kind: 'reference' | 'script' | 'template' | 'example';
+}
+
+export interface SkillTemplate {
+  name: string;
+  path?: string;
+}
+
+export interface VerificationCheck {
+  id: string;
+  title: string;
+  required: boolean;
+}
+
+export interface SkillRuntimeContext {
+  skillId: string;
+  name: string;
+  version: string;
+  body: string;
+  allowedTools: string[];
+  requiredConnections: string[];
+  requiredMcpServers: string[];
+  risk: import('../control-system/types').ToolRisk;
+  verificationChecklist: VerificationCheck[];
+  references: SkillReference[];
+  templates: SkillTemplate[];
+  missingRequirements: MissingRequirement[];
 }

@@ -39,3 +39,4 @@ csv = "1.4.0"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 pdf-extract = "0.10.0"
 lopdf = "0.38"
+ttf-parser = "0.24"

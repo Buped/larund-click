@@ -69,6 +69,12 @@ export const ACTION_CATEGORY: Record<string, ToolCategory> = {
   'folder.scan': 'documents', 'folder.read_relevant': 'documents',
   'sheet.read': 'data', 'sheet.write': 'data', 'sheet.append': 'data', 'sheet.export_csv': 'data', 'sheet.to_json': 'data',
   'doc.read': 'documents', 'doc.write_txt': 'documents', 'doc.write_docx': 'documents',
+  'artifact.plan': 'artifacts', 'artifact.render_pdf': 'artifacts', 'artifact.render_docx': 'artifacts',
+  'artifact.render_pptx': 'artifacts', 'artifact.convert': 'artifacts', 'artifact.preview': 'artifacts',
+  'artifact.verify': 'artifacts', 'artifact.list': 'artifacts', 'artifact.open': 'artifacts',
+  'artifact.copy_to': 'artifacts', 'artifact.pdf_merge': 'artifacts', 'artifact.pdf_split': 'artifacts',
+  'artifact.pdf_watermark': 'artifacts', 'artifact.pdf_extract_text': 'artifacts',
+  'artifact.pdf_metadata': 'artifacts', 'artifact.pdf_page_count': 'artifacts',
   'clipboard.get': 'clipboard', 'clipboard.set': 'clipboard',
   'app.open': 'apps', 'window.list': 'apps', 'window.focus': 'apps',
   'keyboard.press': 'apps', 'keyboard.combo': 'apps',
@@ -142,12 +148,19 @@ export function assessRisk(action: ControlAction): ToolRisk {
     case 'file.exists': case 'file.metadata': case 'sheet.read':
     case 'document.read': case 'document.read_many': case 'document.summarize':
     case 'folder.scan': case 'folder.read_relevant': case 'sheet.to_json':
-    case 'doc.read':
+    case 'doc.read': case 'artifact.plan': case 'artifact.preview': case 'artifact.verify':
+    case 'artifact.list': case 'artifact.pdf_extract_text': case 'artifact.pdf_metadata':
+    case 'artifact.pdf_page_count':
       return 'read_only';
     case 'file.write': case 'file.edit': case 'file.mkdir': case 'file.copy':
     case 'sheet.write': case 'sheet.append': case 'sheet.export_csv':
     case 'doc.write_txt': case 'doc.write_docx': case 'clipboard.set':
+    case 'artifact.render_pdf': case 'artifact.render_docx': case 'artifact.render_pptx':
+    case 'artifact.open': case 'artifact.copy_to': case 'artifact.pdf_merge': case 'artifact.pdf_split':
+    case 'artifact.pdf_watermark':
       return 'local_write';
+    case 'artifact.convert':
+      return 'process_exec';
     case 'file.move':
       return 'local_write';
     case 'file.delete':

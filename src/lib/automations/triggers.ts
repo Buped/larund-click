@@ -35,33 +35,45 @@ export async function triggerFolderWatch(args: {
   userId: string;
   path: string;
   filePath: string;
+  eventType?: 'file_created' | 'file_modified';
   debounceMs?: number;
 }): Promise<number> {
   const automations = await listAutomations({ userId: args.userId });
-  const matching = automations.filter((a) => isMatchingFolderWatch(a, args.path, args.filePath));
+  const matching = automations.filter((a) => isMatchingFolderWatch(a, args.path, args.filePath, args.eventType));
   for (const automation of matching) {
     const key = `${automation.id}:${args.filePath}`;
     const existing = debounceTimers.get(key);
     if (existing) clearTimeout(existing);
+    const delay = (automation.trigger.kind === 'folder_watch'
+      ? automation.trigger.debounceMs ?? args.debounceMs ?? 750
+      : args.debounceMs ?? 750) + (automation.trigger.kind === 'folder_watch' ? automation.trigger.stableForMs ?? 0 : 0);
     debounceTimers.set(
       key,
       setTimeout(() => {
         debounceTimers.delete(key);
         void runAutomation(automation.id, {
           kind: 'folder_watch',
+          reason: 'folder_watch',
           watchedPath: args.path,
+          folderPath: args.path,
           filePath: args.filePath,
+          fileName: args.filePath.split(/[\\/]/).pop() ?? args.filePath,
+          eventType: args.eventType ?? 'file_created',
+          detectedAt: new Date().toISOString(),
+          pattern: automation.trigger.kind === 'folder_watch' ? automation.trigger.pattern : undefined,
         }).catch(() => undefined);
-      }, args.debounceMs ?? 750),
+      }, delay),
     );
   }
   return matching.length;
 }
 
-function isMatchingFolderWatch(automation: Automation, watchedPath: string, filePath: string): boolean {
+function isMatchingFolderWatch(automation: Automation, watchedPath: string, filePath: string, eventType?: 'file_created' | 'file_modified'): boolean {
   if (!automation.enabled || automation.status !== 'active' || automation.trigger.kind !== 'folder_watch') return false;
   const configured = normalize(automation.trigger.path);
   const incoming = normalize(watchedPath);
+  const configuredEvent = automation.trigger.event ?? 'file_created';
+  if (eventType && configuredEvent !== 'file_created_or_modified' && configuredEvent !== eventType) return false;
   return configured === incoming && matchesFolderPattern(filePath, automation.trigger.pattern);
 }
 

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetRecordBackendForTests } from '../../coworker/persistence';
 import { createAutomation, getAutomation, updateAutomation, listAutomationRuns } from '../store';
 import { runAutomation } from '../runner';
@@ -7,10 +7,38 @@ import { heuristicSteps, missingConnectionDeps } from '../planner';
 import { checkAutomationDependencies } from '../dependencies';
 import { resourceToReference, type ReferencedContext } from '../../mentions/types';
 import type { Automation } from '../types';
+import { renderAutomationPrompt } from '../runner';
+import { stopAllAutomationTimers } from '../scheduler';
 
-beforeEach(() => resetRecordBackendForTests());
+const invokeMock = vi.hoisted(() => vi.fn());
+vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+
+beforeEach(() => {
+  stopAllAutomationTimers();
+  resetRecordBackendForTests();
+  invokeMock.mockReset();
+  invokeMock.mockImplementation(async (cmd: string) => {
+    if (cmd === 'dir_list') return [];
+    if (cmd === 'fs_metadata') return JSON.stringify({ is_file: true, is_dir: false, size: 1, modified_unix: 1 });
+    return undefined;
+  });
+});
+
+afterEach(() => stopAllAutomationTimers());
 
 const connRef = (id: string, label: string): ReferencedContext => resourceToReference({ kind: 'connection', refId: id, label, available: false });
+const refOf = (kind: ReferencedContext['kind'], id: string, label: string): ReferencedContext => resourceToReference({ kind, refId: id, label, available: true });
+const fileRef = (path: string, label = path.split(/[\\/]/).pop() ?? path): ReferencedContext => ({
+  id: `ref-${label}`,
+  kind: 'file',
+  label,
+  refId: path,
+  displayText: `@${label}`,
+  metadata: { documentReference: { id: `doc-${label}`, kind: 'file', label, path, source: 'user_reference' } },
+  insertedAt: new Date().toISOString(),
+  status: 'available',
+  resolvedAtSendTime: true,
+});
 
 describe('automation migration', () => {
   it('normalizes a legacy automation (no new fields)', () => {
@@ -49,6 +77,17 @@ describe('automation store with workflow fields', () => {
     expect(n.referencedContext).toHaveLength(1);
     expect(n.steps).toHaveLength(1);
     expect(referencedConnectionIds(n)).toContain('github');
+  });
+
+  it('persists folder-watch trigger settings', async () => {
+    const created = await createAutomation({
+      userId: 'u1',
+      name: 'Folder monitor',
+      trigger: { kind: 'folder_watch', path: 'D:/Invoices', pattern: '*.pdf', event: 'file_created_or_modified', debounceMs: 500, stableForMs: 1200, includeSubfolders: true },
+      taskTemplate: { prompt: 'ingest invoices' },
+    });
+    const fetched = await getAutomation(created.id);
+    expect(fetched?.trigger).toMatchObject({ kind: 'folder_watch', event: 'file_created_or_modified', debounceMs: 500, stableForMs: 1200, includeSubfolders: true });
   });
 
   it('combines template + mention references', () => {
@@ -98,6 +137,33 @@ describe('automation dependency checks', () => {
     const report = await checkAutomationDependencies(a, { userId: 'u1' });
     expect(report.ok).toBe(true);
   });
+
+  it('blocks when a referenced local file is inaccessible', async () => {
+    invokeMock.mockRejectedValue(new Error('metadata failed: not found'));
+    const a = await createAutomation({
+      userId: 'u1',
+      name: 'Needs file',
+      trigger: { kind: 'manual' },
+      taskTemplate: { prompt: 'read local file' },
+      referencedContext: [fileRef('C:/missing/invoice.pdf', 'invoice.pdf')],
+    });
+    const report = await checkAutomationDependencies(a, { userId: 'u1' });
+    expect(report.ok).toBe(false);
+    expect(report.blockers.some((b) => b.kind === 'file' && /not accessible/.test(b.message))).toBe(true);
+  });
+
+  it('blocks missing memory and workflow references', async () => {
+    const a = await createAutomation({
+      userId: 'u1',
+      name: 'Needs context',
+      trigger: { kind: 'manual' },
+      taskTemplate: { prompt: 'use context' },
+      referencedContext: [refOf('memory', 'mem-missing', 'Policy memory'), refOf('workflow', 'wf-missing', 'Invoice workflow')],
+    });
+    const report = await checkAutomationDependencies(a, { userId: 'u1' });
+    expect(report.blockers.some((b) => b.kind === 'memory')).toBe(true);
+    expect(report.blockers.some((b) => b.kind === 'workflow')).toBe(true);
+  });
 });
 
 describe('automation run', () => {
@@ -107,6 +173,39 @@ describe('automation run', () => {
     expect(res.automationRunId).toBeTruthy();
     const runs = await listAutomationRuns(a.id);
     expect(runs.length).toBeGreaterThan(0);
+  });
+});
+
+describe('automation prompt rendering', () => {
+  it('includes global references, step references and folder trigger input', () => {
+    const globalRef = fileRef('D:/Invoices/source.pdf', 'source.pdf');
+    const stepRef = fileRef('D:/Invoices/rules.xlsx', 'rules.xlsx');
+    const prompt = renderAutomationPrompt({
+      id: 'a',
+      userId: 'u1',
+      name: 'Invoice flow',
+      enabled: true,
+      trigger: { kind: 'folder_watch', path: 'D:/Invoices', pattern: '*.pdf' },
+      taskTemplate: { prompt: 'Process invoices' },
+      autonomyMode: 'semi',
+      approvalPolicy: {},
+      status: 'active',
+      prompt: 'Process invoices',
+      referencedContext: [globalRef],
+      steps: [{ id: 's1', title: 'Read rules', instruction: 'Use the workbook rules.', referencedContext: [stepRef], required: true, order: 0 }],
+      verificationChecklist: [],
+      safetyPolicy: defaultSafetyPolicy('semi'),
+      createdAt: '',
+      updatedAt: '',
+    }, { kind: 'folder_watch', watchedPath: 'D:/Invoices', filePath: 'D:/Invoices/new.pdf', fileName: 'new.pdf', eventType: 'file_created', detectedAt: '2026-06-20T12:00:00.000Z' });
+
+    expect(prompt).toContain('Global referenced context:');
+    expect(prompt).toContain('D:/Invoices/source.pdf');
+    expect(prompt).toContain('Current trigger input:');
+    expect(prompt).toContain('D:/Invoices/new.pdf');
+    expect(prompt).toContain('Use the trigger file as the primary input');
+    expect(prompt).toContain('Context for this step:');
+    expect(prompt).toContain('D:/Invoices/rules.xlsx');
   });
 });
 

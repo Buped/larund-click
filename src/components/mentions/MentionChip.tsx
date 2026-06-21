@@ -3,10 +3,14 @@ import { MENTION_COLORS, type ReferencedContext } from '../../lib/mentions/types
 
 export function MentionChip({ refItem, onRemove }: { refItem: ReferencedContext; onRemove?: () => void }) {
   const color = MENTION_COLORS[refItem.kind];
-  const label = `${refItem.kind[0].toUpperCase()}${refItem.kind.slice(1)}`;
+  const doc = refItem.metadata?.documentReference as { kind?: string; path?: string; url?: string } | undefined;
+  const kind = doc?.kind ?? refItem.kind;
+  const label = `${kind[0].toUpperCase()}${kind.slice(1).replace(/_/g, ' ')}`;
+  const target = doc?.path ?? doc?.url;
+  const title = [refItem.label, target, refItem.metadata?.status ? String(refItem.metadata.status) : undefined].filter(Boolean).join(' - ');
   return (
     <span
-      title={refItem.metadata?.status ? `${refItem.label} - ${refItem.metadata.status}` : refItem.label}
+      title={title}
       style={{
         display: 'inline-flex',
         alignItems: 'center',

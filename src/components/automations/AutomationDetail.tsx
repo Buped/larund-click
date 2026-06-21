@@ -8,7 +8,7 @@ import { getAutomation, listAutomationRuns, pauseAutomation, resumeAutomation, d
 import { runAutomation } from '../../lib/automations/runner';
 import { checkAutomationDependencies, type DependencyReport } from '../../lib/automations/dependencies';
 import { normalizeAutomation, type NormalizedAutomation } from '../../lib/automations/migrate';
-import { triggerSummary } from './shared';
+import { runTriggerSummary, triggerSummary } from './shared';
 import { RunMonitor } from './RunMonitor';
 import type { AutomationRun } from '../../lib/automations/types';
 import { PageFrame, card, btn, ghostBtn, dangerBtn, labelStyle, Badge, Empty, statusColor } from '../pages/ui';
@@ -46,7 +46,8 @@ export function AutomationDetail({ automationId, userId, workspaceId, onBack, on
   async function runNow() {
     setBusy(true);
     try {
-      await runAutomation(automationId, { reason: 'manual_run' });
+      const result = await runAutomation(automationId, { reason: 'manual_run' });
+      setMonitor({ runId: result.automationRunId });
       await load();
       onChanged();
     } finally {
@@ -180,6 +181,7 @@ export function AutomationDetail({ automationId, userId, workspaceId, onBack, on
             <strong style={{ fontSize: 12 }}>{new Date(r.startedAt ?? r.completedAt ?? Date.now()).toLocaleString()}</strong>
             <Badge text={r.status} color={statusColor(r.status)} />
           </div>
+          {runTriggerSummary(r) && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{runTriggerSummary(r)}</div>}
           {r.error && <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 4 }}>{r.error}</div>}
           <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
             <button style={ghostBtn} onClick={() => setMonitor({ runId: r.id, readonly: true })}><Icon name="eye" size={12} /> Open run</button>

@@ -1,5 +1,5 @@
 import type { ControlToolResult } from '../control-system/types';
-import type { Skill } from './types';
+import type { MissingRequirement, Skill, SkillRuntimeContext, VerificationCheck } from './types';
 import type { SkillRunner } from '../tools/types';
 import { BUNDLED_SKILL_FILES } from './bundled';
 import { loadSkillFromMarkdown, mergeSkills, scoreSkill } from './loader';
@@ -55,6 +55,58 @@ export function findRelevantSkill(task: string): Skill | undefined {
   return ranked[0]?.s;
 }
 
+function checksFromSkill(skill: Skill): VerificationCheck[] {
+  const checklist = skill.manifest.verification_checklist?.length
+    ? skill.manifest.verification_checklist
+    : [
+        skill.manifest.risk === 'read_only'
+          ? 'Read the requested source and cite or summarize the observed result.'
+          : 'Read back the created or modified result with the matching structured tool.',
+        'Do not call task.complete until the evidence proves the requested outcome.',
+      ];
+  return checklist.map((title, index) => ({ id: `${skill.manifest.name}:v${index}`, title, required: true }));
+}
+
+function runtimeContextFor(skill: Skill, missingRequirements: MissingRequirement[] = []): SkillRuntimeContext {
+  return {
+    skillId: `${skill.source === 'project' ? 'workspace' : skill.source}:${skill.manifest.name}`,
+    name: skill.manifest.name,
+    version: skill.manifest.version ?? '1.0.0',
+    body: skill.body,
+    allowedTools: skill.manifest.allowed_tools,
+    requiredConnections: skill.manifest.requires_connections,
+    requiredMcpServers: skill.manifest.required_mcp_servers ?? [],
+    risk: skill.manifest.risk,
+    verificationChecklist: checksFromSkill(skill),
+    references: [],
+    templates: [],
+    missingRequirements,
+  };
+}
+
+function renderActiveSkill(ctx: SkillRuntimeContext, skill: Skill): string {
+  return [
+    '## Active Skill',
+    `Name: ${ctx.name}`,
+    `Version: ${ctx.version}`,
+    `Purpose: ${skill.manifest.description}`,
+    `Allowed tools: ${ctx.allowedTools.join(', ') || 'none declared'}`,
+    `Required connections: ${ctx.requiredConnections.join(', ') || 'none'}`,
+    `Required MCP servers: ${ctx.requiredMcpServers.join(', ') || 'none'}`,
+    `Risk: ${ctx.risk}`,
+    '',
+    'Workflow:',
+    ctx.body,
+    '',
+    'Verification checklist:',
+    ctx.verificationChecklist.map((check) => `- ${check.title}`).join('\n') || '- Read back the result before completion.',
+    '',
+    'Fallback rules:',
+    '- If a required connection/tool is missing, report a blocker or ask the user before changing target surface.',
+    '- Never use mouse, cursor, screenshot, OCR-click, coordinates, or pixel fallback.',
+  ].join('\n');
+}
+
 /**
  * SkillRunner MVP: "running" a skill loads its instructions and allowed-tools
  * into the conversation so the model follows the workflow. Returns the body as
@@ -71,10 +123,16 @@ export function createSkillRunner(scope?: { userId?: string; workspaceId?: strin
       const byName = new Map(skills.map((s) => [s.manifest.name, s]));
       const skill = byName.get(name);
       if (!skill) return { success: false, output: '', error: `unknown_skill:${name}` };
+      const runtimeContext = runtimeContextFor(skill);
       return {
         success: true,
-        output: `Skill "${skill.manifest.name}" loaded. Allowed tools: ${skill.manifest.allowed_tools.join(', ')}.\nRequires connections: ${skill.manifest.requires_connections.join(', ') || 'none'}.\n\n${skill.body}`,
-        details: { skill: skill.manifest.name, allowed_tools: skill.manifest.allowed_tools, requires_connections: skill.manifest.requires_connections },
+        output: renderActiveSkill(runtimeContext, skill),
+        details: {
+          skill: skill.manifest.name,
+          allowed_tools: skill.manifest.allowed_tools,
+          requires_connections: skill.manifest.requires_connections,
+          runtimeContext,
+        },
       };
     },
   };

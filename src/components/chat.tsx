@@ -25,6 +25,15 @@ import { resolveReferencedContext } from '../lib/mentions/resolve';
 import { documentReferenceToMention, mentionToDocumentReference } from './mentions/mentionSerialization';
 import { policyForAutonomyMode, type AutonomyMode as PolicyAutonomyMode } from '../lib/tools/policy';
 import { classifyIntent } from '../lib/intent/classify';
+import { ArtifactCard } from './artifacts/ArtifactCard';
+import { ArtifactPreviewRail } from './artifacts/ArtifactPreviewRail';
+import {
+  dedupeArtifacts,
+  manifestToChatArtifact,
+  parseArtifactManifest as parseManifestOutput,
+  type ArtifactPreviewState,
+  type ChatArtifactAttachment,
+} from '../lib/artifacts/ui';
 
 /** Read and clear the one-shot workflow template armed on the Workflows page. */
 function consumeActiveWorkflowTemplate(): string | undefined {
@@ -317,6 +326,19 @@ const TOOL_ICONS: Record<string, string> = {
   'doc.read':          'fileText',
   'doc.write_txt':     'upload',
   'doc.write_docx':    'upload',
+  'artifact.plan':     'fileText',
+  'artifact.render_pdf': 'fileText',
+  'artifact.render_docx': 'fileText',
+  'artifact.render_pptx': 'fileText',
+  'artifact.convert':  'upload',
+  'artifact.preview':  'fileText',
+  'artifact.verify':   'check',
+  'artifact.list':     'folder',
+  'artifact.open':     'externalLink',
+  'artifact.copy_to':  'folder',
+  'artifact.pdf_extract_text': 'fileText',
+  'artifact.pdf_metadata': 'fileText',
+  'artifact.pdf_page_count': 'check',
   'clipboard.get':     'fileText',
   'clipboard.set':     'upload',
   'app.open':          'externalLink',
@@ -364,6 +386,19 @@ const TOOL_LABELS: Record<string, string> = {
   'sheet.write': 'Writing sheet',
   'sheet.append': 'Appending to sheet',
   'doc.write_docx': 'Writing document',
+  'artifact.plan': 'Planning artifact',
+  'artifact.render_pdf': 'Rendering PDF',
+  'artifact.render_docx': 'Rendering Word document',
+  'artifact.render_pptx': 'Rendering presentation',
+  'artifact.convert': 'Converting artifact',
+  'artifact.preview': 'Preparing preview',
+  'artifact.verify': 'Verifying artifact',
+  'artifact.list': 'Listing artifacts',
+  'artifact.open': 'Opening artifact',
+  'artifact.copy_to': 'Saving copy',
+  'artifact.pdf_extract_text': 'Reading PDF text',
+  'artifact.pdf_metadata': 'Reading PDF metadata',
+  'artifact.pdf_page_count': 'Counting PDF pages',
   'app.open': 'Opening app',
   'window.focus': 'Focusing window',
   'browser.open': 'Opening page',
@@ -386,6 +421,84 @@ const TOOL_LABELS: Record<string, string> = {
   'task.complete': 'Finishing up',
   'ask_user': 'Needs your help',
 };
+
+interface ArtifactCardManifest {
+  title?: string;
+  kind?: string;
+  outputFiles?: Array<{ label?: string; path?: string; mimeType?: string; sizeBytes?: number }>;
+  previewFiles?: Array<{ path?: string }>;
+  verification?: { exists?: boolean; readable?: boolean; pageCount?: number; slideCount?: number; containsExpectedText?: string[]; errors?: string[] };
+}
+
+function parseArtifactManifest(raw: string): ArtifactCardManifest | null {
+  try {
+    const parsed = JSON.parse(raw) as ArtifactCardManifest;
+    return Array.isArray(parsed.outputFiles) && parsed.verification ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function ArtifactResultCard({ manifest }: { manifest: ArtifactCardManifest }) {
+  const output = manifest.outputFiles?.[0];
+  const checks = [
+    manifest.verification?.exists ? 'exists' : undefined,
+    manifest.verification?.readable ? 'readable' : undefined,
+    manifest.verification?.pageCount ? `${manifest.verification.pageCount} page(s)` : undefined,
+    manifest.verification?.slideCount ? `${manifest.verification.slideCount} slide(s)` : undefined,
+  ].filter(Boolean);
+  return (
+    <div style={{
+      margin: '4px 0 8px 24px',
+      border: '1px solid var(--border-md)',
+      borderRadius: 8,
+      padding: 10,
+      background: 'rgba(var(--ov-color),0.04)',
+      display: 'grid',
+      gap: 7,
+      maxWidth: 520,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <span style={{
+          width: 30, height: 30, borderRadius: 7, flex: 'none',
+          display: 'grid', placeItems: 'center',
+          background: 'rgba(74,158,255,0.12)', color: 'var(--accent)',
+        }}>
+          <Icon name="fileText" size={15} stroke={1.8} />
+        </span>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {manifest.title || output?.label || 'Generated artifact'}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-hint)', textTransform: 'uppercase' }}>
+            {manifest.kind || output?.mimeType || 'artifact'}{output?.sizeBytes ? ` · ${Math.round(output.sizeBytes / 1024)} KB` : ''}
+          </div>
+        </div>
+      </div>
+      {output?.path && (
+        <div style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: 'var(--text-hint)', wordBreak: 'break-all' }}>
+          {output.path}
+        </div>
+      )}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {checks.map((check) => (
+          <span key={check} style={{
+            fontSize: 10.5,
+            color: 'var(--success)',
+            border: '1px solid rgba(79, 209, 128, .28)',
+            borderRadius: 999,
+            padding: '2px 7px',
+          }}>
+            {check}
+          </span>
+        ))}
+      </div>
+      {manifest.verification?.errors?.length ? (
+        <div style={{ fontSize: 11, color: 'var(--danger)' }}>{manifest.verification.errors.join(', ')}</div>
+      ) : null}
+    </div>
+  );
+}
 
 function AgentStepItem({ step }: { step: AgentStep }) {
   const [open, setOpen] = useState(false);
@@ -483,11 +596,13 @@ function AgentStepItem({ step }: { step: AgentStep }) {
   if (step.type === 'tool_result') {
     const hasErr = Boolean(step.error);
     const rawText = step.error || step.output || '';
+    const artifactManifest = !hasErr && step.tool?.startsWith('artifact.render_') ? parseArtifactManifest(rawText) : null;
     const preview = rawText.slice(0, 90);
     const hasMore = rawText.length > 90;
 
     return (
       <div className="agent-step-item">
+        {artifactManifest && <ArtifactResultCard manifest={artifactManifest} />}
         <button
           onClick={() => hasMore && setOpen(v => !v)}
           style={{
@@ -557,12 +672,16 @@ interface AgentMsgContentProps {
   onStop: () => void;
   finalText?: string;
   isError?: boolean;
+  artifacts?: ChatArtifactAttachment[];
+  onPreviewArtifact?: (artifact: ChatArtifactAttachment) => void;
+  onArtifactsChanged?: () => void;
+  selectedArtifactId?: string;
 }
 
 function AgentMsgContent({
   steps, status,
   askQuestion, askAnswer, onAskAnswerChange, onAskSubmit,
-  onAskQuickAnswer, onStop, finalText, isError,
+  onAskQuickAnswer, onStop, finalText, isError, artifacts = [], onPreviewArtifact, onArtifactsChanged, selectedArtifactId,
 }: AgentMsgContentProps) {
   // Collapsed by default: the action timeline is evidence, not the headline. The
   // human-readable narration carries the story; details expand on demand.
@@ -743,6 +862,20 @@ function AgentMsgContent({
           }
         </div>
       )}
+
+      {artifacts.length > 0 && (
+        <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
+          {artifacts.map((artifact) => (
+            <ArtifactCard
+              key={artifact.id}
+              artifact={artifact}
+              selected={artifact.id === selectedArtifactId}
+              onPreview={onPreviewArtifact}
+              onChanged={onArtifactsChanged}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -760,6 +893,7 @@ type Message = {
   agent_steps_json?: string | null;
   agent_ask_question?: string | null;
   references_json?: string | null;
+  artifacts_json?: string | null;
   _loading?: boolean;
   _usage?: string;
   _error?: boolean;
@@ -770,6 +904,7 @@ type Message = {
   _agentSteps?: AgentStep[];
   _agentAskQuestion?: string | null;
   _references?: ReferencedContext[];
+  _artifacts?: ChatArtifactAttachment[];
   // Subtle routing label shown after send ("Answering" / "Needs confirmation").
   _intentLabel?: string;
 };
@@ -799,6 +934,22 @@ function parseAgentSteps(raw?: string | null): AgentStep[] {
   }
 }
 
+function parseChatArtifacts(raw?: string | null): ChatArtifactAttachment[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((artifact): artifact is ChatArtifactAttachment => (
+      artifact && typeof artifact === 'object' &&
+      typeof artifact.id === 'string' &&
+      typeof artifact.artifactId === 'string' &&
+      typeof artifact.kind === 'string'
+    ));
+  } catch {
+    return [];
+  }
+}
+
 function hydrateMessage(row: any): Message {
   const isAgent = row.message_type === 'agent'
     || Boolean(row.agent_status || row.agent_steps_json || row.agent_ask_question);
@@ -813,6 +964,7 @@ function hydrateMessage(row: any): Message {
     _agentAskQuestion: row.agent_ask_question ?? null,
     _error: Boolean(row._error) || (isAgent && row.agent_status === 'error'),
     _references: references,
+    _artifacts: parseChatArtifacts(row.artifacts_json),
   };
 }
 
@@ -841,6 +993,7 @@ export function ChatScreen({
   const [runningTask,       setRunningTask      ] = useState<RunningTask | null>(null);
   const [references,        setReferences       ] = useState<ReferencedContext[]>([]);
   const [referencePickerOpen, setReferencePickerOpen] = useState(false);
+  const [previewState,      setPreviewState     ] = useState<ArtifactPreviewState>({ isOpen: false, mode: 'preview' });
 
   const editorRef     = useRef<RichMentionEditorHandle>(null);
   const fileRef       = useRef<HTMLInputElement>(null);
@@ -859,6 +1012,13 @@ export function ChatScreen({
   }, [activeChat]);
 
   useEffect(() => {
+    const artifactCount = messages.reduce((count, message) => count + (message._artifacts?.length ?? 0), 0);
+    if (artifactCount === 0 && previewState.isOpen) {
+      setPreviewState({ isOpen: false, mode: 'preview' });
+    }
+  }, [messages, previewState.isOpen]);
+
+  useEffect(() => {
     setActiveChat(null);
     setMessages([]);
     setSidebarRefreshKey(k => k + 1);
@@ -872,6 +1032,7 @@ export function ChatScreen({
   }, [messages]);
 
   const chatTitle = messages.find(m => m.role === 'user')?.content.slice(0, 80) ?? '';
+  const allArtifacts = messages.flatMap((m) => m._artifacts ?? []);
 
   // The rich composer (contentEditable) is the source of truth: it reports its
   // derived plain text + ordered references here on every edit.
@@ -929,6 +1090,22 @@ export function ChatScreen({
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 2000);
     });
+  }
+
+  function previewArtifact(artifact: ChatArtifactAttachment) {
+    setPreviewState((state) => ({
+      ...state,
+      isOpen: true,
+      selectedArtifactId: artifact.id,
+      mode: 'preview',
+    }));
+  }
+
+  function refreshCurrentMessages() {
+    if (!activeChat) return;
+    getMessages(activeChat).then(rows => setMessages(rows.map(hydrateMessage))).catch((err) =>
+      console.warn('Failed to refresh messages:', err),
+    );
   }
 
   function handleStop() {
@@ -999,6 +1176,7 @@ export function ChatScreen({
       status: AgentStatus;
       askQuestion: string | null;
       steps: AgentStep[];
+      artifacts: ChatArtifactAttachment[];
     };
 
     let agentState: AgentPersistState = {
@@ -1006,6 +1184,7 @@ export function ChatScreen({
       status: 'planning',
       askQuestion: null,
       steps: [],
+      artifacts: [],
     };
 
     // Helper: patch any field on the agent message
@@ -1019,6 +1198,7 @@ export function ChatScreen({
         status: nextState.status,
         askQuestion: nextState.askQuestion,
         steps: [...nextState.steps],
+        artifacts: [...nextState.artifacts],
       };
       const payload = {
         content: snapshot.content,
@@ -1026,6 +1206,7 @@ export function ChatScreen({
         agent_status: snapshot.status,
         agent_ask_question: snapshot.askQuestion,
         agent_steps_json: JSON.stringify(snapshot.steps.map(stripScreenshotFromStep)),
+        artifacts_json: JSON.stringify(snapshot.artifacts),
       };
 
       persistQueue = persistQueue
@@ -1054,6 +1235,23 @@ export function ChatScreen({
       agentState = { ...agentState, steps: nextSteps };
       patchMsg({ _agentSteps: nextSteps });
       persistAgentState(agentState);
+
+      if (step.type === 'tool_result' && step.tool?.startsWith('artifact.render_') && step.output) {
+        const manifest = parseManifestOutput(step.output);
+        if (manifest) {
+          const artifact = manifestToChatArtifact(manifest);
+          const nextArtifacts = dedupeArtifacts([...agentState.artifacts, artifact]);
+          agentState = { ...agentState, artifacts: nextArtifacts };
+          patchMsg({ _artifacts: nextArtifacts, artifacts_json: JSON.stringify(nextArtifacts) });
+          setPreviewState((state) => ({
+            ...state,
+            isOpen: true,
+            selectedArtifactId: artifact.id,
+            mode: 'preview',
+          }));
+          persistAgentState(agentState);
+        }
+      }
     };
 
     abortRef.current = { aborted: false };
@@ -1244,6 +1442,7 @@ export function ChatScreen({
         agent_status: 'planning',
         agent_steps_json: '[]',
         agent_ask_question: null,
+        artifacts_json: '[]',
       }).catch(err => console.warn('Failed to save agent message shell:', err));
       await handleAgentRun(text || messageText, sessionId, modelDef.openrouter_id, asstMsgId, agentHistory, taskReferences, isFirstExchange);
       return;
@@ -1448,6 +1647,10 @@ export function ChatScreen({
                               onStop={handleAgentStop}
                               finalText={msg.content || undefined}
                               isError={msg._error}
+                              artifacts={msg._artifacts ?? []}
+                              selectedArtifactId={previewState.selectedArtifactId}
+                              onPreviewArtifact={previewArtifact}
+                              onArtifactsChanged={refreshCurrentMessages}
                             />
                           </div>
                         </div>
@@ -1616,6 +1819,12 @@ export function ChatScreen({
         </div>
 
       </main>
+      <ArtifactPreviewRail
+        artifacts={allArtifacts}
+        state={previewState}
+        onStateChange={setPreviewState}
+        onChanged={refreshCurrentMessages}
+      />
     </div>
   );
 }

@@ -4,7 +4,7 @@
 // automation store; the test run uses the real runAutomation path (AutomationRun
 // + TaskRun + evidence).
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { Icon } from '../icons';
 import { MentionEditor, MentionChip } from '../mentions/MentionEditor';
 import type { ReferencedContext } from '../../lib/mentions/types';
@@ -15,12 +15,17 @@ import { generateAutomationSteps } from '../../lib/automations/planner';
 import { checkAutomationDependencies, type DependencyReport } from '../../lib/automations/dependencies';
 import { defaultSafetyPolicy } from '../../lib/automations/migrate';
 import type { Automation, AutomationStep, AutomationTrigger, AutomationSafetyPolicy, VerificationCheck } from '../../lib/automations/types';
+import { pickLocalFile, pickLocalFolder, pickUrlReference } from '../../lib/references/local-picker';
+import type { DocumentReference } from '../../lib/references/types';
+import { documentReferenceToMention } from '../mentions/mentionSerialization';
 import { MODELS } from '../../constants/models';
 import { card, btn, ghostBtn, dangerBtn, input, labelStyle, Badge } from '../pages/ui';
+import { RunMonitor } from './RunMonitor';
 
 const STEPS = ['Goal', 'Trigger', 'Context', 'Steps', 'Verify', 'Safety', 'Test'] as const;
 
 type TriggerKind = 'manual' | 'interval' | 'daily' | 'weekly' | 'monthly' | 'cron' | 'folder' | 'webhook';
+type FolderEvent = NonNullable<Extract<AutomationTrigger, { kind: 'folder_watch' }>['event']>;
 const TRIGGER_CARDS: Array<{ kind: TriggerKind; label: string; desc: string; disabled?: boolean }> = [
   { kind: 'manual', label: 'Manual', desc: 'Run only when you click Run now.' },
   { kind: 'interval', label: 'Every X', desc: 'Repeat on a fixed interval.' },
@@ -76,6 +81,10 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
   const [cron, setCron] = useState(initTrigger?.kind === 'schedule' ? (initTrigger.cron ?? '0 9 * * *') : '0 9 * * *');
   const [folderPath, setFolderPath] = useState(initTrigger?.kind === 'folder_watch' ? initTrigger.path : '');
   const [folderPattern, setFolderPattern] = useState(initTrigger?.kind === 'folder_watch' ? (initTrigger.pattern ?? '*.pdf') : '*.pdf');
+  const [folderEvent, setFolderEvent] = useState<FolderEvent>(initTrigger?.kind === 'folder_watch' ? (initTrigger.event ?? 'file_created') : 'file_created');
+  const [folderDebounceMs, setFolderDebounceMs] = useState(initTrigger?.kind === 'folder_watch' ? (initTrigger.debounceMs ?? 750) : 750);
+  const [folderStableForMs, setFolderStableForMs] = useState(initTrigger?.kind === 'folder_watch' ? (initTrigger.stableForMs ?? 1000) : 1000);
+  const [folderIncludeSubfolders, setFolderIncludeSubfolders] = useState(initTrigger?.kind === 'folder_watch' ? Boolean(initTrigger.includeSubfolders) : false);
 
   const [steps, setSteps] = useState<AutomationStep[]>(initial?.steps ?? []);
   const [planning, setPlanning] = useState(false);
@@ -84,11 +93,69 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
 
   const [savedId, setSavedId] = useState<string | null>(editId ?? null);
   const [runMsg, setRunMsg] = useState('');
+  const [monitorRun, setMonitorRun] = useState<{ runId: string; automationName: string } | null>(null);
   const [deps, setDeps] = useState<DependencyReport | null>(null);
+  const [folderTestMsg, setFolderTestMsg] = useState('');
   const [busy, setBusy] = useState(false);
 
   const connectedIds = useMemo(() => new Set(listCatalogProviders().filter((p) => p.runtime === 'connected').map((p) => p.id)), []);
   const isConnected = (id: string) => connectedIds.has(id);
+
+  function mergeReferences(existing: ReferencedContext[], incoming: ReferencedContext[]): ReferencedContext[] {
+    const seen = new Set(existing.map((r) => `${r.kind}:${r.refId}`));
+    const next = [...existing];
+    for (const ref of incoming) {
+      const key = `${ref.kind}:${ref.refId}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        next.push(ref);
+      }
+    }
+    return next;
+  }
+
+  function mentionsFromDocuments(docs: DocumentReference[]): ReferencedContext[] {
+    return docs.map(documentReferenceToMention);
+  }
+
+  async function pickDocumentReferences(kind: 'file' | 'folder' | 'url'): Promise<ReferencedContext[]> {
+    const docs = kind === 'file'
+      ? await pickLocalFile()
+      : kind === 'folder'
+        ? await pickLocalFolder()
+        : await pickUrlReference();
+    return mentionsFromDocuments(docs);
+  }
+
+  async function addGlobalReference(kind: 'file' | 'folder' | 'url') {
+    const refs = await pickDocumentReferences(kind);
+    if (refs.length) setReferences((current) => mergeReferences(current, refs));
+  }
+
+  async function addStepReference(stepId: string, kind: 'file' | 'folder' | 'url') {
+    const refs = await pickDocumentReferences(kind);
+    if (!refs.length) return;
+    setSteps((current) => current.map((item) => item.id === stepId
+      ? { ...item, referencedContext: mergeReferences(item.referencedContext, refs) }
+      : item));
+  }
+
+  async function chooseTriggerFolder() {
+    const refs = mentionsFromDocuments(await pickLocalFolder());
+    const folder = refs[0];
+    const doc = folder?.metadata?.documentReference as DocumentReference | undefined;
+    if (!doc?.path) return;
+    setFolderPath(doc.path);
+    setReferences((current) => mergeReferences(current, [folder]));
+  }
+
+  async function testFolderAccess() {
+    setFolderTestMsg('Checking folder...');
+    const report = await checkAutomationDependencies(draftAutomation(), { userId, workspaceId });
+    setDeps(report);
+    const folderIssue = [...report.blockers, ...report.warnings].find((issue) => issue.kind === 'trigger' || issue.refId === folderPath.trim());
+    setFolderTestMsg(folderIssue ? folderIssue.message : 'Folder is accessible.');
+  }
 
   function buildTrigger(): AutomationTrigger {
     const [hh, mm] = time.split(':').map((x) => parseInt(x, 10) || 0);
@@ -100,7 +167,15 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
       case 'weekly': return { kind: 'schedule', cron: `${mm} ${hh} * * ${weekday}`, timezone: tz };
       case 'monthly': return { kind: 'schedule', cron: `${mm} ${hh} ${dom} * *`, timezone: tz };
       case 'cron': return { kind: 'schedule', cron, timezone: tz };
-      case 'folder': return { kind: 'folder_watch', path: folderPath.trim(), pattern: folderPattern.trim() || undefined };
+      case 'folder': return {
+        kind: 'folder_watch',
+        path: folderPath.trim(),
+        pattern: folderPattern.trim() || undefined,
+        event: folderEvent,
+        debounceMs: Math.max(0, folderDebounceMs || 0),
+        stableForMs: Math.max(0, folderStableForMs || 0),
+        includeSubfolders: folderIncludeSubfolders,
+      };
       case 'webhook': return { kind: 'manual' };
     }
   }
@@ -119,11 +194,11 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
     };
   }
 
-  // Re-check dependencies whenever we reach the Context step.
+  // Re-check dependencies whenever the visible context/trigger inputs change.
   useEffect(() => {
     if (step === 2) void checkAutomationDependencies(draftAutomation(), { userId, workspaceId }).then(setDeps);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step]);
+  }, [step, references, steps, tkind, folderPath, folderPattern, folderEvent, folderIncludeSubfolders]);
 
   async function planSteps() {
     setPlanning(true);
@@ -169,6 +244,7 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
     try {
       const id = await persist(false);
       const r = await runAutomation(id, { reason: 'test_run' });
+      setMonitorRun({ runId: r.automationRunId, automationName: name || 'Untitled automation' });
       setRunMsg(`Test run started — created automation run ${r.automationRunId.slice(0, 16)}… and a TaskRun with evidence. Open the Tasks page to watch it.`);
     } catch (e) {
       setRunMsg(`Test run failed: ${String(e instanceof Error ? e.message : e)}`);
@@ -177,7 +253,18 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
 
   async function enableAndClose() {
     setBusy(true);
-    try { await persist(true); onSaved(); onClose(); } finally { setBusy(false); }
+    try {
+      const report = await checkAutomationDependencies(draftAutomation(), { userId, workspaceId });
+      setDeps(report);
+      if (!report.ok) {
+        setStep(2);
+        setRunMsg('Fix the dependency blockers before enabling this automation.');
+        return;
+      }
+      await persist(true);
+      onSaved();
+      onClose();
+    } finally { setBusy(false); }
   }
   async function saveDraftAndClose() {
     setBusy(true);
@@ -187,6 +274,7 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
   const canNext = step === 0 ? Boolean(name.trim() && prompt.trim()) : true;
 
   return (
+    <>
     <div className="scrim" style={{ position: 'fixed', inset: 0, display: 'grid', placeItems: 'center', zIndex: 100, background: 'rgba(0,0,0,.7)' }}>
       <div className="modal-pop" style={{ width: 720, maxWidth: '94vw', maxHeight: '92vh', background: 'var(--bg-surface)', border: '1px solid var(--border-md)', borderRadius: 16, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Stepper */}
@@ -215,7 +303,9 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
                 placeholder="What this automation is for..."
               />
               <div style={{ ...labelStyle, marginBottom: 5 }}>What should Larund do?</div>
-              <MentionEditor value={prompt} references={references} onChange={(t, r) => { setPrompt(t); setReferences(r); }} userId={userId} workspaceId={workspaceId} minHeight={120}
+              <ReferenceToolbar onPick={addGlobalReference} />
+              {references.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '0 0 10px' }}>{references.map((r) => <MentionChip key={r.id} refItem={r} onRemove={() => setReferences((x) => x.filter((y) => y.id !== r.id))} />)}</div>}
+              <MentionEditor value={prompt} references={references} onChange={(t, r) => { setPrompt(t); setReferences((current) => mergeReferences(r, current)); }} userId={userId} workspaceId={workspaceId} minHeight={120}
                 placeholder="Every morning, use @Gmail and @Google Calendar to summarize my day…" />
             </div>
           )}
@@ -240,7 +330,35 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
                   </div>
                 )}
                 {tkind === 'cron' && <div><input value={cron} onChange={(e) => setCron(e.target.value)} style={input} placeholder="0 9 * * *" /><div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 5 }}>Advanced mode — minute hour day month weekday.</div></div>}
-                {tkind === 'folder' && <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px', gap: 8 }}><input value={folderPath} onChange={(e) => setFolderPath(e.target.value)} style={input} placeholder="D:\\Invoices" /><input value={folderPattern} onChange={(e) => setFolderPattern(e.target.value)} style={input} placeholder="*.pdf" /></div>}
+                {tkind === 'folder' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div style={{ fontSize: 12.5, color: 'var(--text-hint)', lineHeight: 1.45 }}>Larund will watch this folder and run the automation when a matching file appears.</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
+                      <input value={folderPath} onChange={(e) => setFolderPath(e.target.value)} style={input} placeholder="D:\\Invoices" />
+                      <button style={ghostBtn} onClick={chooseTriggerFolder}><Icon name="folder" size={13} stroke={1.8} /> Choose</button>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 150px 130px', gap: 8 }}>
+                      <input value={folderPattern} onChange={(e) => setFolderPattern(e.target.value)} style={input} placeholder="*.pdf" />
+                      <select value={folderEvent} onChange={(e) => setFolderEvent(e.target.value as FolderEvent)} style={input}>
+                        <option value="file_created">File created</option>
+                        <option value="file_modified">File modified</option>
+                        <option value="file_created_or_modified">Created or modified</option>
+                      </select>
+                      <label style={{ fontSize: 11.5, color: 'var(--text-hint)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <input type="checkbox" checked={folderIncludeSubfolders} onChange={(e) => setFolderIncludeSubfolders(e.target.checked)} />
+                        Subfolders
+                      </label>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      <div><div style={labelStyle}>Debounce (ms)</div><input type="number" min={0} step={100} value={folderDebounceMs} onChange={(e) => setFolderDebounceMs(Math.max(0, +e.target.value || 0))} style={{ ...input, marginTop: 4 }} /></div>
+                      <div><div style={labelStyle}>Stable for (ms)</div><input type="number" min={0} step={100} value={folderStableForMs} onChange={(e) => setFolderStableForMs(Math.max(0, +e.target.value || 0))} style={{ ...input, marginTop: 4 }} /></div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <button style={ghostBtn} onClick={testFolderAccess}><Icon name="check" size={12} stroke={2} /> Test folder access</button>
+                      {folderTestMsg && <span style={{ fontSize: 11.5, color: folderTestMsg === 'Folder is accessible.' ? 'var(--success)' : 'var(--warning)' }}>{folderTestMsg}</span>}
+                    </div>
+                  </div>
+                )}
                 {tkind === 'manual' && <div style={{ fontSize: 12.5, color: 'var(--text-hint)' }}>This automation runs only when you click Run now.</div>}
                 {tkind === 'webhook' && <div style={{ fontSize: 12.5, color: 'var(--text-hint)' }}>Webhook triggers are coming later.</div>}
               </div>
@@ -249,7 +367,8 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
 
           {step === 2 && (
             <div>
-              <div style={{ fontSize: 12.5, color: 'var(--text-hint)', marginBottom: 12 }}>Everything this automation can use. Add more by typing @ in the goal (Step 1).</div>
+              <div style={{ fontSize: 12.5, color: 'var(--text-hint)', marginBottom: 12 }}>Everything this automation can use. Add more by typing @ in the goal or attach local inputs here.</div>
+              <ReferenceToolbar onPick={addGlobalReference} />
               {references.length === 0 && <div style={{ ...card, fontSize: 12.5, color: 'var(--text-hint)' }}>No references yet.</div>}
               {references.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>{references.map((r) => <MentionChip key={r.id} refItem={r} onRemove={() => setReferences((x) => x.filter((y) => y.id !== r.id))} />)}</div>}
               {deps && deps.blockers.map((b, i) => (
@@ -283,17 +402,18 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
                     <MentionEditor
                       value={s.instruction}
                       references={s.referencedContext}
-                      onChange={(text, refs) => updateStep(s.id, { instruction: text, referencedContext: refs })}
+                      onChange={(text, refs) => setSteps((current) => current.map((item) => item.id === s.id ? { ...item, instruction: text, referencedContext: mergeReferences(refs, item.referencedContext) } : item))}
                       userId={userId}
                       workspaceId={workspaceId}
                       minHeight={58}
                       placeholder="Instruction... type @ to add step context"
                     />
+                    <ReferenceToolbar onPick={(kind) => addStepReference(s.id, kind)} compact />
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
                     <label style={{ fontSize: 11.5, color: 'var(--text-hint)', display: 'flex', alignItems: 'center', gap: 5 }}><input type="checkbox" checked={s.required} onChange={(e) => updateStep(s.id, { required: e.target.checked })} /> required</label>
                     {s.verificationHint && <Badge text={`verify: ${s.verificationHint}`} color="var(--success)" />}
-                    {s.referencedContext.map((r) => <MentionChip key={r.id} refItem={r} />)}
+                    {s.referencedContext.map((r) => <MentionChip key={r.id} refItem={r} onRemove={() => updateStep(s.id, { referencedContext: s.referencedContext.filter((x) => x.id !== r.id) })} />)}
                   </div>
                 </div>
               ))}
@@ -350,6 +470,15 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
         </div>
       </div>
     </div>
+    {monitorRun && (
+      <RunMonitor
+        automationRunId={monitorRun.runId}
+        automationName={monitorRun.automationName}
+        onClose={() => setMonitorRun(null)}
+        onChanged={() => undefined}
+      />
+    )}
+    </>
   );
 }
 
@@ -362,6 +491,27 @@ function SafetyRow({ label, value, options, onChange }: { label: string; value: 
           <button key={v} onClick={() => onChange(v)} style={{ ...ghostBtn, ...(value === v ? { background: 'var(--accent)', color: 'var(--on-accent)', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }}>{lbl}</button>
         ))}
       </div>
+    </div>
+  );
+}
+
+function ReferenceToolbar({ onPick, compact = false }: {
+  onPick: (kind: 'file' | 'folder' | 'url') => void | Promise<void>;
+  compact?: boolean;
+}) {
+  const toolbarBtn = {
+    ...ghostBtn,
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: compact ? '5px 8px' : '7px 10px',
+    fontSize: compact ? 11.5 : 12,
+  } satisfies CSSProperties;
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: compact ? '6px 0 0' : '0 0 10px' }}>
+      <button type="button" style={toolbarBtn} onClick={() => void onPick('file')}><Icon name="fileText" size={13} stroke={1.7} /> File</button>
+      <button type="button" style={toolbarBtn} onClick={() => void onPick('folder')}><Icon name="folder" size={13} stroke={1.7} /> Folder</button>
+      <button type="button" style={toolbarBtn} onClick={() => void onPick('url')}><Icon name="link" size={13} stroke={1.7} /> URL</button>
     </div>
   );
 }

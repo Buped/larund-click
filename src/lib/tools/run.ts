@@ -5,6 +5,19 @@ import { decide, DEFAULT_POLICY, type RiskPolicy } from './policy';
 import { newAuditId, sanitizeArgs, summarizeOutput } from './audit';
 import type { ToolContext } from './types';
 
+const SKILL_CONTROL_ACTIONS = new Set(['skill.run', 'task.complete', 'ask_user', 'approval.request']);
+
+function skillAllows(action: ControlAction, ctx: ToolContext): { ok: boolean; reason?: string } {
+  const active = ctx.activeSkills?.filter((skill) => skill.allowedTools.length) ?? [];
+  if (!active.length || SKILL_CONTROL_ACTIONS.has(action.action)) return { ok: true };
+  const allowed = new Set(active.flatMap((skill) => skill.allowedTools));
+  if (allowed.has(action.action)) return { ok: true };
+  return {
+    ok: false,
+    reason: `blocked_by_active_skill_allowed_tools:${action.action}; active=${active.map((s) => s.name).join(', ')}; allowed=${[...allowed].join(', ')}`,
+  };
+}
+
 /**
  * The single gated entry point for executing an action: schema is already
  * guaranteed by the parser; here we apply policy → approval → execute → audit.
@@ -35,6 +48,13 @@ export async function runControlAction(
       approvalId,
     });
   };
+
+  const skillGate = skillAllows(action, ctx);
+  if (!skillGate.ok) {
+    const result: ControlToolResult = { success: false, output: '', error: skillGate.reason };
+    audit(result);
+    return result;
+  }
 
   if (decision === 'block') {
     const result: ControlToolResult = { success: false, output: '', error: `blocked_by_policy: ${risk}` };

@@ -1,16 +1,28 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetRecordBackendForTests } from '../../coworker/persistence';
 import { listQueueItems } from '../../queue/store';
 import { listNotifications } from '../../notifications/store';
 import { createAutomation, listAutomationRuns, updateAutomation } from '../store';
 import { runAutomation } from '../runner';
-import { calculateNextRun, calculateSimpleCronNext, restoreAutomation } from '../scheduler';
+import { calculateNextRun, calculateSimpleCronNext, restoreAutomation, stopAllAutomationTimers, stopAutomationTimer } from '../scheduler';
 import { triggerFolderWatch } from '../triggers';
 
+const invokeMock = vi.hoisted(() => vi.fn());
+vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+
 beforeEach(() => {
+  stopAllAutomationTimers();
   resetRecordBackendForTests();
+  invokeMock.mockReset();
+  invokeMock.mockImplementation(async (cmd: string) => {
+    if (cmd === 'dir_list') return [];
+    if (cmd === 'fs_metadata') return JSON.stringify({ is_file: true, is_dir: false, size: 1, modified_unix: 1 });
+    return undefined;
+  });
   vi.useRealTimers();
 });
+
+afterEach(() => stopAllAutomationTimers());
 
 describe('automation scheduler', () => {
   it('calculates interval and simple cron next runs', () => {
@@ -51,6 +63,23 @@ describe('automation runner', () => {
     expect(queue[0].source).toBe('automation');
   });
 
+  it('allows explicit manual/test runs for disabled draft automations', async () => {
+    const automation = await createAutomation({
+      userId: 'u1',
+      workspaceId: 'ws1',
+      name: 'Draft test',
+      enabled: false,
+      trigger: { kind: 'manual' },
+      taskTemplate: { prompt: 'Create a report and read it back.' },
+    });
+    const result = await runAutomation(automation.id, { reason: 'test_run' });
+    const runs = await listAutomationRuns(automation.id);
+    expect(result.queueItemId).toBeTruthy();
+    expect(runs[0].status).toBe('running');
+    const queue = await listQueueItems({ userId: 'u1' });
+    expect(queue[0].source).toBe('automation');
+  });
+
   it('debounces folder-watch triggers', async () => {
     vi.useFakeTimers();
     const automation = await createAutomation({
@@ -64,6 +93,45 @@ describe('automation runner', () => {
     await vi.advanceTimersByTimeAsync(120);
     const runs = await listAutomationRuns(automation.id);
     expect(runs).toHaveLength(1);
+    expect(runs[0].triggerPayload?.reason).toBe('folder_watch');
+    vi.useRealTimers();
+  });
+
+  it('polls folder-watch automations and starts a run for new matching files', async () => {
+    vi.useFakeTimers();
+    let poll = 0;
+    invokeMock.mockImplementation(async (cmd: string, args: { path?: string }) => {
+      if (cmd === 'dir_list') {
+        poll += 1;
+        return poll === 1 ? [] : ['invoice.pdf'];
+      }
+      if (cmd === 'fs_metadata') {
+        return JSON.stringify({ is_file: true, is_dir: false, size: 10, modified_unix: 123 });
+      }
+      throw new Error(`unexpected ${cmd} ${args.path ?? ''}`);
+    });
+    const automation = await createAutomation({
+      userId: 'u1',
+      name: 'Folder ingest',
+      enabled: false,
+      trigger: { kind: 'folder_watch', path: 'D:/invoices', pattern: '*.pdf', event: 'file_created', debounceMs: 0, stableForMs: 0, pollIntervalMs: 1000 },
+      taskTemplate: { prompt: 'Read the new file.' },
+    });
+
+    await updateAutomation(automation.id, { enabled: true, status: 'active' });
+    await vi.advanceTimersByTimeAsync(1100);
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(1);
+
+    const runs = await listAutomationRuns(automation.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].triggerPayload?.filePath).toBe('D:/invoices/invoice.pdf');
+    expect(runs[0].triggerPayload?.eventType).toBe('file_created');
+    expect(runs[0].triggerPayload?.detectedAt).toBeTruthy();
+    stopAutomationTimer(automation.id);
     vi.useRealTimers();
   });
 

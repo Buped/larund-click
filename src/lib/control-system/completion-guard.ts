@@ -12,10 +12,138 @@ export interface GuardResult {
   nextStepHint: string;
 }
 
+const CONTROL_ACTIONS = new Set(['task.complete', 'ask_user', 'approval.request', 'skill.run']);
+const READBACK_ACTIONS = new Set([
+  'file.exists', 'file.list', 'file.tree', 'file.read', 'file.metadata',
+  'sheet.read', 'sheet.to_json',
+  'document.read', 'document.read_many', 'folder.scan', 'folder.read_relevant', 'doc.read',
+  'artifact.verify', 'artifact.design_lint', 'presentation.quality_lint', 'artifact.preview', 'artifact.list', 'artifact.pdf_extract_text',
+  'artifact.pdf_metadata', 'artifact.pdf_page_count',
+  'browser.read', 'browser.get_state', 'browser.assert_text', 'browser.assert_url', 'browser.extract_table',
+  'connection.call',
+]);
+
+function looksLikeArtifactRequest(text: string): boolean {
+  return /\b(pdf|docx|pptx|word|prezent[aá]ci[oó]|diavet[ií]t[eé]s|deck|slide|riport|proposal|aj[aá]nlat|sz[aá]mla|szerz[oő]d[eé]s|one[- ]pager|let[oö]lthet[oő] f[aá]jl)\b/i.test(text);
+}
+
+function artifactCompletionPrecheck(state: ActiveTaskState, recent: RecentAction[]): GuardResult | null {
+  if (!looksLikeArtifactRequest(`${state.originalUserGoal}\n${state.currentGoal}\n${state.expectedOutcome ?? ''}`)) {
+    return null;
+  }
+  // The legacy local-doc (`doc.write_*`) and Google Docs flows have their own
+  // read-back verification. Only enforce the artifact-pipeline gate when the run
+  // actually went through the `artifact.*` pipeline (or did no document work at
+  // all yet); otherwise defer to the normal verifier.
+  const usedArtifactPipeline = recent.some((a) => a.action.startsWith('artifact.'));
+  const usedLegacyDocPath = recent.some(
+    (a) =>
+      a.success &&
+      (a.action === 'doc.write_docx' ||
+        a.action === 'doc.write_txt' ||
+        (a.action === 'connection.call' && /google\.docs\./.test(a.argsSummary ?? ''))),
+  );
+  if (usedLegacyDocPath && !usedArtifactPipeline) {
+    return null;
+  }
+  const rendered = recent.some((a) => a.success && ['artifact.render_pdf', 'artifact.render_docx', 'artifact.render_pptx', 'artifact.convert'].includes(a.action));
+  if (!rendered) {
+    return {
+      ok: false,
+      reason: 'The user asked for a generated document/artifact, but no artifact render action succeeded.',
+      nextStepHint: 'Build a structured artifact model, render it with artifact.render_pdf/docx/pptx, then verify the output.',
+    };
+  }
+  const verified = recent.some((a) => a.success && a.action === 'artifact.verify' && /"exists"\s*:\s*true/.test(a.output ?? '') && /"readable"\s*:\s*true/.test(a.output ?? ''));
+  if (!verified) {
+    return {
+      ok: false,
+      reason: 'An artifact was rendered, but there is no successful artifact.verify evidence with exists/readable true.',
+      nextStepHint: 'Run artifact.verify on the generated output file, including expected text or slide/page expectations when relevant.',
+    };
+  }
+  // Designed-by-default gate. Presentations use presentation.quality_lint (slide
+  // story / visual variety / accents); other documents use artifact.design_lint
+  // (accents, structure, totals, embedded font).
+  const goalText = `${state.originalUserGoal}\n${state.currentGoal}\n${state.expectedOutcome ?? ''}`;
+  const isPresentation = /\b(pptx|prezent[aá]ci[oó]|diavet[ií]t[eé]s|deck|slide|di[aá]s|dia)\b/i.test(goalText);
+  const lintAction = isPresentation ? 'presentation.quality_lint' : 'artifact.design_lint';
+  const lintFailed = recent.some((a) => a.success && a.action === lintAction && /"status"\s*:\s*"fail"/.test(a.output ?? ''));
+  if (lintFailed) {
+    return {
+      ok: false,
+      reason: `${lintAction} reported status "fail" — the artifact has design/content defects (e.g. broken accents, skeleton/empty layout, wrong slide count, missing totals).`,
+      nextStepHint: isPresentation
+        ? 'Fix the failing checks (real title/closing slides, visual variety, correct slide count, accents) and regenerate, then re-run presentation.quality_lint until status is pass/warn.'
+        : 'Fix the failing checks (template, embedded-font PDF, correct accents, totals/footer) and regenerate, then re-run artifact.design_lint until status is pass/warn.',
+    };
+  }
+  const lintOk = recent.some((a) => a.success && a.action === lintAction && /"status"\s*:\s*"(pass|warn)"/.test(a.output ?? ''));
+  if (!lintOk) {
+    return {
+      ok: false,
+      reason: `The artifact was rendered and verified, but no passing ${lintAction} quality gate is recorded.`,
+      nextStepHint: isPresentation
+        ? 'Run presentation.quality_lint on the deck model and ensure status is pass or warn before task.complete.'
+        : 'Run artifact.design_lint on the output file (pass the document model) and ensure status is pass or warn before task.complete.',
+    };
+  }
+  const slideMatch = `${state.originalUserGoal} ${state.currentGoal}`.match(/\b(\d+)\s*(di[aá]s|slides?|slide|dia)\b/i);
+  if (slideMatch) {
+    const expected = Number(slideMatch[1]);
+    const matchingSlides = recent.some((a) => a.success && a.action === 'artifact.verify' && new RegExp(`"slideCount"\\s*:\\s*${expected}`).test(a.output ?? ''));
+    if (!matchingSlides) {
+      return {
+        ok: false,
+        reason: `The presentation request expected ${expected} slides, but verification does not prove that slide count.`,
+        nextStepHint: `Regenerate or verify the PPTX so artifact.verify reports slideCount = ${expected}.`,
+      };
+    }
+  }
+  return null;
+}
+
+function activeSkillPrecheck(state: ActiveTaskState, recent: RecentAction[]): GuardResult | null {
+  const active = state.activeSkills ?? [];
+  if (!active.length) return null;
+  const missing = active.flatMap((skill) => skill.missingRequirements);
+  if (missing.length) {
+    return {
+      ok: false,
+      reason: `Active skill requirements are missing: ${missing.map((m) => `${m.kind}:${m.id}`).join(', ')}.`,
+      nextStepHint: 'Resolve the missing requirement or ask the user before changing target surface.',
+    };
+  }
+  const realWork = recent.some((a) => a.success && !CONTROL_ACTIONS.has(a.action));
+  if (!realWork) {
+    return {
+      ok: false,
+      reason: 'A skill was loaded, but no task work has run yet.',
+      nextStepHint: 'Follow the active skill workflow with structured tools, then verify.',
+    };
+  }
+  const requiresReadback = active.some((skill) => skill.risk !== 'read_only' || skill.verificationChecklist.length > 0);
+  const hasReadback = recent.some((a) => a.success && READBACK_ACTIONS.has(a.action));
+  if (requiresReadback && !hasReadback) {
+    return {
+      ok: false,
+      reason: 'The active skill verification checklist has no read-back evidence.',
+      nextStepHint: 'Run the appropriate read-back/assertion tool from the active skill before task.complete.',
+    };
+  }
+  return null;
+}
+
 export function verifyBeforeComplete(
   state: ActiveTaskState,
   recent: RecentAction[],
 ): GuardResult {
+  const skillCheck = activeSkillPrecheck(state, recent);
+  if (skillCheck) return skillCheck;
+
+  const artifactCheck = artifactCompletionPrecheck(state, recent);
+  if (artifactCheck) return artifactCheck;
+
   // If the user previously corrected a false completion, a prior task.complete is
   // not acceptable as evidence; the verifier already ignores control actions, but
   // we additionally require fresh successful work *after* the last correction.

@@ -1,3 +1,4 @@
+mod artifacts;
 mod commands;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -44,6 +45,30 @@ pub fn run() {
             commands::documents::file_write_bytes,
             commands::documents::file_read_bytes,
             commands::documents::file_read_base64,
+            // ── local artifacts / document generation ───────────────────────
+            artifacts::artifact_render_pdf,
+            artifacts::artifact_render_docx,
+            artifacts::artifact_render_pptx,
+            artifacts::artifact_convert,
+            artifacts::artifact_preview,
+            artifacts::artifact_verify,
+            artifacts::artifact_design_lint,
+            artifacts::artifact_get_source_model,
+            artifacts::artifact_list,
+            artifacts::artifact_open,
+            artifacts::artifact_show_in_folder,
+            artifacts::artifact_save_copy,
+            artifacts::artifact_get_file_bytes,
+            artifacts::artifact_get_preview_bytes,
+            artifacts::artifact_get_manifest,
+            artifacts::artifact_get_text,
+            artifacts::artifact_copy_to,
+            artifacts::artifact_pdf_merge,
+            artifacts::artifact_pdf_split,
+            artifacts::artifact_pdf_watermark,
+            artifacts::artifact_pdf_extract_text,
+            artifacts::artifact_pdf_metadata,
+            artifacts::artifact_pdf_page_count,
             // ── clipboard ────────────────────────────────────────────────────
             commands::agent::clipboard_get,
             commands::agent::clipboard_set,
