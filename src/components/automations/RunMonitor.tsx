@@ -15,12 +15,16 @@ export function RunMonitor({
   automationRunId,
   automationName,
   readonly = false,
+  linkedChatSessionId,
+  onOpenChat,
   onClose,
   onChanged,
 }: {
   automationRunId: string;
   automationName?: string;
   readonly?: boolean;
+  linkedChatSessionId?: string;
+  onOpenChat?: (sessionId: string) => void;
   onClose: () => void;
   onChanged?: () => void;
 }) {
@@ -53,6 +57,13 @@ export function RunMonitor({
   const startedAt = snapshot?.run?.startedAt ?? snapshot?.queueItem?.startedAt ?? snapshot?.queueItem?.createdAt;
   const duration = startedAt ? durationText(startedAt, snapshot?.run?.completedAt ?? snapshot?.queueItem?.completedAt) : '-';
   const summary = snapshot?.run?.error ?? snapshot?.taskRun?.error ?? snapshot?.taskRun?.summary ?? snapshot?.live?.progress ?? snapshot?.queueItem?.error ?? snapshot?.queueItem?.progress ?? '';
+  // A run paused for input/approval keeps its resolve callback in memory only. If
+  // the app reloaded (or HMR reset state) the live state is gone and the run can't
+  // be answered — it must be stopped and re-run. Detect that orphaned state.
+  const waitingButOrphaned = (status === 'waiting_user' || status === 'waiting_approval')
+    && !snapshot?.live?.ask && !snapshot?.live?.approval;
+  // Prefer the explicit prop; fall back to the session the run actually wrote into.
+  const chatSessionId = linkedChatSessionId ?? snapshot?.run?.chatSessionId;
 
   async function stop() {
     await cancelAutomationRun(automationRunId);
@@ -101,12 +112,29 @@ export function RunMonitor({
               Queue: {snapshot?.queueItem?.id ?? '-'} · TaskRun: {snapshot?.taskRun?.id ?? snapshot?.live?.taskRunId ?? '-'}
             </div>
           </div>
-          <button style={ghostBtn} onClick={onClose} title="Close"><Icon name="x" size={13} /></button>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            {chatSessionId && onOpenChat && (
+              <button style={ghostBtn} onClick={() => onOpenChat(chatSessionId)}><Icon name="message" size={12} stroke={1.7} /> Open linked chat</button>
+            )}
+            <button style={ghostBtn} onClick={onClose} title="Close"><Icon name="x" size={13} /></button>
+          </div>
         </div>
 
         {summary && (
           <div style={{ ...panelStyle, borderColor: status === 'failed' ? 'var(--danger)' : 'rgba(var(--ov-color),0.09)' }}>
             <div style={{ fontSize: 12.5, color: status === 'failed' ? 'var(--danger)' : 'var(--text-muted)', whiteSpace: 'pre-wrap' }}>{summary}</div>
+          </div>
+        )}
+
+        {waitingButOrphaned && !readonly && (
+          <div style={{ ...panelStyle, borderColor: 'var(--warning)' }}>
+            <strong style={{ fontSize: 13 }}>Run interrupted</strong>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+              This run was waiting for input or approval when the app reloaded, so it can no longer resume. Stop it and run the automation again.
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+              <button style={dangerBtn} onClick={stop}><Icon name="stop" size={12} /> Stop run</button>
+            </div>
           </div>
         )}
 

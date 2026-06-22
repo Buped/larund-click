@@ -182,15 +182,15 @@ Use this skill for local spreadsheet, CSV, DOCX, TXT, and office-style file work
 
 const documentAccounting = `---
 name: document-accounting
-description: "Read referenced invoices and create an accounting table in local xlsx/csv or Google Sheets."
-allowed_tools: ["document.read", "document.read_many", "folder.scan", "folder.read_relevant", "sheet.write", "sheet.read", "connection.call", "ask_user"]
+description: "Read referenced invoices, record them into a local xlsx/csv or Google Sheet, and move processed files between bookkeeping folders."
+allowed_tools: ["document.read", "document.read_many", "folder.scan", "folder.read_relevant", "sheet.write", "sheet.read", "file.exists", "file.list", "file.read", "file.mkdir", "file.move", "connection.call", "ask_user"]
 requires_connections: []
 risk: "local_write"
 trigger: "invoice szamla accounting konyvel konyveles xlsx google sheet"
 ---
 
 # Document Accounting
-Use this skill when the user references invoices, receipts, folders of documents, or asks for accounting/bookkeeping extraction into a table.
+Use this skill when the user references invoices, receipts, folders of documents, or asks for accounting/bookkeeping extraction into a table — including end-to-end workflows that move each processed invoice between folders (e.g. Nem_lekönyvelt → Folyamatban → Lekönyvelt).
 
 ## Process
 1. Read every referenced invoice with document.read or document.read_many.
@@ -198,10 +198,12 @@ Use this skill when the user references invoices, receipts, folders of documents
 3. Extract invoice number, issuer, customer, date, line item, net, tax, gross total, and currency.
 4. Preserve uncertainty explicitly rather than inventing missing values.
 5. Write the requested output: local XLSX/CSV through sheet tools or cloud Google Sheets through the Google connection.
+6. If the workflow moves files between folders, do it yourself with file.move (create the destination with file.mkdir first if needed). Never ask the user to move files by hand — moving local files is something you can do. Only ask_user if the path is genuinely ambiguous or a file is missing.
 
 ## Verification
 - Confirm all source files were read or report which files could not be read.
 - Read the output rows back and compare row count/key totals.
+- For moves, confirm the source path is gone and the destination path exists (file.exists / file.list).
 - Completion requires both source read evidence and output read-back evidence.`;
 
 const taskVerification = `---

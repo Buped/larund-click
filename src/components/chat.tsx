@@ -971,7 +971,7 @@ function hydrateMessage(row: any): Message {
 // ─── Main ChatScreen ──────────────────────────────────────────────────────────
 
 export function ChatScreen({
-  model, setModel, userEmail, userId, projectId, credits, onCreditsRefresh,
+  model, setModel, userEmail, userId, projectId, credits, onCreditsRefresh, openSessionId, onSessionOpened,
 }: {
   model: string;
   setModel: (m: string) => void;
@@ -980,6 +980,9 @@ export function ChatScreen({
   projectId?: string | null;
   credits?: UserCredits | null;
   onCreditsRefresh?: () => void;
+  /** Externally-requested session to open (e.g. from an automation's "Open chat"). */
+  openSessionId?: string | null;
+  onSessionOpened?: () => void;
 }) {
   const [activeChat,        setActiveChat       ] = useState<string | null>(null);
   const [messages,          setMessages         ] = useState<Message[]>([]);
@@ -1023,6 +1026,17 @@ export function ChatScreen({
     setMessages([]);
     setSidebarRefreshKey(k => k + 1);
   }, [projectId]);
+
+  // Honor an external "open this session" request (e.g. an automation's Open chat).
+  // Declared after the project-reset effect so it wins on mount. Clears the parent
+  // request once consumed so re-opening the same session works.
+  useEffect(() => {
+    if (!openSessionId) return;
+    setActiveChat(openSessionId);
+    setSidebarRefreshKey(k => k + 1);
+    onSessionOpened?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSessionId]);
 
   useEffect(() => {
     // Scroll only the message list to its bottom — never via scrollIntoView,

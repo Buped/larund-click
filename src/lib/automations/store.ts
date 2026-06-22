@@ -46,6 +46,9 @@ export async function createAutomation(input: CreateAutomationInput): Promise<Au
       destructiveRequiresApproval: true,
     },
     status: input.enabled === false ? 'disabled' : 'active',
+    chatMode: input.chatMode ?? 'create_new',
+    chatVisibility: input.chatVisibility ?? 'private_local',
+    linkedChatSessionId: input.linkedChatSessionId,
     prompt: input.prompt ?? input.taskTemplate.prompt,
     referencedContext: input.referencedContext ?? [],
     steps: input.steps ?? [],
@@ -56,6 +59,18 @@ export async function createAutomation(input: CreateAutomationInput): Promise<Au
     metadata: input.metadata,
   };
   automation.nextRunAt = calculateNextRun(automation.trigger, new Date(now))?.toISOString();
+  // Only `create_new` gets a dedicated chat up front, and only when one wasn't
+  // already chosen. `append_to_existing` must keep the user-selected session;
+  // `none` writes nowhere. Best-effort — chat DB issues never block creation.
+  if (automation.chatMode === 'create_new' && !automation.linkedChatSessionId) {
+    try {
+      const { createAutomationLinkedChat } = await import('./chat-bridge');
+      const created = await createAutomationLinkedChat({ automationName: automation.name, projectId: automation.workspaceId ?? null });
+      if (created) automation.linkedChatSessionId = created.sessionId;
+    } catch (err) {
+      console.warn('[automations] could not create linked chat session:', err);
+    }
+  }
   await recordBackend().put(AUTOMATIONS, automation as unknown as RecordRow);
   await syncAutomationTimer(automation);
   return automation;

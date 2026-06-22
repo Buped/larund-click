@@ -85,6 +85,10 @@ export interface AutomationApprovalPolicy {
   destructiveRequiresApproval?: boolean;
 }
 
+/** How an automation writes its run narrative into a chat session. */
+export type AutomationChatMode = 'none' | 'append_to_existing' | 'create_new';
+export type AutomationChatVisibility = 'private_local' | 'workspace';
+
 export interface Automation {
   id: string;
   userId: string;
@@ -92,6 +96,10 @@ export interface Automation {
   name: string;
   description?: string;
   enabled: boolean;
+  /** Chat session this automation writes its run narrative into (see chat-bridge). */
+  linkedChatSessionId?: string;
+  chatMode?: AutomationChatMode;
+  chatVisibility?: AutomationChatVisibility;
   trigger: AutomationTrigger;
   taskTemplate: AutomationTaskTemplate;
   autonomyMode: 'manual' | 'semi' | 'full';
@@ -121,6 +129,9 @@ export interface AutomationRun {
   completedAt?: string;
   error?: string;
   triggerPayload?: Record<string, unknown>;
+  /** Linked chat session + the live assistant message the run narrates into. */
+  chatSessionId?: string;
+  chatMessageId?: string;
 }
 
 export interface CreateAutomationInput {
@@ -129,6 +140,9 @@ export interface CreateAutomationInput {
   name: string;
   description?: string;
   enabled?: boolean;
+  chatMode?: AutomationChatMode;
+  chatVisibility?: AutomationChatVisibility;
+  linkedChatSessionId?: string;
   trigger: AutomationTrigger;
   taskTemplate: AutomationTaskTemplate;
   autonomyMode?: 'manual' | 'semi' | 'full';

@@ -14,7 +14,9 @@ import { runAutomation } from '../../lib/automations/runner';
 import { generateAutomationSteps } from '../../lib/automations/planner';
 import { checkAutomationDependencies, type DependencyReport } from '../../lib/automations/dependencies';
 import { defaultSafetyPolicy } from '../../lib/automations/migrate';
-import type { Automation, AutomationStep, AutomationTrigger, AutomationSafetyPolicy, VerificationCheck } from '../../lib/automations/types';
+import type { Automation, AutomationChatMode, AutomationStep, AutomationTrigger, AutomationSafetyPolicy, VerificationCheck } from '../../lib/automations/types';
+import { createAutomationLinkedChat, getLinkedChatTitle } from '../../lib/automations/chat-bridge';
+import { ChatSessionPicker } from './ChatSessionPicker';
 import { pickLocalFile, pickLocalFolder, pickUrlReference } from '../../lib/references/local-picker';
 import type { DocumentReference } from '../../lib/references/types';
 import { documentReferenceToMention } from '../mentions/mentionSerialization';
@@ -56,16 +58,44 @@ export interface WizardInitial {
   verification?: VerificationCheck[];
   steps?: AutomationStep[];
   safety?: AutomationSafetyPolicy;
+  chatMode?: AutomationChatMode;
+  linkedChatSessionId?: string;
 }
 
-export function NewAutomationWizard({ userId, workspaceId, initial, editId, onClose, onSaved }: {
+export function NewAutomationWizard({ userId, workspaceId, initial, editId, onClose, onSaved, onOpenChat }: {
   userId: string; workspaceId?: string; initial?: WizardInitial; editId?: string; onClose: () => void; onSaved: () => void;
+  onOpenChat?: (sessionId: string) => void;
 }) {
+  const isEditMode = Boolean(editId);
   const [step, setStep] = useState(0);
+  // Highest step the user has reached. In create mode the top stepper unlocks up
+  // to here (so you can jump back and forward across visited steps); in edit mode
+  // every step is freely clickable (no Next-Next-Next to reach Safety). See §8.
+  const [highestStep, setHighestStep] = useState(isEditMode ? STEPS.length - 1 : 0);
   const [name, setName] = useState(initial?.name ?? '');
   const [description, setDescription] = useState(initial?.description ?? '');
   const [prompt, setPrompt] = useState(initial?.prompt ?? '');
   const [references, setReferences] = useState<ReferencedContext[]>(initial?.references ?? []);
+
+  // Chat linkage (§1–§8). Backfill: an existing automation with a linked session
+  // was implicitly attached; without one it defaults to a dedicated chat.
+  const [chatMode, setChatMode] = useState<AutomationChatMode>(
+    initial?.chatMode ?? (initial?.linkedChatSessionId ? 'append_to_existing' : 'create_new'),
+  );
+  const [linkedChatSessionId, setLinkedChatSessionId] = useState<string | undefined>(initial?.linkedChatSessionId);
+  const [linkedChatTitle, setLinkedChatTitle] = useState<string | undefined>(undefined);
+  const [chatPickerOpen, setChatPickerOpen] = useState(false);
+  const [creatingChat, setCreatingChat] = useState(false);
+
+  // Load the linked chat's title for display (edit mode / after attach).
+  useEffect(() => {
+    let alive = true;
+    if (!linkedChatSessionId) { setLinkedChatTitle(undefined); return; }
+    void getLinkedChatTitle(linkedChatSessionId).then((title) => {
+      if (alive) setLinkedChatTitle(title ?? undefined);
+    });
+    return () => { alive = false; };
+  }, [linkedChatSessionId]);
 
   // Trigger
   const initTrigger = initial?.trigger;
@@ -157,6 +187,35 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
     setFolderTestMsg(folderIssue ? folderIssue.message : 'Folder is accessible.');
   }
 
+  function attachSession(sel: { sessionId: string; title: string }) {
+    setChatMode('append_to_existing');
+    setLinkedChatSessionId(sel.sessionId);
+    setLinkedChatTitle(sel.title);
+    setChatPickerOpen(false);
+  }
+  function detachChat() {
+    setChatMode('none');
+    setLinkedChatSessionId(undefined);
+    setLinkedChatTitle(undefined);
+  }
+  async function createNowLinkedChat() {
+    setCreatingChat(true);
+    try {
+      const created = await createAutomationLinkedChat({ automationName: name, projectId: workspaceId ?? null });
+      if (created) {
+        setChatMode('create_new');
+        setLinkedChatSessionId(created.sessionId);
+        setLinkedChatTitle(created.title);
+      }
+    } finally { setCreatingChat(false); }
+  }
+  function openLinkedChat() {
+    if (linkedChatSessionId && onOpenChat) {
+      onOpenChat(linkedChatSessionId);
+      onClose();
+    }
+  }
+
   function buildTrigger(): AutomationTrigger {
     const [hh, mm] = time.split(':').map((x) => parseInt(x, 10) || 0);
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -190,6 +249,7 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
       autonomyMode: safety.autonomyMode === 'manual' ? 'manual' : 'semi',
       approvalPolicy: { externalSendRequiresApproval: safety.externalSend === 'ask', destructiveRequiresApproval: safety.destructive === 'ask_strong' },
       status: 'disabled', prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety,
+      chatMode, linkedChatSessionId, chatVisibility: 'private_local',
       createdAt: now, updatedAt: now,
     };
   }
@@ -231,11 +291,12 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
 
   async function persist(enabled: boolean): Promise<string> {
     if (savedId) {
-      await updateAutomation(savedId, { name: name || 'Untitled automation', description, enabled, status: enabled ? 'active' : 'disabled', trigger: buildTrigger(), prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety, taskTemplate: draftAutomation().taskTemplate });
+      await updateAutomation(savedId, { name: name || 'Untitled automation', description, enabled, status: enabled ? 'active' : 'disabled', trigger: buildTrigger(), prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety, taskTemplate: draftAutomation().taskTemplate, chatMode, linkedChatSessionId, chatVisibility: 'private_local' });
       return savedId;
     }
-    const created = await createAutomation({ userId, workspaceId, name: name || 'Untitled automation', description, enabled, trigger: buildTrigger(), taskTemplate: draftAutomation().taskTemplate, prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety });
+    const created = await createAutomation({ userId, workspaceId, name: name || 'Untitled automation', description, enabled, trigger: buildTrigger(), taskTemplate: draftAutomation().taskTemplate, prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety, chatMode, linkedChatSessionId, chatVisibility: 'private_local' });
     setSavedId(created.id);
+    if (created.linkedChatSessionId && !linkedChatSessionId) setLinkedChatSessionId(created.linkedChatSessionId);
     return created.id;
   }
 
@@ -252,6 +313,11 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
   }
 
   async function enableAndClose() {
+    if (chatMode === 'append_to_existing' && !linkedChatSessionId) {
+      setStep(0);
+      setRunMsg('Choose a chat to attach, or switch the chat connection to Create new / None.');
+      return;
+    }
     setBusy(true);
     try {
       const report = await checkAutomationDependencies(draftAutomation(), { userId, workspaceId });
@@ -272,6 +338,21 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
   }
 
   const canNext = step === 0 ? Boolean(name.trim() && prompt.trim()) : true;
+  function canNavigateToStep(index: number): boolean {
+    if (isEditMode) return true;
+    return index <= highestStep;
+  }
+  function goToStep(index: number) {
+    if (!canNavigateToStep(index)) return;
+    setStep(index);
+    setHighestStep((h) => Math.max(h, index));
+  }
+  // Mark steps that are missing required input so users can spot gaps even when
+  // free-navigating in edit mode. Goal needs a name + prompt to be runnable.
+  function stepHasIssue(index: number): boolean {
+    if (index === 0) return !(name.trim() && prompt.trim());
+    return false;
+  }
 
   return (
     <>
@@ -279,13 +360,17 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
       <div className="modal-pop" style={{ width: 720, maxWidth: '94vw', maxHeight: '92vh', background: 'var(--bg-surface)', border: '1px solid var(--border-md)', borderRadius: 16, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Stepper */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '14px 18px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
-          {STEPS.map((s, i) => (
-            <button key={s} onClick={() => i <= step && setStep(i)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: i <= step ? 'pointer' : 'default', fontFamily: 'inherit' }}>
-              <span style={{ width: 20, height: 20, borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700, background: i === step ? 'var(--accent)' : i < step ? 'rgba(62,207,142,.2)' : 'rgba(var(--ov-color),.07)', color: i === step ? 'var(--on-accent)' : i < step ? 'var(--success)' : 'var(--text-hint)' }}>{i < step ? '✓' : i + 1}</span>
+          {STEPS.map((s, i) => {
+            const navigable = canNavigateToStep(i);
+            const issue = stepHasIssue(i);
+            return (
+            <button key={s} onClick={() => goToStep(i)} disabled={!navigable} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: navigable ? 'pointer' : 'default', fontFamily: 'inherit' }}>
+              <span style={{ width: 20, height: 20, borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700, background: i === step ? 'var(--accent)' : issue ? 'rgba(240,170,60,.22)' : i < step ? 'rgba(62,207,142,.2)' : 'rgba(var(--ov-color),.07)', color: i === step ? 'var(--on-accent)' : issue ? 'var(--warning)' : i < step ? 'var(--success)' : 'var(--text-hint)' }}>{issue ? '!' : i < step ? '✓' : i + 1}</span>
               <span style={{ fontSize: 12, color: i === step ? 'var(--text-primary)' : 'var(--text-hint)', fontWeight: i === step ? 600 : 400 }}>{s}</span>
               {i < STEPS.length - 1 && <span style={{ width: 12, height: 1, background: 'var(--border)', margin: '0 2px' }} />}
             </button>
-          ))}
+            );
+          })}
           <div style={{ flex: 1 }} />
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-hint)' }}><Icon name="x" size={16} stroke={2} /></button>
         </div>
@@ -307,6 +392,37 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
               {references.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '0 0 10px' }}>{references.map((r) => <MentionChip key={r.id} refItem={r} onRemove={() => setReferences((x) => x.filter((y) => y.id !== r.id))} />)}</div>}
               <MentionEditor value={prompt} references={references} onChange={(t, r) => { setPrompt(t); setReferences((current) => mergeReferences(r, current)); }} userId={userId} workspaceId={workspaceId} minHeight={120}
                 placeholder="Every morning, use @Gmail and @Google Calendar to summarize my day…" />
+
+              <div style={{ marginTop: 18 }}>
+                <div style={{ ...labelStyle, marginBottom: 6 }}>Chat connection</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <ChatModeOption selected={chatMode === 'create_new'} onSelect={() => setChatMode('create_new')}
+                    title="Create a dedicated chat" desc={`A "${name.trim() || 'new automation'}" chat is created, and every run writes here.`} />
+                  <ChatModeOption selected={chatMode === 'append_to_existing'} onSelect={() => { setChatMode('append_to_existing'); if (!linkedChatSessionId) setChatPickerOpen(true); }}
+                    title="Attach to an existing chat" desc="Pick a chat where this automation's runs will appear." />
+                  <ChatModeOption selected={chatMode === 'none'} onSelect={detachChat}
+                    title="Don't write to chat" desc="Runs only show in the Automations / run monitor." />
+                </div>
+                {chatMode !== 'none' && (linkedChatSessionId ? (
+                  <div style={{ ...card, marginTop: 10, marginBottom: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <Icon name="message" size={14} stroke={1.7} />
+                    <span style={{ fontSize: 12.5, color: 'var(--text-primary)', flex: 1, minWidth: 120 }}>Linked chat: <strong>{linkedChatTitle ?? '…'}</strong></span>
+                    {onOpenChat && <button style={ghostBtn} onClick={openLinkedChat}>Open chat</button>}
+                    <button style={ghostBtn} onClick={() => setChatPickerOpen(true)}>Change</button>
+                    <button style={ghostBtn} onClick={detachChat}>Detach</button>
+                  </div>
+                ) : chatMode === 'append_to_existing' ? (
+                  <div style={{ marginTop: 10 }}>
+                    <button style={ghostBtn} onClick={() => setChatPickerOpen(true)}><Icon name="message" size={13} stroke={1.7} /> Attach existing chat</button>
+                  </div>
+                ) : (
+                  <div style={{ ...card, marginTop: 10, marginBottom: 0, fontSize: 12, color: 'var(--text-hint)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ flex: 1, minWidth: 160 }}>A dedicated chat will be created when you save.</span>
+                    <button style={ghostBtn} onClick={createNowLinkedChat} disabled={creatingChat}>{creatingChat ? 'Creating…' : 'Create now'}</button>
+                  </div>
+                ))}
+                {chatMode === 'none' && <div style={{ ...card, marginTop: 10, marginBottom: 0, fontSize: 12, color: 'var(--warning)' }}>Runs will not appear in chat.</div>}
+              </div>
             </div>
           )}
 
@@ -453,6 +569,22 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
           {step === 6 && (
             <div>
               <div style={{ fontSize: 12.5, color: 'var(--text-hint)', marginBottom: 12 }}>Run once now to verify it works, then enable it.</div>
+              <div style={{ ...card, marginBottom: 12, fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                {chatMode !== 'none' && linkedChatSessionId ? (
+                  <>
+                    <span style={{ flex: 1, minWidth: 160 }}>Test run output will appear in: <strong style={{ color: 'var(--text-primary)' }}>{linkedChatTitle ?? 'linked chat'}</strong></span>
+                    {onOpenChat && <button style={ghostBtn} onClick={openLinkedChat}>Open chat</button>}
+                    <button style={ghostBtn} onClick={() => setChatPickerOpen(true)}>Change</button>
+                  </>
+                ) : chatMode === 'create_new' ? (
+                  <span style={{ flex: 1, minWidth: 160 }}>A dedicated chat will be created on the first run.</span>
+                ) : (
+                  <>
+                    <span style={{ flex: 1, minWidth: 160 }}>This test run will only appear in the run monitor.</span>
+                    <button style={ghostBtn} onClick={() => { setChatMode('append_to_existing'); setChatPickerOpen(true); }}>Attach a chat</button>
+                  </>
+                )}
+              </div>
               <button style={btn} onClick={testRun} disabled={busy}>{busy ? 'Starting…' : 'Run once now'}</button>
               {runMsg && <div style={{ ...card, marginTop: 12, fontSize: 12.5, color: 'var(--text-muted)' }}>{runMsg}</div>}
             </div>
@@ -461,11 +593,11 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
 
         {/* Footer */}
         <div style={{ display: 'flex', gap: 8, padding: '14px 18px', borderTop: '1px solid var(--border)' }}>
-          {step > 0 && <button style={ghostBtn} onClick={() => setStep((s) => s - 1)}>Back</button>}
+          {step > 0 && <button style={ghostBtn} onClick={() => goToStep(step - 1)}>Back</button>}
           <div style={{ flex: 1 }} />
           <button style={ghostBtn} onClick={saveDraftAndClose} disabled={busy || !name.trim()}>Save as draft</button>
           {step < STEPS.length - 1
-            ? <button style={btn} onClick={() => canNext && setStep((s) => s + 1)} disabled={!canNext}>Next</button>
+            ? <button style={btn} onClick={() => canNext && goToStep(step + 1)} disabled={!canNext}>Next</button>
             : <button style={btn} onClick={enableAndClose} disabled={busy}>Enable automation</button>}
         </div>
       </div>
@@ -474,11 +606,32 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
       <RunMonitor
         automationRunId={monitorRun.runId}
         automationName={monitorRun.automationName}
+        linkedChatSessionId={linkedChatSessionId}
+        onOpenChat={onOpenChat ? (sessionId) => { onOpenChat(sessionId); onClose(); } : undefined}
         onClose={() => setMonitorRun(null)}
         onChanged={() => undefined}
       />
     )}
+    {chatPickerOpen && (
+      <ChatSessionPicker
+        projectId={workspaceId ?? null}
+        onCancel={() => setChatPickerOpen(false)}
+        onSelect={attachSession}
+      />
+    )}
     </>
+  );
+}
+
+function ChatModeOption({ selected, onSelect, title, desc }: { selected: boolean; onSelect: () => void; title: string; desc: string }) {
+  return (
+    <button type="button" onClick={onSelect} style={{ textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', gap: 9, alignItems: 'flex-start', padding: '9px 11px', borderRadius: 9, background: selected ? 'rgba(74,158,255,.1)' : 'rgba(var(--ov-color),.03)', border: `1px solid ${selected ? 'var(--accent)' : 'var(--border)'}` }}>
+      <span style={{ width: 15, height: 15, borderRadius: '50%', marginTop: 1, border: `2px solid ${selected ? 'var(--accent)' : 'var(--text-hint)'}`, display: 'grid', placeItems: 'center', flexShrink: 0 }}>{selected && <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)' }} />}</span>
+      <span style={{ flex: 1 }}>
+        <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>{title}</span>
+        <span style={{ display: 'block', fontSize: 11.5, color: 'var(--text-hint)', marginTop: 2 }}>{desc}</span>
+      </span>
+    </button>
   );
 }
 

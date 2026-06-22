@@ -94,6 +94,10 @@ export default function App() {
   const [user,         setUser        ] = useState<AuthUser | null>(null);
   const [credits,      setCredits     ] = useState<UserCredits | null>(null);
   const [route,        setRoute       ] = useState<Route>('chat');
+  // When another surface (Automations, RunMonitor, wizard) asks to open a chat,
+  // we switch to the chat route and hand the session id to ChatScreen, which
+  // selects it. Single source of truth — no localStorage/reload hacks.
+  const [openChatSessionId, setOpenChatSessionId] = useState<string | null>(null);
   const [model,        setModel       ] = useState('core');
   const [showSettings, setShowSettings] = useState(false);
   const [projects,     setProjects    ] = useState<Project[]>([]);
@@ -245,6 +249,12 @@ export default function App() {
 
   const uid = user?.id ?? 'local';
 
+  function openChatSession(sessionId: string) {
+    setShowSettings(false);
+    setRoute('chat');
+    setOpenChatSessionId(sessionId);
+  }
+
   return (
     <div id="app-shell" style={{ width: '100%', height: '100%', background: 'var(--bg-app)', color: 'var(--text-primary)', fontFamily: 'var(--font)', display: 'flex', flexDirection: 'row', overflow: 'hidden', position: 'relative' }}>
       <NavRail
@@ -262,9 +272,9 @@ export default function App() {
         onSwitchProject={handleSwitchProject}
       />
       <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        {route === 'chat'        && <ChatScreen model={model} setModel={setModel} userEmail={user?.email ?? null} userId={user?.id ?? null} projectId={activeProjectId} credits={credits} onCreditsRefresh={refreshCredits} />}
+        {route === 'chat'        && <ChatScreen model={model} setModel={setModel} userEmail={user?.email ?? null} userId={user?.id ?? null} projectId={activeProjectId} credits={credits} onCreditsRefresh={refreshCredits} openSessionId={openChatSessionId} onSessionOpened={() => setOpenChatSessionId(null)} />}
         {route === 'tasks'       && <TasksPage userId={uid} />}
-        {route === 'automations' && <AutomationsPage userId={uid} projectId={activeProjectId} isAdmin={user?.isAdmin ?? false} />}
+        {route === 'automations' && <AutomationsPage userId={uid} projectId={activeProjectId} isAdmin={user?.isAdmin ?? false} onOpenChat={openChatSession} />}
         {route === 'artifacts'   && <ArtifactsPage />}
         {route === 'skills'      && <SkillsPage userId={uid} projectId={activeProjectId} />}
         {route === 'memory'      && <MemoryPage userId={uid} projectId={activeProjectId} />}

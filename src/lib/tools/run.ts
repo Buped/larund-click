@@ -1,16 +1,35 @@
 import type { ControlAction, ControlToolResult } from '../control-system/types';
 import { performControlAction } from '../control-system/executor';
-import { categoryOf } from './registry';
+import { categoryOf, TOOL_CATALOG } from './registry';
 import { decide, DEFAULT_POLICY, type RiskPolicy } from './policy';
 import { newAuditId, sanitizeArgs, summarizeOutput } from './audit';
-import type { ToolContext } from './types';
+import type { ToolContext, ToolCategory } from './types';
 
 const SKILL_CONTROL_ACTIONS = new Set(['skill.run', 'task.complete', 'ask_user', 'approval.request']);
+
+// The core local toolset a general assistant ALWAYS has, regardless of which
+// skills are active. Skills ADD specialized capabilities (browser, connections,
+// MCP, process exec, app control); they must not strip the fundamental ability to
+// read AND write/move local files, spreadsheets, documents and artifacts. Without
+// this, a read-only skill like `task-verification` being active would block
+// `file.move`, forcing the agent to ask the user to move files by hand.
+//
+// Safety is preserved by the risk policy below: destructive ops (`file.delete`)
+// and process exec (`cli.run`) are excluded here and stay skill-gated, and every
+// local write is still subject to policy/approval.
+const CORE_BASELINE_CATEGORIES = new Set<ToolCategory>(['files', 'documents', 'data', 'artifacts', 'clipboard']);
+const CORE_ALWAYS_ALLOWED = new Set<string>(
+  TOOL_CATALOG
+    .filter((tool) => CORE_BASELINE_CATEGORIES.has(tool.category))
+    .filter((tool) => tool.baseRisk !== 'destructive' && tool.baseRisk !== 'process_exec')
+    .map((tool) => tool.name),
+);
 
 function skillAllows(action: ControlAction, ctx: ToolContext): { ok: boolean; reason?: string } {
   const active = ctx.activeSkills?.filter((skill) => skill.allowedTools.length) ?? [];
   if (!active.length || SKILL_CONTROL_ACTIONS.has(action.action)) return { ok: true };
-  const allowed = new Set(active.flatMap((skill) => skill.allowedTools));
+  if (CORE_ALWAYS_ALLOWED.has(action.action)) return { ok: true };
+  const allowed = new Set([...active.flatMap((skill) => skill.allowedTools), ...CORE_ALWAYS_ALLOWED]);
   if (allowed.has(action.action)) return { ok: true };
   return {
     ok: false,

@@ -255,6 +255,13 @@ export async function adoptOrphanSessions(projectId: string): Promise<number> {
   return res?.rowsAffected ?? 0;
 }
 
+/** Single session by id, regardless of project scope. Null when it was deleted. */
+export async function getSessionById(id: string) {
+  const db = await getDb();
+  const rows = await db.select<any[]>('SELECT * FROM sessions WHERE id = ? LIMIT 1', [id]);
+  return rows[0] ?? null;
+}
+
 export async function createSession(id: string, title: string, projectId?: string | null) {
   const db = await getDb();
   await db.execute(

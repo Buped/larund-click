@@ -8,23 +8,26 @@ import { getAutomation, listAutomationRuns, pauseAutomation, resumeAutomation, d
 import { runAutomation } from '../../lib/automations/runner';
 import { checkAutomationDependencies, type DependencyReport } from '../../lib/automations/dependencies';
 import { normalizeAutomation, type NormalizedAutomation } from '../../lib/automations/migrate';
+import { getLinkedChatTitle } from '../../lib/automations/chat-bridge';
 import { runTriggerSummary, triggerSummary } from './shared';
 import { RunMonitor } from './RunMonitor';
 import type { AutomationRun } from '../../lib/automations/types';
 import { PageFrame, card, btn, ghostBtn, dangerBtn, labelStyle, Badge, Empty, statusColor } from '../pages/ui';
 
-export function AutomationDetail({ automationId, userId, workspaceId, onBack, onEdit, onChanged }: {
+export function AutomationDetail({ automationId, userId, workspaceId, onBack, onEdit, onChanged, onOpenChat }: {
   automationId: string;
   userId: string;
   workspaceId?: string;
   onBack: () => void;
   onEdit: () => void;
   onChanged: () => void;
+  onOpenChat?: (sessionId: string) => void;
 }) {
   const [auto, setAuto] = useState<NormalizedAutomation | null>(null);
   const [runs, setRuns] = useState<AutomationRun[]>([]);
   const [deps, setDeps] = useState<DependencyReport | null>(null);
   const [busy, setBusy] = useState(false);
+  const [chat, setChat] = useState<{ chatMode?: string; linkedChatSessionId?: string; title?: string | null }>({});
   const [monitor, setMonitor] = useState<{ runId: string; readonly?: boolean } | null>(null);
 
   async function load() {
@@ -37,6 +40,11 @@ export function AutomationDetail({ automationId, userId, workspaceId, onBack, on
     setAuto(norm);
     setRuns(await listAutomationRuns(automationId));
     setDeps(await checkAutomationDependencies(a, { userId, workspaceId }));
+    setChat({
+      chatMode: a.chatMode,
+      linkedChatSessionId: a.linkedChatSessionId,
+      title: a.linkedChatSessionId ? await getLinkedChatTitle(a.linkedChatSessionId) : null,
+    });
   }
 
   useEffect(() => { void load(); /* eslint-disable-next-line */ }, [automationId]);
@@ -142,6 +150,24 @@ export function AutomationDetail({ automationId, userId, workspaceId, onBack, on
         </div>
       )}
 
+      <Section title="Linked chat">
+        {chat.linkedChatSessionId && chat.chatMode !== 'none' ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Icon name="message" size={14} stroke={1.7} />
+            <span style={{ fontSize: 12.5, color: 'var(--text-muted)', flex: 1, minWidth: 140 }}>
+              {chat.title != null ? <>Runs appear in <strong style={{ color: 'var(--text-primary)' }}>{chat.title}</strong></> : 'Linked chat no longer exists — edit to choose another.'}
+            </span>
+            {onOpenChat && chat.title != null && <button style={ghostBtn} onClick={() => onOpenChat(chat.linkedChatSessionId!)}>Open chat</button>}
+            <button style={ghostBtn} onClick={onEdit}>Change</button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12.5, color: 'var(--text-hint)', flex: 1, minWidth: 140 }}>This automation does not write to a chat.</span>
+            <button style={ghostBtn} onClick={onEdit}>Attach a chat</button>
+          </div>
+        )}
+      </Section>
+
       <Section title="Goal & context">
         <div style={{ fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{auto.prompt}</div>
         {auto.referencedContext.length > 0 && (
@@ -195,6 +221,8 @@ export function AutomationDetail({ automationId, userId, workspaceId, onBack, on
           automationRunId={monitor.runId}
           automationName={auto.name}
           readonly={monitor.readonly}
+          linkedChatSessionId={chat.linkedChatSessionId}
+          onOpenChat={onOpenChat}
           onClose={() => setMonitor(null)}
           onChanged={() => { void load(); onChanged(); }}
         />

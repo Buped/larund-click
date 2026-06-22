@@ -10,6 +10,7 @@ import { MentionChip } from '../mentions/MentionEditor';
 import { listAutomations, pauseAutomation, resumeAutomation, getAutomation, listAutomationRuns } from '../../lib/automations/store';
 import { runAutomation } from '../../lib/automations/runner';
 import { cancelAutomationRun, ensureAutomationQueueProcessor, isAutomationQueueProcessorInstalled } from '../../lib/automations/agent-processor';
+import { getLinkedChatTitle } from '../../lib/automations/chat-bridge';
 import { normalizeAutomation } from '../../lib/automations/migrate';
 import { AUTOMATION_TEMPLATES, type AutomationTemplate } from '../../lib/automations/templates';
 import type { Automation, AutomationRun } from '../../lib/automations/types';
@@ -63,14 +64,17 @@ function isActiveRun(run?: AutomationRun): boolean {
   return Boolean(run && ['queued', 'running', 'waiting_approval', 'waiting_user'].includes(run.status));
 }
 
-function AutomationCard({ a, run, onOpen, onRun, onToggle, onWatch, onStop }: {
+function AutomationCard({ a, run, linkedChatTitle, onOpen, onRun, onToggle, onWatch, onStop, onOpenChat, onAttachChat }: {
   a: Automation;
   run?: AutomationRun;
+  linkedChatTitle?: string | null;
   onOpen: () => void;
   onRun: () => void;
   onToggle: () => void;
   onWatch: () => void;
   onStop: () => void;
+  onOpenChat?: () => void;
+  onAttachChat?: () => void;
 }) {
   const norm = normalizeAutomation(a);
   const status = statusOf(a);
@@ -95,6 +99,20 @@ function AutomationCard({ a, run, onOpen, onRun, onToggle, onWatch, onStop }: {
         </div>
       )}
       <div style={{ fontSize: 10.5, color: 'var(--text-hint)', marginTop: 8 }}>Last run: {last} · Next: {next}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 11.5, color: 'var(--text-hint)' }}>
+        <Icon name="message" size={12} stroke={1.7} />
+        {a.linkedChatSessionId && a.chatMode !== 'none' ? (
+          <>
+            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Linked chat: <span style={{ color: 'var(--text-muted)' }}>{linkedChatTitle ?? '…'}</span></span>
+            {onOpenChat && <button style={{ ...ghostBtn, padding: '3px 8px', fontSize: 11 }} onClick={onOpenChat}>Open chat</button>}
+          </>
+        ) : (
+          <>
+            <span style={{ flex: 1 }}>No linked chat</span>
+            {onAttachChat && <button style={{ ...ghostBtn, padding: '3px 8px', fontSize: 11 }} onClick={onAttachChat}>Attach chat</button>}
+          </>
+        )}
+      </div>
       <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
         {activeRun ? (
           <>
@@ -111,14 +129,15 @@ function AutomationCard({ a, run, onOpen, onRun, onToggle, onWatch, onStop }: {
   );
 }
 
-export function AutomationsPage({ userId, workspaceId }: { userId: string; workspaceId?: string }) {
+export function AutomationsPage({ userId, workspaceId, onOpenChat }: { userId: string; workspaceId?: string; onOpenChat?: (sessionId: string) => void }) {
   const { items, loading, reload } = useAsyncList<Automation>(() => listAutomations({ userId, workspaceId, includeDisabled: true }), [userId, workspaceId]);
   const [tab, setTab] = useState<Tab>('All');
   const [query, setQuery] = useState('');
   const [wizard, setWizard] = useState<{ open: boolean; initial?: WizardInitial; editId?: string }>({ open: false });
   const [detailId, setDetailId] = useState<string | null>(null);
   const [latestRuns, setLatestRuns] = useState<Record<string, AutomationRun | undefined>>({});
-  const [monitor, setMonitor] = useState<{ runId: string; automationName?: string; readonly?: boolean } | null>(null);
+  const [chatTitles, setChatTitles] = useState<Record<string, string | null>>({});
+  const [monitor, setMonitor] = useState<{ runId: string; automationName?: string; readonly?: boolean; linkedChatSessionId?: string } | null>(null);
   const [runnerConnected, setRunnerConnected] = useState(() => isAutomationQueueProcessorInstalled());
 
   useEffect(() => {
@@ -138,16 +157,26 @@ export function AutomationsPage({ userId, workspaceId }: { userId: string; works
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items.map((a) => a.id).join('|')]);
 
+  // Resolve linked-chat titles for the cards (null = linked chat was deleted).
+  useEffect(() => {
+    let alive = true;
+    const linked = items.filter((a) => a.linkedChatSessionId && a.chatMode !== 'none');
+    void Promise.all(linked.map(async (a) => [a.linkedChatSessionId!, await getLinkedChatTitle(a.linkedChatSessionId!)] as const))
+      .then((entries) => { if (alive) setChatTitles(Object.fromEntries(entries)); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.map((a) => `${a.id}:${a.linkedChatSessionId ?? ''}`).join('|')]);
+
   async function editAutomation(id: string) {
     const a = await getAutomation(id);
     if (!a) return;
     const n = normalizeAutomation(a);
     setDetailId(null);
-    setWizard({ open: true, editId: id, initial: { name: n.name, description: n.description, prompt: n.prompt, references: n.referencedContext, trigger: n.trigger, verification: n.verificationChecklist, steps: n.steps, safety: n.safetyPolicy } });
+    setWizard({ open: true, editId: id, initial: { name: n.name, description: n.description, prompt: n.prompt, references: n.referencedContext, trigger: n.trigger, verification: n.verificationChecklist, steps: n.steps, safety: n.safetyPolicy, chatMode: a.chatMode, linkedChatSessionId: a.linkedChatSessionId } });
   }
 
   if (detailId) {
-    return <AutomationDetail automationId={detailId} userId={userId} workspaceId={workspaceId} onBack={() => setDetailId(null)} onEdit={() => editAutomation(detailId)} onChanged={reload} />;
+    return <AutomationDetail automationId={detailId} userId={userId} workspaceId={workspaceId} onBack={() => setDetailId(null)} onEdit={() => editAutomation(detailId)} onChanged={reload} onOpenChat={onOpenChat} />;
   }
 
   function matches(a: Automation): boolean {
@@ -234,11 +263,14 @@ export function AutomationsPage({ userId, workspaceId }: { userId: string; works
                 key={a.id}
                 a={a}
                 run={latestRuns[a.id]}
+                linkedChatTitle={a.linkedChatSessionId ? chatTitles[a.linkedChatSessionId] : undefined}
                 onOpen={() => setDetailId(a.id)}
                 onRun={() => run(a)}
                 onToggle={() => toggle(a)}
-                onWatch={() => latestRuns[a.id] && setMonitor({ runId: latestRuns[a.id]!.id, automationName: a.name })}
+                onWatch={() => latestRuns[a.id] && setMonitor({ runId: latestRuns[a.id]!.id, automationName: a.name, linkedChatSessionId: a.linkedChatSessionId })}
                 onStop={() => stop(latestRuns[a.id])}
+                onOpenChat={onOpenChat && a.linkedChatSessionId ? () => onOpenChat(a.linkedChatSessionId!) : undefined}
+                onAttachChat={() => editAutomation(a.id)}
               />
             ))}
           </div>
@@ -247,13 +279,15 @@ export function AutomationsPage({ userId, workspaceId }: { userId: string; works
       )}
 
       {wizard.open && (
-        <NewAutomationWizard userId={userId} workspaceId={workspaceId} initial={wizard.initial} editId={wizard.editId} onClose={() => setWizard({ open: false })} onSaved={reload} />
+        <NewAutomationWizard userId={userId} workspaceId={workspaceId} initial={wizard.initial} editId={wizard.editId} onClose={() => setWizard({ open: false })} onSaved={reload} onOpenChat={onOpenChat} />
       )}
       {monitor && (
         <RunMonitor
           automationRunId={monitor.runId}
           automationName={monitor.automationName}
           readonly={monitor.readonly}
+          linkedChatSessionId={monitor.linkedChatSessionId}
+          onOpenChat={onOpenChat}
           onClose={() => setMonitor(null)}
           onChanged={() => { reload(); void loadLatestRuns(); }}
         />

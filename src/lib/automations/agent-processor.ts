@@ -14,6 +14,14 @@ import {
 } from './store';
 import type { AutomationRun, AutomationRunStatus, VerificationCheck } from './types';
 import { riskPolicyForAutomationSafety, verifyAutomationEvidence } from './verification';
+import {
+  appendAutomationAgentStepMessage,
+  appendAutomationApprovalMessage,
+  appendAutomationAskUserMessage,
+  appendAutomationCompletedMessage,
+  appendAutomationFailedMessage,
+  appendAutomationRunStartedMessage,
+} from './chat-bridge';
 
 type PendingAsk = {
   question: string;
@@ -57,11 +65,30 @@ type RunningState = {
   status: AutomationRunStatus | TaskQueueStatus;
   ask?: PendingAsk;
   approval?: PendingApproval;
+  // Linked chat (see chat-bridge): the run narrates into this live message.
+  chatSessionId?: string;
+  chatMessageId?: string;
 };
 
-const runningByAutomationRun = new Map<string, RunningState>();
-const runningByQueueItem = new Map<string, RunningState>();
-let installed = false;
+// In-flight run state MUST survive Vite/Tauri HMR. If these maps were module-level
+// they'd reset whenever this file is re-evaluated, orphaning any run that is mid
+// agent-loop — the live ask/approval resolve callbacks and step stream vanish, so
+// RunMonitor shows "0 steps / waiting user" with no answer box and the run is stuck
+// forever. Pin them on globalThis (same pattern as the DB singleton). See memory:
+// project_hmr_singleton_gotcha.
+type AutomationProcessorGlobals = {
+  runningByAutomationRun: Map<string, RunningState>;
+  runningByQueueItem: Map<string, RunningState>;
+  installed: boolean;
+};
+const PROC_GLOBAL = globalThis as unknown as { __larundAutomationProc?: AutomationProcessorGlobals };
+const procGlobals: AutomationProcessorGlobals = (PROC_GLOBAL.__larundAutomationProc ??= {
+  runningByAutomationRun: new Map<string, RunningState>(),
+  runningByQueueItem: new Map<string, RunningState>(),
+  installed: false,
+});
+const runningByAutomationRun = procGlobals.runningByAutomationRun;
+const runningByQueueItem = procGlobals.runningByQueueItem;
 const DEFAULT_AUTOMATION_MODEL = MODELS.find((model) => model.id === 'core')?.openrouter_id ?? 'anthropic/claude-haiku-4-5';
 
 export function configureAutomationQueueProcessor(): void {
@@ -69,7 +96,7 @@ export function configureAutomationQueueProcessor(): void {
   // be re-evaluated and fall back to its default processor while this module's
   // installed flag survives. Re-applying the processor makes Run now robust.
   configureTaskQueue({ processor: agentQueueProcessor });
-  installed = true;
+  procGlobals.installed = true;
 }
 
 export function ensureAutomationQueueProcessor(): void {
@@ -77,7 +104,7 @@ export function ensureAutomationQueueProcessor(): void {
 }
 
 export function isAutomationQueueProcessorInstalled(): boolean {
-  return installed;
+  return procGlobals.installed;
 }
 
 export async function agentQueueProcessor(item: TaskQueueItem): Promise<TaskQueueProcessorResult> {
@@ -98,6 +125,24 @@ export async function agentQueueProcessor(item: TaskQueueItem): Promise<TaskQueu
 
   const automation = automationId ? await getAutomation(automationId) : null;
   const normalized = automation ? normalizeAutomation(automation) : null;
+
+  // Open the linked chat: an automation run writes the same user-facing narrative
+  // a chat run does. Best-effort — a missing chat session must never block the run.
+  if (automation && automationRunId) {
+    const run = await getAutomationRun(automationRunId);
+    if (run) {
+      const linked = await appendAutomationRunStartedMessage({
+        automation,
+        run,
+        triggerPayload: run.triggerPayload ?? {},
+      }).catch(() => null);
+      if (linked) {
+        state.chatSessionId = linked.sessionId;
+        state.chatMessageId = linked.messageId;
+      }
+    }
+  }
+
   const policy = normalized ? riskPolicyForAutomationSafety(normalized.safetyPolicy) : undefined;
   const maxToolCalls = normalized?.safetyPolicy.maxToolCalls;
   const maxRuntimeMs = normalized?.safetyPolicy.maxRuntimeMinutes
@@ -136,12 +181,18 @@ export async function agentQueueProcessor(item: TaskQueueItem): Promise<TaskQueu
           }
           void syncTaskRunId(item, state);
           void updateQueueItem(item.id, { progress: state.progress, taskRunId: state.taskRunId });
+          if (state.chatSessionId) {
+            void appendAutomationAgentStepMessage({ sessionId: state.chatSessionId, messageId: state.chatMessageId, steps: state.steps });
+          }
         },
         onAskUser: async (question) => {
           await syncTaskRunId(item, state);
           state.status = 'waiting_user';
           await updateQueueItem(item.id, { status: 'waiting_user', progress: 'Waiting for user input', taskRunId: state.taskRunId });
           if (automationRunId) await updateAutomationRun(automationRunId, { status: 'waiting_user', taskRunId: state.taskRunId });
+          if (state.chatSessionId) {
+            await appendAutomationAskUserMessage({ sessionId: state.chatSessionId, messageId: state.chatMessageId, question, steps: state.steps }).catch(() => undefined);
+          }
           const answer = await new Promise<string>((resolve) => {
             state.ask = { question, resolve };
           });
@@ -154,6 +205,9 @@ export async function agentQueueProcessor(item: TaskQueueItem): Promise<TaskQueu
           state.status = 'waiting_approval';
           await updateQueueItem(item.id, { status: 'waiting_approval', progress: `Approval needed: ${req.action}`, taskRunId: state.taskRunId });
           if (automationRunId) await updateAutomationRun(automationRunId, { status: 'waiting_approval', taskRunId: state.taskRunId });
+          if (state.chatSessionId) {
+            await appendAutomationApprovalMessage({ sessionId: state.chatSessionId, messageId: state.chatMessageId, approval: req, steps: state.steps }).catch(() => undefined);
+          }
           const decision = await new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
             state.approval = { ...req, resolve };
           });
@@ -203,7 +257,16 @@ export async function agentQueueProcessor(item: TaskQueueItem): Promise<TaskQueu
 
     if (automationRunId) await updateAutomationRun(automationRunId, { status: 'completed', taskRunId: state.taskRunId });
     if (automationId) await recordAutomationRunResult(automationId, 'completed', { taskRunId: state.taskRunId, queueItemId: item.id });
+    if (state.chatSessionId) {
+      await appendAutomationCompletedMessage({ sessionId: state.chatSessionId, messageId: state.chatMessageId, summary: summary ?? 'Completed.', steps: state.steps }).catch(() => undefined);
+    }
     return { taskRunId: state.taskRunId, summary: summary ?? 'Completed' };
+  } catch (err) {
+    if (state.chatSessionId) {
+      const message = err instanceof Error ? err.message : String(err);
+      await appendAutomationFailedMessage({ sessionId: state.chatSessionId, messageId: state.chatMessageId, error: message, steps: state.steps }).catch(() => undefined);
+    }
+    throw err;
   } finally {
     if (timer) globalThis.clearTimeout(timer);
     runningByQueueItem.delete(item.id);
@@ -311,6 +374,10 @@ async function handleStatus(item: TaskQueueItem, state: RunningState, status: Ag
 }
 
 async function markRunning(item: TaskQueueItem, state: RunningState, progress: string): Promise<void> {
+  // Never resurrect a run that was already cancelled. Cancellation can land in
+  // the startup window (the runner marks the run 'running' before the processor
+  // begins), and a late markRunning would flip the queue item back to running.
+  if (state.signal.aborted) return;
   state.status = 'running';
   state.progress = progress;
   await syncTaskRunId(item, state);
