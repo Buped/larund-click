@@ -53,4 +53,56 @@ describe('google workspace provider', () => {
     expect(result.success).toBe(false);
     expect(result.error).toBe('missing_google_workspace_auth');
   });
+
+  it('gmail mock: draft → send → search → read round-trips', async () => {
+    const draft = await call('google.gmail.create_draft', { mock: true, to: 'a@b.com', subject: 'Ajánlat', body: 'Üdvözlettel' });
+    const draftId = String(draft.details?.draftId);
+    expect(draft.success).toBe(true);
+
+    const sent = await call('google.gmail.send', { mock: true, draftId });
+    expect(sent.success).toBe(true);
+    expect(sent.details?.verifiedInSent).toBe(true);
+
+    const found = await call('google.gmail.search', { mock: true, query: 'Ajánlat' });
+    expect(found.output).toContain('Ajánlat');
+  });
+
+  it('gmail send is approval-gated (external_send risk)', () => {
+    const send = googleWorkspaceManifest.tools.find((t) => t.name === 'google.gmail.send');
+    expect(send?.risk).toBe('external_send');
+  });
+
+  it('calendar mock: create event then find_free_slots avoids the busy block', async () => {
+    const base = new Date('2026-07-01T09:00:00.000Z');
+    const start = base.toISOString();
+    const end = new Date(base.getTime() + 60 * 60_000).toISOString();
+    const created = await call('google.calendar.create_event', { mock: true, summary: 'Meeting', start, end, attendees: ['x@y.com'] });
+    expect(created.success).toBe(true);
+    expect(created.details?.verified).toBe(true);
+
+    const slots = await call('google.calendar.find_free_slots', {
+      mock: true,
+      time_min: start,
+      time_max: new Date(base.getTime() + 4 * 60 * 60_000).toISOString(),
+      duration_minutes: 30,
+    });
+    const parsed = JSON.parse(slots.output) as { slots: Array<{ start: string }> };
+    // The first free slot must begin no earlier than the end of the busy event.
+    expect(parsed.slots.length).toBeGreaterThan(0);
+    expect(new Date(parsed.slots[0].start).getTime()).toBeGreaterThanOrEqual(new Date(end).getTime());
+  });
+
+  it('calendar create_event is approval-gated (external_send risk)', () => {
+    const ev = googleWorkspaceManifest.tools.find((t) => t.name === 'google.calendar.create_event');
+    expect(ev?.risk).toBe('external_send');
+  });
+
+  it('sheets write read-back reports verified row count in mock mode', async () => {
+    const created = await call('google.sheets.create', { mock: true, title: 'RB' });
+    const spreadsheetId = String(created.details?.spreadsheetId);
+    const wrote = await call('google.sheets.write_values', { mock: true, spreadsheetId, values: [['a'], ['b'], ['c']] });
+    expect(wrote.success).toBe(true);
+    const read = await call('google.sheets.read_values', { mock: true, spreadsheetId });
+    expect(read.output).toContain('c');
+  });
 });

@@ -44,10 +44,11 @@ export interface ProviderAuthConfig {
 
 const SCOPES: Record<string, ProviderScope[]> = {
   'google-workspace': [
-    { scope: 'https://www.googleapis.com/auth/drive.file', description: 'Drive files Larund creates/opens' },
+    { scope: 'https://www.googleapis.com/auth/userinfo.email', description: 'Identify the connected account' },
+    { scope: 'https://www.googleapis.com/auth/drive', description: 'Drive read/write (incl. search of existing files)', write: true },
     { scope: 'https://www.googleapis.com/auth/spreadsheets', description: 'Sheets read/write', write: true },
     { scope: 'https://www.googleapis.com/auth/documents', description: 'Docs read/write', write: true },
-    { scope: 'https://www.googleapis.com/auth/gmail.modify', description: 'Gmail read/label/draft', write: true },
+    { scope: 'https://www.googleapis.com/auth/gmail.modify', description: 'Gmail read/label/draft/send', write: true },
     { scope: 'https://www.googleapis.com/auth/calendar', description: 'Calendar read/write', write: true },
   ],
   github: [

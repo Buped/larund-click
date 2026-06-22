@@ -10,6 +10,7 @@
 import { getProviderSecret } from '../env/resolve';
 import { tauriFetch } from '../../net/tauriFetch';
 import { createConnectedAccount, type ConnectedAccount, type ConnectionContext } from '../connectedAccounts';
+import { GOOGLE_WORKSPACE_SCOPES } from '../providers/google-workspace/auth';
 
 export interface OAuthProviderEndpoints {
   /** Short slug used in the redirect path `/auth/callback/<slug>`. */
@@ -37,12 +38,8 @@ export const OAUTH_ENDPOINTS: Record<string, OAuthProviderEndpoints> = {
     clientIdEnv: 'GOOGLE_CLIENT_ID',
     clientSecretEnv: 'GOOGLE_CLIENT_SECRET',
     pkce: true,
-    defaultScopes: [
-      'https://www.googleapis.com/auth/drive.file',
-      'https://www.googleapis.com/auth/spreadsheets',
-      'https://www.googleapis.com/auth/documents',
-      'https://www.googleapis.com/auth/calendar',
-    ],
+    // Single source of truth — keep auth/connect scopes identical (see auth.ts).
+    defaultScopes: GOOGLE_WORKSPACE_SCOPES,
     extraAuthParams: { access_type: 'offline', prompt: 'consent' },
   },
   github: {

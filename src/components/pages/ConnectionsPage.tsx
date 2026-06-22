@@ -262,7 +262,9 @@ function SetupModal({ providerId, provider, name, isAdmin, projectId, onClose, o
     const testTool = hub?.tools.find((t) => t.name.endsWith('.test_connection'));
     if (!testTool) { setStatus('No provider-specific test is implemented yet.'); return; }
     const result = await createConnectionRegistry().call(providerId, testTool.name, {});
-    setStatus(result.success ? result.output || `Connection test passed for ${account.accountLabel}.` : `Test failed: ${result.error ?? 'unknown error'}`);
+    // Prefer the tool's own output: per-sub-service probes (e.g. Google Workspace)
+    // report a green/red breakdown there even when the overall result is a failure.
+    setStatus(result.output || (result.success ? `Connection test passed for ${account.accountLabel}.` : `Test failed: ${result.error ?? 'unknown error'}`));
   }
 
   const appKeys = [...auth.appCredentials.requiredEnv, ...auth.appCredentials.optionalEnv];

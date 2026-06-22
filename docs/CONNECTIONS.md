@@ -34,9 +34,15 @@ interface ConnectionManifest {
 |-------------------|----------|-------|
 | GitHub            | MVP      | Real REST calls; **mock output when `GITHUB_TOKEN` is missing**. read/search/issues + write/branch/PR/comment. |
 | Notion            | MVP      | Real REST calls; mock output without `NOTION_TOKEN`. search/read/query + create/update. |
-| Google Workspace  | scaffold | Typed Gmail/Drive/Sheets/Calendar tools; disabled until OAuth. |
+| Google Workspace  | live     | OAuth per user (ConnectedAccount store). **Gmail** (search/read/draft/send), **Calendar** (list/free-slots/create), **Sheets**, **Docs**, **Drive** all make real API calls. Every write is read-back verified; `gmail.send` and `calendar.create_event` are `external_send` (approval-gated). See `GOOGLE_CONNECTION_AUDIT.md`. |
 | Slack             | scaffold | search/send/reply; disabled until token. |
 | HubSpot/Airtable/WordPress | scaffold | manifest + tool schema only. |
+
+> **Google scopes & verification:** scopes are defined once in
+> `providers/google-workspace/auth.ts` (`GOOGLE_WORKSPACE_SCOPES`) and reused by the
+> OAuth connect flow — they cannot drift. The set includes `gmail.modify`, `calendar`
+> and full `drive` (restricted scopes): fine for a pilot's unverified-app flow with
+> added test users; a public production release needs Google OAuth verification / CASA.
 
 ## Secrets
 
@@ -47,8 +53,10 @@ written to prompts or the audit log (`audit.ts` redacts them).
 ## Status
 
 `configured` (auth present) · `missing_auth` · `scaffold` · `disabled`.
-Reads fall back to deterministic mock output when unauthenticated so flows are
-testable without credentials.
+In production, missing auth returns a structured `missing_auth` error with setup
+guidance — it never fakes success. Deterministic mock output is only available when
+mocks are explicitly enabled (`LARUND_ALLOW_MOCK_CONNECTIONS=true`), i.e. tests/dev
+(see `mock-guard.ts`).
 
 ## Phase 1 — Connections Hub
 

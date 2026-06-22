@@ -5,7 +5,7 @@ import { googleWorkspaceTools } from './tools';
 export const googleWorkspaceManifest: ConnectionManifest = {
   id: 'google-workspace',
   name: 'Google Workspace',
-  description: 'API-first Google Drive, Sheets and Docs workflow. Uses OAuth access token when configured; mock mode is available for tests.',
+  description: 'API-first Gmail, Calendar, Drive, Sheets and Docs. OAuth per user; every write is read-back verified, send-class actions are approval-gated.',
   auth: {
     type: 'oauth',
     envVars: [

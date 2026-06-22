@@ -1,6 +1,7 @@
 import type { ConnectionToolDefinition } from '../../types';
 import { googleAuthFromSecrets, missingGoogleAuth } from './auth';
 import { driveDownloadBytes } from './drive';
+import { GOOGLE_BASE, googleApiFetch, googleResult } from './client';
 import { invoke } from '@tauri-apps/api/core';
 
 const mockStore = new Map<string, string[][]>();
@@ -13,18 +14,8 @@ function isMock(args: Record<string, unknown>): boolean {
   return args.mock === true || args.__mock === true;
 }
 
-async function googleFetch(path: string, token: string, init: RequestInit = {}) {
-  const res = await fetch(`https://www.googleapis.com${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...(init.headers ?? {}),
-    },
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`google_api_${res.status}: ${text}`);
-  return text ? JSON.parse(text) as unknown : {};
+function googleFetch(path: string, token: string, init: RequestInit = {}) {
+  return googleApiFetch('sheets', `${GOOGLE_BASE}${path}`, token, init);
 }
 
 export const googleSheetsTools: ConnectionToolDefinition[] = [
@@ -41,11 +32,13 @@ export const googleSheetsTools: ConnectionToolDefinition[] = [
       const auth = googleAuthFromSecrets(secrets);
       if (!auth.accessToken) return missingGoogleAuth();
       const title = String(args.title ?? 'Larund Sheet');
-      const data = await googleFetch('/v4/spreadsheets', auth.accessToken, {
-        method: 'POST',
-        body: JSON.stringify({ properties: { title } }),
-      }) as { spreadsheetId?: string; spreadsheetUrl?: string };
-      return { success: true, output: `Google Sheet created: ${data.spreadsheetUrl ?? data.spreadsheetId}`, details: data as Record<string, unknown> };
+      return googleResult(async () => {
+        const data = await googleFetch('/v4/spreadsheets', auth.accessToken!, {
+          method: 'POST',
+          body: JSON.stringify({ properties: { title } }),
+        }) as { spreadsheetId?: string; spreadsheetUrl?: string };
+        return { success: true, output: `Google Sheet created: ${data.spreadsheetUrl ?? data.spreadsheetId}`, details: data as Record<string, unknown> };
+      });
     },
   },
   {
@@ -63,11 +56,21 @@ export const googleSheetsTools: ConnectionToolDefinition[] = [
       }
       const auth = googleAuthFromSecrets(secrets);
       if (!auth.accessToken) return missingGoogleAuth();
-      const data = await googleFetch(`/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`, auth.accessToken, {
-        method: 'PUT',
-        body: JSON.stringify({ values }),
+      return googleResult(async () => {
+        await googleFetch(`/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`, auth.accessToken!, {
+          method: 'PUT',
+          body: JSON.stringify({ values }),
+        });
+        // Automatic read-back: re-read the same range and compare row counts.
+        const back = await googleFetch(`/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`, auth.accessToken!) as { values?: string[][] };
+        const readRows = back.values?.length ?? 0;
+        const verified = readRows >= values.length && values.length > 0;
+        return {
+          success: true,
+          output: `Wrote ${values.length} rows to Google Sheet ${spreadsheetId}. Read-back: ${readRows} rows ${verified ? '✓ verified' : '⚠ mismatch'}.`,
+          details: { spreadsheetId, range, wroteRows: values.length, readRows, verified, readBack: back.values },
+        };
       });
-      return { success: true, output: `Wrote ${values.length} rows to Google Sheet ${spreadsheetId}`, details: data as Record<string, unknown> };
     },
   },
   {
@@ -86,11 +89,22 @@ export const googleSheetsTools: ConnectionToolDefinition[] = [
       }
       const auth = googleAuthFromSecrets(secrets);
       if (!auth.accessToken) return missingGoogleAuth();
-      const data = await googleFetch(`/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED`, auth.accessToken, {
-        method: 'POST',
-        body: JSON.stringify({ values }),
+      return googleResult(async () => {
+        const data = await googleFetch(`/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED`, auth.accessToken!, {
+          method: 'POST',
+          body: JSON.stringify({ values }),
+        }) as { updates?: { updatedRange?: string; updatedRows?: number } };
+        // Automatic read-back: re-read exactly the range the API reported writing to.
+        const updatedRange = data.updates?.updatedRange ?? range;
+        const back = await googleFetch(`/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(updatedRange)}`, auth.accessToken!) as { values?: string[][] };
+        const readRows = back.values?.length ?? 0;
+        const verified = readRows >= values.length && values.length > 0;
+        return {
+          success: true,
+          output: `Appended ${values.length} rows to Google Sheet ${spreadsheetId}. Read-back: ${readRows} rows ${verified ? '✓ verified' : '⚠ mismatch'}.`,
+          details: { spreadsheetId, updatedRange, wroteRows: values.length, readRows, verified, readBack: back.values },
+        };
       });
-      return { success: true, output: `Appended ${values.length} rows to Google Sheet ${spreadsheetId}`, details: data as Record<string, unknown> };
     },
   },
   {
@@ -107,8 +121,10 @@ export const googleSheetsTools: ConnectionToolDefinition[] = [
       }
       const auth = googleAuthFromSecrets(secrets);
       if (!auth.accessToken) return missingGoogleAuth();
-      const data = await googleFetch(`/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`, auth.accessToken);
-      return { success: true, output: JSON.stringify(data), details: data as Record<string, unknown> };
+      return googleResult(async () => {
+        const data = await googleFetch(`/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`, auth.accessToken!);
+        return { success: true, output: JSON.stringify(data), details: data as Record<string, unknown> };
+      });
     },
   },
   {
@@ -121,8 +137,10 @@ export const googleSheetsTools: ConnectionToolDefinition[] = [
       if (isMock(args)) return { success: true, output: JSON.stringify({ spreadsheetId, sheets: [{ properties: { title: 'Sheet1' } }] }) };
       const auth = googleAuthFromSecrets(secrets);
       if (!auth.accessToken) return missingGoogleAuth();
-      const data = await googleFetch(`/v4/spreadsheets/${spreadsheetId}?includeGridData=false`, auth.accessToken);
-      return { success: true, output: JSON.stringify(data), details: data as Record<string, unknown> };
+      return googleResult(async () => {
+        const data = await googleFetch(`/v4/spreadsheets/${spreadsheetId}?includeGridData=false`, auth.accessToken!);
+        return { success: true, output: JSON.stringify(data), details: data as Record<string, unknown> };
+      });
     },
   },
   {
@@ -139,13 +157,15 @@ export const googleSheetsTools: ConnectionToolDefinition[] = [
       }
       const auth = googleAuthFromSecrets(secrets);
       if (!auth.accessToken) return missingGoogleAuth();
-      const mime = encodeURIComponent('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      const bytes = await driveDownloadBytes(`/drive/v3/files/${spreadsheetId}/export?mimeType=${mime}`, auth.accessToken);
-      if (targetPath) {
-        const msg = await invoke<string>('file_write_bytes', { path: targetPath, bytes: Array.from(bytes) });
-        return { success: true, output: msg, details: { spreadsheetId, targetPath, bytes: bytes.length } };
-      }
-      return { success: true, output: `Exported Google Sheet ${spreadsheetId} (${bytes.length} bytes)`, details: { spreadsheetId, bytes: bytes.length } };
+      return googleResult(async () => {
+        const mime = encodeURIComponent('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        const bytes = await driveDownloadBytes(`/drive/v3/files/${spreadsheetId}/export?mimeType=${mime}`, auth.accessToken!);
+        if (targetPath) {
+          const msg = await invoke<string>('file_write_bytes', { path: targetPath, bytes: Array.from(bytes) });
+          return { success: true, output: msg, details: { spreadsheetId, targetPath, bytes: bytes.length } };
+        }
+        return { success: true, output: `Exported Google Sheet ${spreadsheetId} (${bytes.length} bytes)`, details: { spreadsheetId, bytes: bytes.length } };
+      });
     },
   },
 ];

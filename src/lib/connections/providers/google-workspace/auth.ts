@@ -3,10 +3,23 @@ export interface GoogleAuthState {
   accountEmail?: string;
 }
 
+// Single source of truth for the scopes requested at Connect time AND advertised by
+// the manifest. `oauth/flow.ts` imports this so the two can never drift again.
+//
+// NOTE on Google verification: `gmail.modify`, `calendar` and full `drive` are
+// "restricted"/"sensitive" scopes. They work immediately for the pilot's
+// unverified-app flow with explicitly added test users (up to 100). For a public
+// production release Google requires an OAuth verification / CASA security
+// assessment. Narrow these (e.g. drive.file, gmail.compose) only if you accept the
+// matching feature loss (drive.file cannot see the user's existing files).
 export const GOOGLE_WORKSPACE_SCOPES = [
-  'https://www.googleapis.com/auth/drive.file',
+  'openid',
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/gmail.modify', // search + read + draft + send
+  'https://www.googleapis.com/auth/calendar', // list + free/busy + create
   'https://www.googleapis.com/auth/spreadsheets',
   'https://www.googleapis.com/auth/documents',
+  'https://www.googleapis.com/auth/drive', // search must see the user's existing files
 ];
 
 export function googleAuthFromSecrets(secrets: Record<string, string>): GoogleAuthState {
@@ -22,7 +35,7 @@ export function missingGoogleAuth(): { success: false; output: string; error: st
     output: '',
     error: 'missing_google_workspace_auth',
     details: {
-      handoff: 'Connect Google Workspace in Settings -> Connections, or ask for a local xlsx/docx fallback.',
+      handoff: 'Kösd be a Google Workspace-t a Connections oldalon (Gmail, Naptár, Sheets, Docs, Drive), vagy kérj lokális xlsx/docx fallbacket.',
       scopes: GOOGLE_WORKSPACE_SCOPES,
     },
   };

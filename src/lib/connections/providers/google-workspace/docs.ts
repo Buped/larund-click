@@ -1,6 +1,7 @@
 import type { ConnectionToolDefinition } from '../../types';
 import { googleAuthFromSecrets, missingGoogleAuth } from './auth';
 import { driveDownloadBytes } from './drive';
+import { DOCS_BASE, googleApiFetch, googleResult } from './client';
 import { invoke } from '@tauri-apps/api/core';
 
 const mockDocs = new Map<string, string>();
@@ -13,18 +14,8 @@ function isMock(args: Record<string, unknown>): boolean {
   return args.mock === true || args.__mock === true;
 }
 
-async function googleFetch(path: string, token: string, init: RequestInit = {}) {
-  const res = await fetch(`https://docs.googleapis.com${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...(init.headers ?? {}),
-    },
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`google_docs_api_${res.status}: ${text}`);
-  return text ? JSON.parse(text) as unknown : {};
+function googleFetch(path: string, token: string, init: RequestInit = {}) {
+  return googleApiFetch('docs', `${DOCS_BASE}${path}`, token, init);
 }
 
 function extractGoogleDocText(doc: unknown): string {
@@ -65,11 +56,13 @@ export const googleDocsTools: ConnectionToolDefinition[] = [
       }
       const auth = googleAuthFromSecrets(secrets);
       if (!auth.accessToken) return missingGoogleAuth();
-      const data = await googleFetch('/v1/documents', auth.accessToken, {
-        method: 'POST',
-        body: JSON.stringify({ title: String(args.title ?? 'Larund Doc') }),
+      return googleResult(async () => {
+        const data = await googleFetch('/v1/documents', auth.accessToken!, {
+          method: 'POST',
+          body: JSON.stringify({ title: String(args.title ?? 'Larund Doc') }),
+        });
+        return { success: true, output: JSON.stringify(data), details: data as Record<string, unknown> };
       });
-      return { success: true, output: JSON.stringify(data), details: data as Record<string, unknown> };
     },
   },
   {
@@ -86,11 +79,16 @@ export const googleDocsTools: ConnectionToolDefinition[] = [
       }
       const auth = googleAuthFromSecrets(secrets);
       if (!auth.accessToken) return missingGoogleAuth();
-      const data = await googleFetch(`/v1/documents/${documentId}:batchUpdate`, auth.accessToken, {
-        method: 'POST',
-        body: JSON.stringify({ requests: [{ insertText: { location: { index: 1 }, text } }] }),
+      return googleResult(async () => {
+        await googleFetch(`/v1/documents/${documentId}:batchUpdate`, auth.accessToken!, {
+          method: 'POST',
+          body: JSON.stringify({ requests: [{ insertText: { location: { index: 1 }, text } }] }),
+        });
+        // Read-back: re-read the doc and confirm the inserted text is present.
+        const doc = await googleFetch(`/v1/documents/${documentId}`, auth.accessToken!);
+        const verified = extractGoogleDocText(doc).includes(text.trim().slice(0, 40));
+        return { success: true, output: `Inserted ${text.length} chars into Google Doc ${documentId}. Read-back: ${verified ? '✓' : '⚠'}.`, details: { documentId, charCount: text.length, verified } };
       });
-      return { success: true, output: `Inserted ${text.length} chars into Google Doc ${documentId}`, details: data as Record<string, unknown> };
     },
   },
   {
@@ -107,11 +105,15 @@ export const googleDocsTools: ConnectionToolDefinition[] = [
       }
       const auth = googleAuthFromSecrets(secrets);
       if (!auth.accessToken) return missingGoogleAuth();
-      const data = await googleFetch(`/v1/documents/${documentId}:batchUpdate`, auth.accessToken, {
-        method: 'POST',
-        body: JSON.stringify({ requests: args.requests ?? [] }),
+      return googleResult(async () => {
+        const data = await googleFetch(`/v1/documents/${documentId}:batchUpdate`, auth.accessToken!, {
+          method: 'POST',
+          body: JSON.stringify({ requests: args.requests ?? [] }),
+        });
+        // Read-back: confirm the doc is still readable after the batch update.
+        const doc = await googleFetch(`/v1/documents/${documentId}`, auth.accessToken!) as { revisionId?: string };
+        return { success: true, output: JSON.stringify(data), details: { ...(data as Record<string, unknown>), verified: Boolean(doc.revisionId), revisionId: doc.revisionId } };
       });
-      return { success: true, output: JSON.stringify(data), details: data as Record<string, unknown> };
     },
   },
   {
@@ -124,9 +126,11 @@ export const googleDocsTools: ConnectionToolDefinition[] = [
       if (isMock(args)) return { success: true, output: mockDocs.get(documentId) ?? '', details: { documentId } };
       const auth = googleAuthFromSecrets(secrets);
       if (!auth.accessToken) return missingGoogleAuth();
-      const data = await googleFetch(`/v1/documents/${documentId}`, auth.accessToken);
-      const text = extractGoogleDocText(data);
-      return { success: true, output: text || JSON.stringify(data), details: { ...(data as Record<string, unknown>), text } };
+      return googleResult(async () => {
+        const data = await googleFetch(`/v1/documents/${documentId}`, auth.accessToken!);
+        const text = extractGoogleDocText(data);
+        return { success: true, output: text || JSON.stringify(data), details: { ...(data as Record<string, unknown>), text } };
+      });
     },
   },
   {
@@ -139,10 +143,12 @@ export const googleDocsTools: ConnectionToolDefinition[] = [
       if (isMock(args)) return { success: true, output: JSON.stringify({ documentId, title: 'Mock Google Doc' }), details: { documentId } };
       const auth = googleAuthFromSecrets(secrets);
       if (!auth.accessToken) return missingGoogleAuth();
-      const data = await googleFetch(`/v1/documents/${documentId}`, auth.accessToken);
-      const doc = data as { title?: string; documentId?: string; revisionId?: string };
-      const metadata = { documentId: doc.documentId ?? documentId, title: doc.title, revisionId: doc.revisionId };
-      return { success: true, output: JSON.stringify(metadata), details: metadata };
+      return googleResult(async () => {
+        const data = await googleFetch(`/v1/documents/${documentId}`, auth.accessToken!);
+        const doc = data as { title?: string; documentId?: string; revisionId?: string };
+        const metadata = { documentId: doc.documentId ?? documentId, title: doc.title, revisionId: doc.revisionId };
+        return { success: true, output: JSON.stringify(metadata), details: metadata };
+      });
     },
   },
   {
@@ -159,13 +165,15 @@ export const googleDocsTools: ConnectionToolDefinition[] = [
       }
       const auth = googleAuthFromSecrets(secrets);
       if (!auth.accessToken) return missingGoogleAuth();
-      const mime = encodeURIComponent('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-      const bytes = await driveDownloadBytes(`/drive/v3/files/${documentId}/export?mimeType=${mime}`, auth.accessToken);
-      if (targetPath) {
-        const msg = await invoke<string>('file_write_bytes', { path: targetPath, bytes: Array.from(bytes) });
-        return { success: true, output: msg, details: { documentId, targetPath, bytes: bytes.length } };
-      }
-      return { success: true, output: `Exported Google Doc ${documentId} as DOCX (${bytes.length} bytes)`, details: { documentId, bytes: bytes.length } };
+      return googleResult(async () => {
+        const mime = encodeURIComponent('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        const bytes = await driveDownloadBytes(`/drive/v3/files/${documentId}/export?mimeType=${mime}`, auth.accessToken!);
+        if (targetPath) {
+          const msg = await invoke<string>('file_write_bytes', { path: targetPath, bytes: Array.from(bytes) });
+          return { success: true, output: msg, details: { documentId, targetPath, bytes: bytes.length } };
+        }
+        return { success: true, output: `Exported Google Doc ${documentId} as DOCX (${bytes.length} bytes)`, details: { documentId, bytes: bytes.length } };
+      });
     },
   },
   {
@@ -182,12 +190,14 @@ export const googleDocsTools: ConnectionToolDefinition[] = [
       }
       const auth = googleAuthFromSecrets(secrets);
       if (!auth.accessToken) return missingGoogleAuth();
-      const bytes = await driveDownloadBytes(`/drive/v3/files/${documentId}/export?mimeType=application%2Fpdf`, auth.accessToken);
-      if (targetPath) {
-        const msg = await invoke<string>('file_write_bytes', { path: targetPath, bytes: Array.from(bytes) });
-        return { success: true, output: msg, details: { documentId, targetPath, bytes: bytes.length } };
-      }
-      return { success: true, output: `Exported Google Doc ${documentId} as PDF (${bytes.length} bytes)`, details: { documentId, bytes: bytes.length } };
+      return googleResult(async () => {
+        const bytes = await driveDownloadBytes(`/drive/v3/files/${documentId}/export?mimeType=application%2Fpdf`, auth.accessToken!);
+        if (targetPath) {
+          const msg = await invoke<string>('file_write_bytes', { path: targetPath, bytes: Array.from(bytes) });
+          return { success: true, output: msg, details: { documentId, targetPath, bytes: bytes.length } };
+        }
+        return { success: true, output: `Exported Google Doc ${documentId} as PDF (${bytes.length} bytes)`, details: { documentId, bytes: bytes.length } };
+      });
     },
   },
 ];
