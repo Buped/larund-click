@@ -20,7 +20,7 @@ const READBACK_ACTIONS = new Set([
   'artifact.verify', 'artifact.design_lint', 'presentation.quality_lint', 'artifact.preview', 'artifact.list', 'artifact.pdf_extract_text',
   'artifact.pdf_metadata', 'artifact.pdf_page_count',
   'browser.read', 'browser.get_state', 'browser.assert_text', 'browser.assert_url', 'browser.extract_table',
-  'connection.call',
+  'connection.call', 'email.compose',
 ]);
 
 function looksLikeArtifactRequest(text: string): boolean {
@@ -28,6 +28,9 @@ function looksLikeArtifactRequest(text: string): boolean {
 }
 
 function artifactCompletionPrecheck(state: ActiveTaskState, recent: RecentAction[]): GuardResult | null {
+  // Email tasks are handled by emailCompletionPrecheck/verifyEmail; never treat
+  // them as artifact-generation (the email expectedOutcome mentions file formats).
+  if (state.intent === 'email') return null;
   if (!looksLikeArtifactRequest(`${state.originalUserGoal}\n${state.currentGoal}\n${state.expectedOutcome ?? ''}`)) {
     return null;
   }
@@ -103,6 +106,35 @@ function artifactCompletionPrecheck(state: ActiveTaskState, recent: RecentAction
   return null;
 }
 
+// Cross-cutting email guard. Even if preflight mis-classified the task (e.g. the
+// recipient's "@gmail.com" routed it to the browser intent), an email request must
+// never be completed with only a local TXT/DOCX file. A successful email.compose
+// (the editable card — connected or not) or real Gmail draft/send evidence is the
+// deliverable; the card lets the user connect + send with one click.
+function emailCompletionPrecheck(state: ActiveTaskState, recent: RecentAction[]): GuardResult | null {
+  const goal = `${state.originalUserGoal}\n${state.currentGoal}\n${state.expectedOutcome ?? ''}`;
+  const mentionsEmail = /\b(e-?mail|emailt|emailek|email|levelet|levél|level|piszkozat|draftot|draft|gmail)\b/i.test(goal);
+  const wantsCompose = /\b(küldj|küldd|küld|elküld|írj|írd|fogalmazz|válaszolj|forward|továbbít|send|compose|reply|draft|piszkozat)\b/i.test(goal);
+  if (!mentionsEmail || !wantsCompose) return null;
+
+  const composed = recent.some(
+    (a) =>
+      (a.action === 'email.compose' && a.success) ||
+      (a.action === 'connection.call' && a.success && /google\.gmail\.(create_draft|send|update_draft)/i.test(a.argsSummary ?? '')),
+  );
+  if (composed) return null; // the email card / provider evidence exists → defer to the verifier
+
+  const onlyLocal = recent.some((a) => a.success && ['doc.write_txt', 'doc.write_docx', 'file.write'].includes(a.action));
+  return {
+    ok: false,
+    reason: onlyLocal
+      ? 'An email request was answered with only a local TXT/DOCX file — that is not an email and the composer card was never surfaced.'
+      : 'An email request has no email composer card yet.',
+    nextStepHint:
+      'Call email.compose {to, subject, body} to surface the editable, formatted email card. If Gmail is not connected the card has a one-click Connect button — never finish an email task with a local file.',
+  };
+}
+
 function activeSkillPrecheck(state: ActiveTaskState, recent: RecentAction[]): GuardResult | null {
   const active = state.activeSkills ?? [];
   if (!active.length) return null;
@@ -140,6 +172,9 @@ export function verifyBeforeComplete(
 ): GuardResult {
   const skillCheck = activeSkillPrecheck(state, recent);
   if (skillCheck) return skillCheck;
+
+  const emailCheck = emailCompletionPrecheck(state, recent);
+  if (emailCheck) return emailCheck;
 
   const artifactCheck = artifactCompletionPrecheck(state, recent);
   if (artifactCheck) return artifactCheck;

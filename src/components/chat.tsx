@@ -33,6 +33,8 @@ import { ingestReferences } from '../lib/references/ingest';
 import type { ReferencedContext } from '../lib/mentions/types';
 import { resolveReferencedContext } from '../lib/mentions/resolve';
 import { documentReferenceToMention, mentionToDocumentReference } from './mentions/mentionSerialization';
+import { EmailComposerCard } from './email/EmailComposerCard';
+import type { EmailDraft } from '../lib/email/types';
 import { policyForAutonomyMode, type AutonomyMode as PolicyAutonomyMode } from '../lib/tools/policy';
 import { classifyIntent } from '../lib/intent/classify';
 import { ArtifactCard } from './artifacts/ArtifactCard';
@@ -689,12 +691,15 @@ interface AgentMsgContentProps {
   onArtifactsChanged?: () => void;
   selectedArtifactId?: string;
   userId?: string;
+  emailDraft?: EmailDraft;
+  onEmailDraftChange?: (draft: EmailDraft) => void;
 }
 
 function AgentMsgContent({
   steps, status,
   askQuestion, askAnswer, onAskAnswerChange, onAskSubmit,
   onAskQuickAnswer, onStop, finalText, isError, artifacts = [], onPreviewArtifact, onArtifactsChanged, selectedArtifactId, userId,
+  emailDraft, onEmailDraftChange,
 }: AgentMsgContentProps) {
   // Collapsed by default: the action timeline is evidence, not the headline. The
   // human-readable narration carries the story; details expand on demand.
@@ -889,6 +894,12 @@ function AgentMsgContent({
           ))}
         </div>
       )}
+
+      {emailDraft && (
+        <div style={{ marginTop: 12 }}>
+          <EmailComposerCard draft={emailDraft} userId={userId} onChange={(d) => onEmailDraftChange?.(d)} />
+        </div>
+      )}
     </div>
   );
 }
@@ -920,6 +931,7 @@ type Message = {
   _agentAskQuestion?: string | null;
   _references?: ReferencedContext[];
   _artifacts?: ChatArtifactAttachment[];
+  _emailDraft?: EmailDraft;
   _searchCitations?: SearchCitation[];
   _searchMode?: SearchMode;
   // Subtle routing label shown after send ("Answering" / "Needs confirmation").
@@ -967,6 +979,19 @@ function parseChatArtifacts(raw?: string | null): ChatArtifactAttachment[] {
   }
 }
 
+/** The latest step carrying an email draft (email.compose OR a Gmail connection
+ * call), used to (re)hydrate the composer card. */
+function emailDraftFromStep(step: AgentStep): EmailDraft | undefined {
+  return (step.details as { emailDraft?: EmailDraft } | undefined)?.emailDraft;
+}
+function emailDraftFromSteps(steps: AgentStep[]): EmailDraft | undefined {
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const draft = emailDraftFromStep(steps[i]);
+    if (draft) return draft;
+  }
+  return undefined;
+}
+
 function hydrateMessage(row: any): Message {
   const isAgent = row.message_type === 'agent'
     || Boolean(row.agent_status || row.agent_steps_json || row.agent_ask_question);
@@ -978,6 +1003,7 @@ function hydrateMessage(row: any): Message {
     _agent: isAgent,
     _agentStatus: row.agent_status ?? undefined,
     _agentSteps: parseAgentSteps(row.agent_steps_json),
+    _emailDraft: emailDraftFromSteps(parseAgentSteps(row.agent_steps_json)),
     _agentAskQuestion: row.agent_ask_question ?? null,
     _error: Boolean(row._error) || (isAgent && row.agent_status === 'error'),
     _references: references,
@@ -1136,6 +1162,27 @@ export function ChatScreen({
     }));
   }
 
+  // Persist an edited/sent email draft: update the message and rewrite the latest
+  // email.compose step's details so the card survives a reload.
+  function handleEmailDraftChange(msgId: string, draft: EmailDraft) {
+    setMessages(prev => prev.map(m => {
+      if (m.id !== msgId) return m;
+      const steps = m._agentSteps ?? [];
+      let patched = false;
+      const nextSteps = [...steps];
+      for (let i = nextSteps.length - 1; i >= 0; i--) {
+        if (emailDraftFromStep(nextSteps[i])) {
+          nextSteps[i] = { ...nextSteps[i], details: { ...(nextSteps[i].details ?? {}), emailDraft: draft } };
+          patched = true;
+          break;
+        }
+      }
+      void updateMessage(msgId, { agent_steps_json: JSON.stringify(nextSteps.map(stripScreenshotFromStep)) })
+        .catch(err => console.warn('Failed to persist email draft:', err));
+      return { ...m, _emailDraft: draft, _agentSteps: patched ? nextSteps : steps };
+    }));
+  }
+
   function refreshCurrentMessages() {
     if (!activeChat) return;
     getMessages(activeChat).then(rows => setMessages(rows.map(hydrateMessage))).catch((err) =>
@@ -1270,6 +1317,13 @@ export function ChatScreen({
       agentState = { ...agentState, steps: nextSteps };
       patchMsg({ _agentSteps: nextSteps });
       persistAgentState(agentState);
+
+      // Surface/refresh the email composer card from ANY step that carries a
+      // draft — email.compose, or a direct connection.call to Gmail create_draft/send.
+      if (step.type === 'tool_result' || step.type === 'verification') {
+        const draft = emailDraftFromStep(step);
+        if (draft) patchMsg({ _emailDraft: draft });
+      }
 
       if (step.type === 'tool_result' && step.tool?.startsWith('artifact.render_') && step.output) {
         const manifest = parseManifestOutput(step.output);
@@ -1407,12 +1461,12 @@ export function ChatScreen({
         : wantsFastWeb ? 'fast' : 'none';
 
     if (searchMode === 'deep') {
-      const estimatedUsd = 0.03;
-      if (credits && credits.uc_balance < estimatedUsd) {
-        alert('Not enough UC for deep research. Please top up before starting this search.');
+      const estimatedCredits = 1;
+      if (credits && credits.visible_balance < estimatedCredits) {
+        alert('Nincs elég kredited a mélykutatáshoz. Válts nagyobb csomagra vagy tölts fel kreditet.');
         return;
       }
-      const ok = window.confirm('Deep research uses Perplexity Sonar Pro Search and costs more than normal chat. Estimated minimum: about 0.03 UC. Continue?');
+      const ok = window.confirm('A mélykutatás Perplexity Sonar Pro Search modellt használ, és többe kerül, mint a normál chat. Becsült minimum: kb. 1 kredit. Folytatod?');
       if (!ok) return;
     }
     // First exchange in this session → generate a semantic title afterwards.
@@ -1730,6 +1784,8 @@ export function ChatScreen({
                               onPreviewArtifact={previewArtifact}
                               onArtifactsChanged={refreshCurrentMessages}
                               userId={userId ?? undefined}
+                              emailDraft={msg._emailDraft}
+                              onEmailDraftChange={(d) => handleEmailDraftChange(msg.id, d)}
                             />
                           </div>
                         </div>

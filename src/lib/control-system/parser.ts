@@ -27,6 +27,8 @@ export const ALLOWED_ACTIONS: ReadonlySet<ControlActionName> = new Set<ControlAc
   'browser.open', 'browser.read', 'browser.get_state', 'browser.click', 'browser.type',
   'browser.key', 'browser.shortcut', 'browser.paste', 'browser.assert_text', 'browser.assert_url',
   'browser.wait', 'browser.extract_table', 'browser.download', 'browser.upload', 'browser.login',
+  // email composer
+  'email.compose',
   // connections / skills / workflows
   'connection.call', 'skill.run', 'workflow.start', 'workflow.status', 'workflow.cancel',
   // control flow

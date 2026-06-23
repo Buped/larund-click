@@ -11,6 +11,8 @@
     "env:sync": "node scripts/sync-env.ts",
     "env:sync:dev-shortcuts": "node scripts/sync-env.ts --include-dev-shortcuts",
     "env:audit": "node scripts/env-audit.ts",
+    "skills:validate": "node scripts/validate-skills.ts skills",
+    "skills:import:claude": "node scripts/import-claude-skills.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

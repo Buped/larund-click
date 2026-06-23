@@ -108,6 +108,13 @@ export type ControlAction =
   // saved App), credential_id, domain, or url; optionally pick a browser profile.
   | { action: 'browser.login'; url?: string; domain?: string; app_id?: string; credential_id?: string; browser_profile_id?: string; username_field?: string; password_field?: string; submit_text?: string }
 
+  // ── Email composer ────────────────────────────────────────────────────
+  // Surface an editable email draft as a chat card. When Gmail is connected this
+  // also creates a real Gmail draft (provider evidence); otherwise it stays a
+  // local draft and the card shows a Connect-Gmail CTA. Sending is a separate,
+  // approval-gated step (the card's Send button → google.gmail.send).
+  | { action: 'email.compose'; to?: string; cc?: string; bcc?: string; subject?: string; body?: string; sources?: Array<{ label: string; kind?: string; fileId?: string; url?: string }>; send?: boolean }
+
   // ── Connections / skills / workflows ──────────────────────────────────
   | { action: 'connection.call'; connection: string; tool: string; args: Record<string, unknown> }
   | { action: 'skill.run'; skill: string; input: Record<string, unknown> | string }

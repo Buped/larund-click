@@ -37,6 +37,8 @@ export function deriveExpectedArtifacts(pf: TaskPreflight): ExpectedArtifact[] {
       return [{ type: 'file', description: 'Files/folders in the requested final state' }];
     case 'connection_workflow':
       return [{ type: 'connection_record', description: pf.expectedOutcome }];
+    case 'email':
+      return [{ type: 'connection_record', description: pf.expectedOutcome }];
     default:
       return [{ type: 'text', description: pf.expectedOutcome }];
   }
@@ -63,6 +65,10 @@ export function derivePendingChecks(pf: TaskPreflight): string[] {
         : ['Page open and URL/title verified'];
     case 'file_ops':
       return ['Mutating operations succeeded', 'file.list/exists confirms final state'];
+    case 'email':
+      return pf.expectedOutcome.includes('SENT')
+        ? ['Email composed from real source content', 'Approval obtained before sending', 'google.gmail.send confirmed the message in SENT']
+        : ['Email composed from real source content', 'google.gmail.create_draft created a draft', 'Draft read-back confirmed the draft id'];
     default:
       return ['Action performed', 'Result verified by read-back'];
   }

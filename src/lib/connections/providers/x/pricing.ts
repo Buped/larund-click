@@ -1,4 +1,5 @@
 import type { ConnectionCallResult } from '../../types';
+import { creditAmountsFromUsd, deductCredits as deductUserCredits, formatVisibleCredits } from '../../../credit-engine';
 
 export type XOperationCode =
   | 'owned_read'
@@ -155,11 +156,14 @@ export async function getXPricing(operationCode: XOperationCode): Promise<XPrici
   }
 }
 
-export async function estimateXOperationCost(operationCode: XOperationCode, unitCount = 1): Promise<{ pricing: XPricingRow; ucCost: number; needsConfirmation: boolean }> {
+export async function estimateXOperationCost(operationCode: XOperationCode, unitCount = 1): Promise<{ pricing: XPricingRow; usdCost: number; ucCost: number; ocCost: number; needsConfirmation: boolean }> {
   const pricing = await getXPricing(operationCode);
-  const ucCost = Math.max(0, pricing.uc_cost_per_unit * Math.max(1, unitCount));
+  const usdCost = Math.max(0, pricing.usd_cost_per_unit * Math.max(1, unitCount));
+  const amounts = creditAmountsFromUsd(usdCost);
+  const ucCost = amounts.ucAmount;
+  const ocCost = amounts.ocAmount;
   const threshold = Number(safeStorage()?.getItem('x_api_confirmation_threshold_uc') ?? HIGH_COST_DEFAULT_UC);
-  return { pricing, ucCost, needsConfirmation: ucCost >= threshold };
+  return { pricing, usdCost, ucCost, ocCost, needsConfirmation: ucCost >= threshold };
 }
 
 export async function preflightXOperation(args: {
@@ -175,8 +179,8 @@ export async function preflightXOperation(args: {
       result: {
         success: false,
         output: '',
-        error: `cost_confirmation_required: Ez az X-művelet kb. ${estimate.ucCost} UC-t fog levonni az egyenlegedből. Erősítsd meg a futtatáshoz.`,
-        details: { provider: 'x', operationCode: args.operationCode, requiredUc: estimate.ucCost, needsConfirmation: true },
+        error: `cost_confirmation_required: Ez az X-művelet kb. ${formatVisibleCredits(estimate.ocCost)} kreditet fog levonni az egyenlegedből. Erősítsd meg a futtatáshoz.`,
+        details: { provider: 'x', operationCode: args.operationCode, requiredCredits: estimate.ocCost, requiredUc: estimate.ucCost, needsConfirmation: true },
       },
     };
   }
@@ -187,8 +191,8 @@ export async function preflightXOperation(args: {
       result: {
         success: false,
         output: '',
-        error: `insufficient_uc: Nincs elég UC-egyenleged ehhez az X-művelethez (szükséges: ${estimate.ucCost} UC, jelenlegi egyenleg: ${balance.balance} UC).`,
-        details: { provider: 'x', requiredUc: estimate.ucCost, currentUc: balance.balance, operationCode: args.operationCode },
+        error: `insufficient_credits: Nincs elég kredited ehhez az X-művelethez (szükséges: ${formatVisibleCredits(estimate.ocCost)} kredit, jelenlegi egyenleg: ${formatVisibleCredits(balance.balance * 10)} kredit).`,
+        details: { provider: 'x', requiredCredits: estimate.ocCost, requiredUc: estimate.ucCost, currentCredits: balance.balance * 10, currentUc: balance.balance, operationCode: args.operationCode },
       },
     };
   }
@@ -255,27 +259,6 @@ async function hasEnoughCredits(userId: string | undefined, ucCost: number): Pro
   }
 }
 
-async function deductCredits(userId: string | undefined, ucCost: number, operationCode: XOperationCode): Promise<void> {
-  if (!userId || ucCost <= 0) return;
-  const client = await supabaseClient() as {
-    rpc?: (fn: string, args: Record<string, unknown>) => Promise<{ error?: unknown }>;
-  } | null;
-  if (!client?.rpc) return;
-  const attempts = [
-    { p_user_id: userId, p_amount: ucCost, p_reason: `x_api:${operationCode}` },
-    { user_id: userId, amount: ucCost, reason: `x_api:${operationCode}` },
-    { p_user_id: userId, p_uc_amount: ucCost, p_operation: `x_api:${operationCode}` },
-  ];
-  for (const args of attempts) {
-    try {
-      const { error } = await client.rpc('deduct_uc_credits', args);
-      if (!error) return;
-    } catch {
-      // Try the next known RPC shape.
-    }
-  }
-}
-
 export async function chargeXUsage(charge: XUsageCharge): Promise<{ charged: boolean; ucCost: number; cached: boolean; error?: ConnectionCallResult }> {
   if (!charge.success) {
     await logUsage(charge, 0, 'failure_no_charge');
@@ -296,13 +279,25 @@ export async function chargeXUsage(charge: XUsageCharge): Promise<{ charged: boo
       error: {
         success: false,
         output: '',
-        error: `insufficient_uc: Nincs elég UC-egyenleged ehhez az X-művelethez (szükséges: ${estimate.ucCost} UC, jelenlegi egyenleg: ${balance.balance} UC).`,
-        details: { provider: 'x', requiredUc: estimate.ucCost, currentUc: balance.balance, operationCode: charge.operationCode },
+        error: `insufficient_credits: Nincs elég kredited ehhez az X-művelethez (szükséges: ${formatVisibleCredits(estimate.ocCost)} kredit, jelenlegi egyenleg: ${formatVisibleCredits(balance.balance * 10)} kredit).`,
+        details: { provider: 'x', requiredCredits: estimate.ocCost, requiredUc: estimate.ucCost, currentCredits: balance.balance * 10, currentUc: balance.balance, operationCode: charge.operationCode },
       },
     };
   }
 
-  await deductCredits(charge.userId, estimate.ucCost, charge.operationCode);
+  await deductUserCredits({
+    userId: charge.userId ?? '',
+    usdCost: estimate.usdCost,
+    source: `x_api:${charge.operationCode}`,
+    relatedEntityId: charge.relatedPostId ?? charge.relatedUserId,
+    metadata: {
+      operationCode: charge.operationCode,
+      unitCount: charge.unitCount,
+      cacheKey: charge.cacheKey,
+      relatedPostId: charge.relatedPostId,
+      relatedUserId: charge.relatedUserId,
+    },
+  });
   markXCache(charge.userId, charge.cacheKey);
   await logUsage(charge, estimate.ucCost);
   return { charged: estimate.ucCost > 0, ucCost: estimate.ucCost, cached: false };

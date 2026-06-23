@@ -1,5 +1,6 @@
-import { supabase, getUserCredits } from './supabase';
-import { MODEL_PRICING, MARKUP } from '../constants/models';
+import { getUserCredits } from './supabase';
+import { MODEL_PRICING } from '../constants/models';
+import { deductCredits as deductUserCredits } from './credit-engine';
 import {
   normalizeSearchCitations,
   type SearchCitation,
@@ -232,21 +233,26 @@ export async function callOpenRouter(
     ? finalOutputTokens
     : Math.ceil(accumulatedOutputChars / CHARS_PER_TOKEN);
 
-  const tokenCostUsd = ((usedInputTok * pricing.input + usedOutputTok * pricing.output) / 1_000_000) * MARKUP;
+  const tokenCostUsd = (usedInputTok * pricing.input + usedOutputTok * pricing.output) / 1_000_000;
   const citations = normalizeSearchCitations(rawAnnotations, webSearch?.messageId);
   const searchCostUsd = estimateSearchCostUsd(webSearch?.mode ?? 'none', citations.length > 0);
   const costUsd = tokenCostUsd + searchCostUsd;
 
   if (costUsd > 0) {
-    const { error } = await supabase.rpc('deduct_uc_credits', {
-      p_user_id:  userId,
-      p_cost_usd: costUsd,
+    const result = await deductUserCredits({
+      userId,
+      usdCost: costUsd,
+      source: webSearch?.mode === 'deep' ? 'web_search:deep_research' : webSearch?.mode === 'fast' ? 'web_search:quick' : `ai_model:${billedModel}`,
+      metadata: {
+        model: billedModel,
+        inputTokens: usedInputTok,
+        outputTokens: usedOutputTok,
+        searchMode: webSearch?.mode ?? 'none',
+        messageId: webSearch?.messageId,
+      },
+      relatedEntityId: webSearch?.messageId,
     });
-    if (error) {
-      // Log but don't fail — the user already received the response.
-      // Credit reconciliation can be handled separately if needed.
-      console.warn('Credit deduction failed after stream:', error.message);
-    }
+    if (!result.deducted) console.warn('Credit deduction failed after stream');
   }
 
   onComplete({
@@ -384,16 +390,16 @@ export async function callOpenRouterWithTools(
 
   const usedInputTok  = finalInputTokens  > 0 ? finalInputTokens  : Math.ceil(inputChars / CHARS_PER_TOKEN);
   const usedOutputTok = finalOutputTokens > 0 ? finalOutputTokens : Math.ceil(accumulatedOutputChars / CHARS_PER_TOKEN);
-  const costUsd = ((usedInputTok * pricing.input + usedOutputTok * pricing.output) / 1_000_000) * MARKUP;
+  const costUsd = (usedInputTok * pricing.input + usedOutputTok * pricing.output) / 1_000_000;
 
   if (deductCredits && costUsd > 0) {
-    const { error } = await supabase.rpc('deduct_uc_credits', {
-      p_user_id:  userId,
-      p_cost_usd: costUsd,
+    const result = await deductUserCredits({
+      userId,
+      usdCost: costUsd,
+      source: `ai_model:${modelId}`,
+      metadata: { model: modelId, inputTokens: usedInputTok, outputTokens: usedOutputTok },
     });
-    if (error) {
-      console.warn('Credit deduction failed after stream:', error.message);
-    }
+    if (!result.deducted) console.warn('Credit deduction failed after stream');
   }
 
   onComplete({
@@ -449,14 +455,16 @@ export async function callOpenRouterJson(
   const pricing = MODEL_PRICING[modelId] ?? { input: 0, output: 0 };
   const inputTokens = Number(parsed.usage?.prompt_tokens) || Math.ceil(estimateInputChars(messages) / CHARS_PER_TOKEN);
   const outputTokens = Number(parsed.usage?.completion_tokens) || Math.ceil(content.length / CHARS_PER_TOKEN);
-  const costUsd = ((inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000) * MARKUP;
+  const costUsd = (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
 
   if (deductCredits && costUsd > 0) {
-    const { error } = await supabase.rpc('deduct_uc_credits', {
-      p_user_id: userId,
-      p_cost_usd: costUsd,
+    const result = await deductUserCredits({
+      userId,
+      usdCost: costUsd,
+      source: `ai_model:${modelId}`,
+      metadata: { model: modelId, inputTokens, outputTokens },
     });
-    if (error) console.warn('Credit deduction failed after JSON call:', error.message);
+    if (!result.deducted) console.warn('Credit deduction failed after JSON call');
   }
 
   return {
@@ -471,7 +479,7 @@ export async function callOpenRouterJson(
 }
 
 function estimateSearchCostUsd(mode: SearchMode, hasCitations: boolean): number {
-  if (mode === 'deep') return 0.018 * MARKUP;
-  if (mode === 'fast' && hasCitations) return 0.005 * MARKUP;
+  if (mode === 'deep') return 0.018;
+  if (mode === 'fast' && hasCitations) return 0.005;
   return 0;
 }

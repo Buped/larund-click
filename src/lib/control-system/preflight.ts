@@ -13,6 +13,7 @@ export type TaskIntent =
   | 'local_app'
   | 'coding'
   | 'connection_workflow'
+  | 'email'
   | 'spreadsheet_local'
   | 'spreadsheet_cloud'
   | 'document_local'
@@ -77,6 +78,27 @@ function isLocalDocument(t: string): boolean {
   );
 }
 
+// Email compose/draft/send signals. Kept separate from the generic "gmail" web
+// hint so a *recipient address* (which contains "gmail.com") can never route the
+// task to the browser path — composing/sending an email is an API task.
+const EMAIL_NOUN_RE = /\b(e-?mail|emailt|emailek|email|levelet|levél|level|piszkozat|draftot|draft)\b/i;
+const EMAIL_VERB_RE =
+  /\b(küldj|küldd|küld|elküld|írj|írd|megírj|fogalmazz|válaszolj|válasz|forward|továbbít|send|compose|reply|draft|write a|write an)\b/i;
+const RECIPIENT_RE = /[\w.+-]+@[\w-]+\.[a-z]{2,}/i;
+
+/**
+ * True when the user wants to *compose / draft / send* an email (not merely read
+ * an inbox). Requires an email noun together with a compose verb, OR an explicit
+ * recipient address with either. Pure inbox reads ("read my emails") deliberately
+ * fall through to connection_workflow.
+ */
+function isEmailCompose(t: string): boolean {
+  const mentionsEmail = EMAIL_NOUN_RE.test(t) || /\bgmail\b/i.test(t);
+  const hasRecipient = RECIPIENT_RE.test(t);
+  const compose = EMAIL_VERB_RE.test(t);
+  return (mentionsEmail && compose) || (hasRecipient && (mentionsEmail || compose));
+}
+
 const FILE_OPS_RE =
   /\b(mappá|mappa|folder|könyvtár|fájl|fájlok|file|files|asztal|desktop|directory|\.txt|\.pdf|\.png|\.jpg|\.zip)\b/i;
 
@@ -99,6 +121,25 @@ export function preflight(task: string): TaskPreflight {
   const t = task.toLowerCase();
   const url = task.match(URL_RE)?.[0];
   const mutates = MUTATE_RE.test(t) || (!OPEN_ONLY_RE.test(t) && /\bform\b|\bűrlap\b/i.test(t));
+
+  // 0) Email compose/draft/send wins over everything — including the browser hint
+  //    that the recipient's "@gmail.com" would otherwise trigger. This is an
+  //    API-first task: a local TXT/DOCX file never satisfies it.
+  if (isEmailCompose(t)) {
+    const wantsSend = /\b(küldj|küldd|küld|elküld|send|sent)\b/i.test(t);
+    return {
+      intent: 'email',
+      targetSurface: 'connection',
+      targetApp: 'gmail',
+      requiresAuth: true,
+      mutates: true,
+      expectedOutcome: wantsSend
+        ? 'An email was SENT via the Gmail API (a sent message id), confirmed by a SENT read-back. A local file does NOT satisfy this; sending requires approval first.'
+        : 'A Gmail draft exists via the Gmail API (a draft id), confirmed by read-back. A local file does NOT satisfy this.',
+      recommendedTools: ['connection.call', 'document.read', 'approval.request', 'ask_user'],
+      forbiddenTools: ['doc.write_txt', 'doc.write_docx', 'file.write'],
+    };
+  }
 
   // 1) Cloud Google Sheet wins over everything spreadsheet-shaped.
   if (isGoogleSheet(t)) {

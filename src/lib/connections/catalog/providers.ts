@@ -30,6 +30,10 @@ const DOCS: Record<string, string> = {
   jira: 'https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/',
   trello: 'https://developer.atlassian.com/cloud/trello/rest/',
   hubspot: 'https://developers.hubspot.com/docs/api/overview',
+  billingo: 'https://support.billingo.hu/content/446136358',
+  woocommerce: 'https://woocommerce.github.io/woocommerce-rest-api-docs/v3.html',
+  shoprenter: 'https://www.shoprenter.hu/',
+  unas: 'https://unas.hu/',
   wordpress: 'https://developer.wordpress.org/rest-api/',
   mailchimp: 'https://mailchimp.com/developer/marketing/docs/fundamentals/',
   brevo: 'https://developers.brevo.com/docs',
@@ -103,17 +107,28 @@ export const CATALOG: CatalogProvider[] = [
   p('jira', 'Jira / Atlassian', 'productivity', 'Issues, projects and workflows.', 'coming_soon', [nativeOauth('atlassian'), remoteMcp()]),
 
   // ── Marketing / CRM ─────────────────────────────────────────────────────────
-  p('hubspot', 'HubSpot', 'marketing', 'Search contacts/companies, create contacts, update deals, create tasks.', 'coming_soon', [nativeOauth('hubspot'), remoteMcp()]),
+  p('hubspot', 'HubSpot', 'marketing', 'Search contacts/companies, create contacts, update deals, create tasks.', 'working',
+    [nativePat('hubspot'), remoteMcp()], { nativeToolCount: 9, setupInstructions: 'Create a HubSpot private app token with CRM object scopes, then connect it here.' }),
   p('wordpress', 'WordPress', 'marketing', 'List posts, create drafts, update and publish (publish needs approval).', 'coming_soon', [nativeApiKey('wordpress'), remoteMcp()]),
   p('mailchimp', 'Mailchimp', 'marketing', 'Audiences, campaigns and email automation.', 'coming_soon', [nativeApiKey('mailchimp')]),
   p('brevo', 'Brevo', 'marketing', 'Email/SMS campaigns and transactional sends.', 'coming_soon', [nativeApiKey('brevo')]),
 
   // ── Commerce / finance ──────────────────────────────────────────────────────
+  p('billingo', 'Billingo', 'finance', 'Hungarian invoicing: list, read, create, download and mark invoices paid.', 'working',
+    [nativeApiKey('billingo')], { nativeToolCount: 6, setupInstructions: 'Generate a Billingo API v3 key and connect it here. Invoice creation and payment updates require approval.' }),
+  p('woocommerce', 'WooCommerce', 'commerce', 'Products and orders through the WooCommerce REST API.', 'working',
+    [nativeApiKey('woocommerce')], { nativeToolCount: 7, setupInstructions: 'Connect a store URL, consumer key and consumer secret. Writes require approval.' }),
+  p('szamlazz-hu', 'Számlázz.hu', 'finance', 'Számla Agent XML invoicing and PDF download.', 'coming_soon',
+    [{ kind: 'manual_setup', instructions: 'Use Számla Agent XML/API. Native tool implementation is pending; browser/API fallback only for now.' }], { docsUrl: 'https://docs.szamlazz.hu/' }),
   p('shopify', 'Shopify', 'commerce', 'List products, get orders, update products, create discounts (write needs approval).', 'coming_soon', [nativeApiKey('shopify'), remoteMcp()]),
+  p('shoprenter', 'Shoprenter', 'commerce', 'Hungarian webshop admin workflows; browser-control fallback pending API validation.', 'coming_soon',
+    [{ kind: 'manual_setup', instructions: 'Use documented API if available for the merchant plan; otherwise browser-controlled fallback.' }]),
+  p('unas', 'Unas', 'commerce', 'Hungarian webshop admin workflows; browser-control fallback pending API validation.', 'coming_soon',
+    [{ kind: 'manual_setup', instructions: 'Use documented API if available for the merchant plan; otherwise browser-controlled fallback.' }]),
   p('stripe', 'Stripe', 'finance', 'List customers/invoices, create invoice drafts. No payments without explicit approval.', 'coming_soon', [nativeApiKey('stripe'), remoteMcp()]),
 
   // ── Social / ads ────────────────────────────────────────────────────────────
-  p('x', 'X / Twitter', 'marketing', 'Search/read posts and users, connect multiple X accounts, then post/delete/schedule with approval and UC billing.', 'working',
+  p('x', 'X / Twitter', 'marketing', 'Search/read posts and users, connect multiple X accounts, then post/delete/schedule with approval and credit billing.', 'working',
     [nativeOauth('x'), remoteMcp()], {
       nativeToolCount: 29,
       setupInstructions: 'Register an X OAuth 2.0 app with callback http://localhost:14200/ and scopes tweet.read, tweet.write, users.read, offline.access. Set X_CLIENT_ID/X_CLIENT_SECRET for Connect, and X_APP_BEARER for app-only search when the user has not connected X.',

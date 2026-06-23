@@ -247,6 +247,95 @@ function verifyDocumentAccounting(state: ActiveTaskState, recent: RecentAction[]
   return cloudTarget ? verifyCloudSheet(state, recent) : verifyLocalSheet(recent);
 }
 
+/**
+ * An email task is satisfied when the editable email composer card was surfaced
+ * (email.compose) — connected or not — OR real Gmail draft/send evidence exists.
+ * The card itself lets the user connect Gmail and send with one click, so a
+ * [local_draft] card is an acceptable terminal state. A local TXT/DOCX file NEVER
+ * counts. This path does NOT require any browser.open/read.
+ */
+/** The editable email card was surfaced via email.compose (any status). */
+function emailComposed(recent: RecentAction[]): boolean {
+  return recent.some((a) => a.action === 'email.compose' && a.success);
+}
+
+/** A Gmail draft exists — via connection.call create_draft OR email.compose. */
+function gmailDraftDone(recent: RecentAction[]): boolean {
+  return recent.some(
+    (a) =>
+      (a.action === 'connection.call' && a.success && /google\.gmail\.create_draft/i.test(a.argsSummary ?? '')) ||
+      (a.action === 'email.compose' && a.success && /\[(gmail_draft_created|sent)\]/i.test(a.output ?? '')),
+  );
+}
+
+/** A Gmail message was sent — via connection.call send OR email.compose [sent]. */
+function gmailSendDone(recent: RecentAction[]): boolean {
+  return recent.some(
+    (a) =>
+      (a.action === 'connection.call' && a.success && /google\.gmail\.send/i.test(a.argsSummary ?? '')) ||
+      (a.action === 'email.compose' && a.success && /\[sent\]/i.test(a.output ?? '')),
+  );
+}
+
+function verifyEmail(state: ActiveTaskState, recent: RecentAction[]): Verification {
+  const composedCard = emailComposed(recent);
+  const draftEvidence = gmailDraftDone(recent);
+  const sendEvidence = gmailSendDone(recent);
+  const composed = composedCard || draftEvidence || sendEvidence;
+
+  // A local TXT/DOCX/file draft never satisfies an email task on its own.
+  if (!composed && anySucceeded(recent, new Set(['doc.write_txt', 'doc.write_docx', 'file.write']))) {
+    return {
+      ok: false,
+      reason: 'A local TXT/DOCX file is not an email. The email composer card was never surfaced.',
+      nextStepHint:
+        'Call email.compose {to, subject, body} to surface the editable email card. Never finish an email task with a local file.',
+    };
+  }
+  if (!composed) {
+    return {
+      ok: false,
+      reason: 'No email was composed yet.',
+      nextStepHint: 'Call email.compose {to, subject, body} to surface the editable, formatted email card.',
+    };
+  }
+
+  // The email.compose card IS the deliverable — it lets the user connect Gmail and
+  // send with one click — so a card of any status (even [local_draft]) is complete.
+  if (composedCard) {
+    return {
+      ok: true,
+      reason: sendEvidence
+        ? 'Email sent and the editable email card is present.'
+        : 'The editable email card was surfaced (the user can connect Gmail and send from it).',
+      nextStepHint: '',
+    };
+  }
+
+  // Lower-level connection.call path (no card): keep the stricter evidence rules.
+  const wantsSend = /\b(küldj|küldd|küld|elküld|send|sent)\b/i.test(`${state.originalUserGoal} ${state.currentGoal}`);
+  if (wantsSend && !sendEvidence) {
+    return {
+      ok: false,
+      reason: 'The user asked to send an email, but no Gmail send was confirmed in SENT.',
+      nextStepHint: 'After approval, call google.gmail.send and let its SENT read-back confirm delivery, or surface the card with email.compose.',
+    };
+  }
+  const connDraft = lastConnectionSuccess(recent, /google\.gmail\.create_draft/i);
+  if (!sendEvidence && connDraft && /nem megerősíthető/i.test(connDraft.output ?? '')) {
+    return {
+      ok: false,
+      reason: 'A Gmail draft request was sent but the draft read-back could not be confirmed.',
+      nextStepHint: 'Re-create the draft (or get_draft to confirm the draft id) before completing.',
+    };
+  }
+  return {
+    ok: true,
+    reason: sendEvidence ? 'Email sent via the Gmail API and confirmed in SENT.' : 'Gmail draft created via the Gmail API and confirmed by read-back.',
+    nextStepHint: '',
+  };
+}
+
 function verifyFileOps(recent: RecentAction[]): Verification {
   if (!anySucceeded(recent, MUTATING)) {
     return { ok: false, reason: 'No file operation was performed.', nextStepHint: 'Perform the requested file operations.' };
@@ -290,6 +379,8 @@ export function verifyCompletion(state: ActiveTaskState, recent: RecentAction[])
       return verifyLocalDocument(state, recent);
     case 'file_ops':
       return verifyFileOps(recent);
+    case 'email':
+      return verifyEmail(state, recent);
     case 'browser_webapp':
       return state.expectedOutcome && /opening the page alone is not enough|reflects the requested change/i.test(state.expectedOutcome)
         ? verifyMutation(recent)

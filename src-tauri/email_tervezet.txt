@@ -1,0 +1,14 @@
+Tárgy: Stratégiai összefoglaló: AI-alapú értékesítés és kifogáskezelés
+
+Szia!
+
+Az alábbiakban összefoglaltam az AI-alapú szolgáltatások értékesítéséről szóló stratégiai kézikönyv legfontosabb pontjait:
+
+1. Pszichológiai alapok: Az AI-értékesítésben a bizalom a legfontosabb valuta. A magabiztos, partneri fellépés és a vizuális jelenlét (kamera) elengedhetetlen a dominancia kialakításához.
+2. Konzultatív diagnózis: Ne eladj, diagnosztizálj! A 80/20-as szabályt követve az ügyfél beszéljen, te pedig mélyfúrású kérdésekkel tárd fel a manuális folyamatok okozta veszteségeket.
+3. Tekintélyalapú meggyőzés: Használj iparági statisztikákat (pl. 5 perces szabály, Double Dial) a kifogások kezelésére. Ne vitatkozz, hivatkozz adatokra.
+4. Demó és technikai kifogások: A demót csak a megfelelő pillanatban mutasd be. Használd a „Human Imperfection Bias”-t (pl. enyhe akcentus), hogy az AI természetesebbnek hasson, és soha ne fedd fel a használt szoftverek nevét.
+5. Kockázatmentesítés: Alkalmazz PoC (Proof of Concept) vagy teljesítményalapú modelleket, hogy az ügyfél számára a döntés kockázatmentes legyen.
+6. Lezárás: Használj FOMO-t és határozott ultimátumokat. Aki nem dönt, az csak az idődet rabolja.
+
+Üdvözlettel,

@@ -90,6 +90,7 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
   { name: 'browser.upload', category: 'browser', baseRisk: 'external_write', description: 'Upload a file to an input.' },
   { name: 'browser.login', category: 'browser', baseRisk: 'credential_access', description: 'Sign in to a site using a SAVED login (pass {domain} or {url}). The password is filled from the vault automatically — never type or read passwords yourself.' },
 
+  { name: 'email.compose', category: 'connections', baseRisk: 'external_write', description: 'Surface an editable email draft as a chat card; creates a real Gmail draft when Gmail is connected.' },
   { name: 'connection.call', category: 'connections', baseRisk: 'external_read', description: 'Call a connection tool.' },
   { name: 'skill.run', category: 'skills', baseRisk: 'local_write', description: 'Run a skill workflow.' },
   { name: 'workflow.start', category: 'workflows', baseRisk: 'local_write', description: 'Start a long-running workflow.' },

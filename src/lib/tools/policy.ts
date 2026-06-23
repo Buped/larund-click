@@ -84,6 +84,7 @@ export const ACTION_CATEGORY: Record<string, ToolCategory> = {
   'browser.assert_text': 'browser', 'browser.assert_url': 'browser', 'browser.wait': 'browser',
   'browser.extract_table': 'browser', 'browser.download': 'browser', 'browser.upload': 'browser',
   'browser.login': 'browser',
+  'email.compose': 'connections',
   'connection.call': 'connections', 'skill.run': 'skills',
   'workflow.start': 'workflows', 'workflow.status': 'workflows', 'workflow.cancel': 'workflows',
   'approval.request': 'approvals', 'task.complete': 'runtime', 'ask_user': 'runtime',
@@ -184,6 +185,10 @@ export function assessRisk(action: ControlAction): ToolRisk {
     case 'browser.login':
       return 'credential_access';
 
+    case 'email.compose':
+      // Composing a draft (and creating a Gmail draft) is a write, not a send.
+      // Actual sending goes through google.gmail.send (external_send) separately.
+      return 'external_write';
     case 'connection.call':
       // Prefer the provider manifest's declared risk; fall back to name patterns.
       return connectionToolDeclaredRisk(action.tool) ?? connectionToolRisk(action.tool);

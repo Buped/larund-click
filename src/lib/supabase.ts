@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { packageByTier, ucToVisibleCredits } from './credit-engine';
 
 const SUPABASE_URL  = import.meta.env.VITE_SUPABASE_URL  as string | undefined;
 const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -17,6 +18,8 @@ export interface UserCredits {
   uc_balance: number;
   monthly_uc_limit: number;
   tier: string;
+  visible_balance: number;
+  monthly_credit_limit: number;
 }
 
 export async function getUserCredits(userId: string): Promise<UserCredits | null> {
@@ -26,5 +29,11 @@ export async function getUserCredits(userId: string): Promise<UserCredits | null
     .eq('user_id', userId)
     .single();
   if (error || !data) return null;
-  return data as UserCredits;
+  const raw = data as Pick<UserCredits, 'uc_balance' | 'monthly_uc_limit' | 'tier'>;
+  const pkg = packageByTier(raw.tier);
+  return {
+    ...raw,
+    visible_balance: ucToVisibleCredits(raw.uc_balance),
+    monthly_credit_limit: pkg.monthlyOcAllowance || ucToVisibleCredits(raw.monthly_uc_limit),
+  };
 }

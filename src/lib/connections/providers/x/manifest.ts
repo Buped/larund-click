@@ -5,7 +5,7 @@ import { xTools } from './tools';
 export const xManifest: ConnectionManifest = {
   id: 'x',
   name: 'X / Twitter',
-  description: 'Search/read X through Larund app access, connect one or more X accounts, and post/delete/schedule with approval and UC billing.',
+  description: 'Search/read X through Larund app access, connect one or more X accounts, and post/delete/schedule with approval and credit billing.',
   auth: {
     type: 'oauth',
     envVars: X_ENV_VARS,

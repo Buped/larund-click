@@ -724,9 +724,9 @@ export function SettingsScreen({ onClose, user, credits, onSignOut, activeProjec
                     {credits?.tier || 'Free'}
                   </span>
                 </SettingRow>
-                <SettingRow label="Credit balance" sub="UC used / available this month">
+                <SettingRow label="Credit balance" sub="Credits available this month">
                   <span style={{ fontSize: 12.5, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
-                    {credits ? `${credits.uc_balance} / ${credits.monthly_uc_limit} UC` : '—'}
+                    {credits ? `${credits.visible_balance} / ${credits.monthly_credit_limit} kredit` : '—'}
                   </span>
                 </SettingRow>
                 <div style={{ paddingTop: 12 }}>

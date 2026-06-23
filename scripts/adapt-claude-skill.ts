@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { adaptClaudeSkillMarkdown } from '../src/lib/skills/import/adapter';
+import { adaptClaudeSkillMarkdown } from '../src/lib/skills/import/adapter.ts';
 
 const [, , source, targetArg] = process.argv;
 if (!source) {

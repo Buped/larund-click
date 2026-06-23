@@ -39,11 +39,23 @@ export function preferredLoopbackPort(): number {
   return DEFAULT_PORT;
 }
 
+// Shown in the user's browser at the end of the OAuth redirect. The app already
+// captured the token via the `oauth://url` event, so this tab is purely cosmetic —
+// we attempt to close it automatically (browsers may block this for tabs they did
+// not open via script) and otherwise show a clean "you can close this" message.
 const SUCCESS_HTML =
-  '<!doctype html><html><head><meta charset="utf-8"><title>Connected</title></head>' +
-  '<body style="font-family:system-ui;background:#0b1220;color:#e6edf6;display:grid;place-items:center;height:100vh;margin:0">' +
-  '<div style="text-align:center"><h2>✓ Connected to Larund</h2>' +
-  '<p style="opacity:.7">You can close this tab and return to the app.</p></div></body></html>';
+  '<!doctype html><html lang="hu"><head><meta charset="utf-8"><title>Larund – csatlakozva</title>' +
+  '<meta name="viewport" content="width=device-width, initial-scale=1"></head>' +
+  '<body style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#0b1220;color:#e6edf6;display:grid;place-items:center;height:100vh;margin:0">' +
+  '<div style="text-align:center;max-width:420px;padding:24px">' +
+  '<div style="font-size:46px;line-height:1;margin-bottom:10px">✓</div>' +
+  '<h2 style="margin:0 0 8px;font-size:22px">Sikeresen csatlakoztál a Larundhoz</h2>' +
+  '<p style="opacity:.7;margin:0 0 4px">Visszatérhetsz az alkalmazásba — ez az ablak bezárható.</p>' +
+  '<p id="hint" style="opacity:.45;font-size:13px;margin:14px 0 0"></p></div>' +
+  '<script>(function(){try{window.close();}catch(e){}' +
+  'setTimeout(function(){try{window.close();}catch(e){}' +
+  'var h=document.getElementById("hint");if(h)h.textContent="Bezárhatod ezt a lapot.";},400);})();</script>' +
+  '</body></html>';
 
 export async function startLoopback(opts: { port?: number } = {}): Promise<LoopbackHandle> {
   if (!isTauri()) {

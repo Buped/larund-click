@@ -215,8 +215,8 @@ export function Sidebar({ activeChat, onChatChange, userEmail, projectId, refres
   const username = userEmail ? userEmail.split('@')[0] : 'User';
   const isNewChat = activeChat === null;
 
-  const creditPct = credits && credits.monthly_uc_limit > 0
-    ? Math.min(100, Math.round((credits.uc_balance / credits.monthly_uc_limit) * 100))
+  const creditPct = credits && credits.monthly_credit_limit > 0
+    ? Math.min(100, Math.round((credits.visible_balance / credits.monthly_credit_limit) * 100))
     : null;
   const creditColor = creditPct === null ? 'var(--text-hint)'
     : creditPct >= 60 ? 'var(--success)'

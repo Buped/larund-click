@@ -384,10 +384,10 @@ function StepAllSet({ user, mode, screenGranted, accessGranted, onComplete }: {
           ) : credits ? (
             <>
               <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)' }}>
-                {Number(credits.uc_balance).toFixed(2)} UC
+                {Number(credits.visible_balance).toFixed(2).replace(/\.00$/, '')} kredit
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-hint)', marginTop: 2 }}>
-                {credits.monthly_uc_limit} UC monthly limit · <span style={{ textTransform: 'capitalize' }}>{credits.tier}</span> plan
+                {credits.monthly_credit_limit} kredit monthly limit · <span style={{ textTransform: 'capitalize' }}>{credits.tier}</span> plan
               </div>
             </>
           ) : (

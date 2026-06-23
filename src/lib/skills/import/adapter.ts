@@ -1,4 +1,4 @@
-import { CLAUDE_TO_LARUND_TOOL_MAP, validateImportedSkillMarkdown } from './safety';
+import { CLAUDE_TO_LARUND_TOOL_MAP, validateImportedSkillMarkdown } from './safety.ts';
 
 export interface AdaptedClaudeSkill {
   markdown: string;

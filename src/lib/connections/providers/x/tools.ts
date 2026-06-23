@@ -211,7 +211,7 @@ export const xTools: ConnectionToolDefinition[] = [
   },
   {
     name: 'x.search_posts',
-    description: 'Search recent public X posts with optional filters. App-only read is supported; successful results are UC-billed.',
+    description: 'Search recent public X posts with optional filters. App-only read is supported; successful results are credit-billed.',
     risk: 'external_read',
     async run(args, secrets) {
       const q = searchQuery(args);
@@ -262,7 +262,7 @@ export const xTools: ConnectionToolDefinition[] = [
   },
   {
     name: 'x.search_users',
-    description: 'Resolve one or more X usernames from a query/handle. App-only read is supported; successful results are UC-billed.',
+    description: 'Resolve one or more X usernames from a query/handle. App-only read is supported; successful results are credit-billed.',
     risk: 'external_read',
     async run(args, secrets) {
       const raw = str(args.query ?? args.username ?? args.usernames).replace(/^@/, '');

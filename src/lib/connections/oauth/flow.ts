@@ -316,6 +316,37 @@ export async function refreshOAuthTokens(providerId: string, refreshToken: strin
 }
 
 /**
+ * Verify a freshly issued Google access token and resolve the account email by
+ * calling the OpenID userinfo endpoint. Throws a clear error when the token does
+ * not work (so a broken scope/consent fails LOUDLY at connect, not later at task
+ * time). Returns `{}` for non-Google providers (no verification step defined).
+ */
+export async function verifyConnectedIdentity(
+  providerId: string,
+  accessToken: string,
+): Promise<{ email?: string }> {
+  if (providerId !== 'google-workspace') return {};
+  let res: Awaited<ReturnType<typeof tauriFetch>>;
+  try {
+    res = await tauriFetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+    });
+  } catch (e) {
+    throw new Error(`oauth_verify_failed: a Google fiók ellenőrzése nem sikerült (${String(e).slice(0, 120)}).`);
+  }
+  if (!res.ok) {
+    const body = (await res.text().catch(() => '')).slice(0, 200);
+    if (res.status === 401) throw new Error('oauth_verify_unauthorized: a Google token érvénytelen — próbáld újra a csatlakozást.');
+    if (res.status === 403) throw new Error('oauth_verify_forbidden: hiányzó jogosultság/scope vagy a userinfo API nincs engedélyezve a Google projektben.');
+    throw new Error(`oauth_verify_failed_${res.status}: ${body}`);
+  }
+  let json: { email?: string } = {};
+  try { json = JSON.parse(await res.text()) as { email?: string }; } catch { /* non-JSON body */ }
+  return { email: typeof json.email === 'string' ? json.email : undefined };
+}
+
+/**
  * Complete a connect: exchange the code (or accept already-exchanged tokens) and
  * persist a ConnectedAccount for the current user. Tokens never touch logs/UI.
  */

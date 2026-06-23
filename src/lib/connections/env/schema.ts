@@ -186,6 +186,8 @@ const RAW_PROVIDER_ENV: Record<string, RawSchema> = {
   airtable: def('airtable', 'pat_user_entered', [], { devShortcut: ['DEV_AIRTABLE_TOKEN'], legacyUserTokenKeys: ['AIRTABLE_TOKEN', 'AIRTABLE_BASE_ID'], active: true }),
   linear: def('linear', 'api_key_user_entered', [], { devShortcut: ['DEV_LINEAR_API_KEY'], legacyUserTokenKeys: ['LINEAR_API_KEY'], active: true }),
   hubspot: def('hubspot', 'pat_user_entered', [], { devShortcut: ['DEV_HUBSPOT_PRIVATE_APP_TOKEN'], legacyUserTokenKeys: ['HUBSPOT_PRIVATE_APP_TOKEN'], active: true }),
+  billingo: def('billingo', 'api_key_user_entered', [], { devShortcut: ['DEV_BILLINGO_API_KEY'], legacyUserTokenKeys: ['BILLINGO_API_KEY'], active: true }),
+  woocommerce: def('woocommerce', 'api_key_user_entered', [], { devShortcut: ['DEV_WOOCOMMERCE_STORE_URL', 'DEV_WOOCOMMERCE_CONSUMER_KEY', 'DEV_WOOCOMMERCE_CONSUMER_SECRET'], legacyUserTokenKeys: ['WOOCOMMERCE_STORE_URL', 'WOOCOMMERCE_CONSUMER_KEY', 'WOOCOMMERCE_CONSUMER_SECRET'], active: true }),
   wordpress: def('wordpress', 'api_key_user_entered', [], { devShortcut: ['DEV_WORDPRESS_SITE_URL', 'DEV_WORDPRESS_USERNAME', 'DEV_WORDPRESS_APP_PASSWORD'], legacyUserTokenKeys: ['WORDPRESS_SITE_URL', 'WORDPRESS_USERNAME', 'WORDPRESS_APP_PASSWORD'], active: true }),
   resend: def('resend', 'api_key_user_entered', [], { devShortcut: ['DEV_RESEND_API_KEY'], legacyUserTokenKeys: ['RESEND_API_KEY'], active: true }),
   sendgrid: def('sendgrid', 'api_key_user_entered', [], { devShortcut: ['DEV_SENDGRID_API_KEY'], legacyUserTokenKeys: ['SENDGRID_API_KEY'], active: true }),

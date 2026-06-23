@@ -1,4 +1,4 @@
-import { parseSkillFile } from '../frontmatter';
+import { parseSkillFile } from '../frontmatter.ts';
 import type { SkillManifest } from '../types';
 
 export type ImportStatus = 'pending_review' | 'reviewed' | 'enabled' | 'disabled' | 'blocked' | 'deprecated';

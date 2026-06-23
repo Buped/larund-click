@@ -8,6 +8,8 @@ import { getApp, markAppUsed } from '../apps/store';
 import { getBrowserProfile, DEFAULT_BROWSER_PROFILE } from '../browser/profiles';
 import { planArtifact } from '../artifacts/planner';
 import { lintPresentation } from '../artifacts/presentation/quality-lint';
+import type { EmailDraft } from '../email/types';
+import { newEmailDraftId, gmailDraftUrl, toSourceChips } from '../email/compose';
 
 /** Resolve a browser-profile id to the launch config the Rust layer expects. The
  *  managed default needs no config (Rust defaults to Agent Chrome). */
@@ -54,6 +56,60 @@ async function tryInvoke<T>(cmd: string, args?: Record<string, unknown>): Promis
  */
 export async function performControlAction(action: ControlAction, ctx: ToolContext): Promise<ControlToolResult> {
   switch (action.action) {
+    // ── email composer ─────────────────────────────────────────────────────
+    case 'email.compose': {
+      const to = String(action.to ?? '').trim();
+      const sources = action.sources?.length ? toSourceChips(action.sources) : (ctx.references ?? []).map((r) => ({ label: r.label, kind: r.kind, fileId: r.driveFileId, url: r.webViewLink ?? r.url }));
+      const base: EmailDraft = {
+        id: newEmailDraftId(),
+        to,
+        cc: action.cc ? String(action.cc) : undefined,
+        bcc: action.bcc ? String(action.bcc) : undefined,
+        subject: String(action.subject ?? ''),
+        body: String(action.body ?? ''),
+        status: 'local_draft',
+        gmailConnected: false,
+        sources,
+        updatedAt: new Date().toISOString(),
+      };
+      if (!to) {
+        return { success: false, output: '', error: 'missing_recipient', details: { emailDraft: { ...base, status: 'failed', error: 'missing_recipient' } } };
+      }
+      // Decide connected/not by the ACTUAL Gmail call, not a synchronous state
+      // probe: the connection resolves credentials async (OAuth refresh, dev
+      // shortcut, MCP), so a sync probe can wrongly say "not connected" while a
+      // real call would succeed.
+      const localDraft = (): ControlToolResult => {
+        const draft: EmailDraft = { ...base, status: 'local_draft', gmailConnected: false };
+        return {
+          success: true,
+          output: `Email vázlat elkészült a chat composerben (címzett: ${to} – "${draft.subject}"). A Gmail jelenleg NINCS csatlakoztatva, ezért Gmail piszkozat nem jött létre — csatlakoztasd a Gmailt a Connections oldalon a mentéshez/küldéshez. [local_draft]`,
+          details: { emailDraft: draft },
+        };
+      };
+      if (!ctx.connections) return localDraft();
+      const res = await ctx.connections.call('google-workspace', 'google.gmail.create_draft', {
+        to: base.to, cc: base.cc, bcc: base.bcc, subject: base.subject, body: base.body,
+      });
+      if (res.success) {
+        const draftId = String((res.details as Record<string, unknown> | undefined)?.draftId ?? '');
+        const verified = Boolean((res.details as Record<string, unknown> | undefined)?.verified);
+        const draft: EmailDraft = { ...base, gmailConnected: true, status: 'gmail_draft_created', gmailDraftId: draftId, webUrl: gmailDraftUrl(draftId) };
+        return {
+          success: true,
+          output: `Gmail piszkozat létrehozva (${to} – "${base.subject}"). Read-back: ${verified ? 'megerősítve' : 'nem megerősíthető'}. [gmail_draft_created]`,
+          details: { emailDraft: draft },
+        };
+      }
+      // A missing/blocked connection → keep an editable local draft + Connect CTA.
+      const blocker = (res.details as Record<string, unknown> | undefined)?.blocker;
+      const errText = `${res.error ?? ''} ${res.output ?? ''}`.toLowerCase();
+      const missingConnection = Boolean(blocker) || /missing_auth|not connected|connect|scaffold|unknown_connection|no[_ ]?credential|reconnect|expired/.test(errText);
+      if (missingConnection) return localDraft();
+      const failedDraft: EmailDraft = { ...base, gmailConnected: true, status: 'failed', error: res.error ?? res.output };
+      return { success: false, output: res.output ?? '', error: res.error ?? 'gmail_draft_failed', details: { emailDraft: failedDraft } };
+    }
+
     // ── runtime ──────────────────────────────────────────────────────────
     case 'cli.run': {
       const r = await tryInvoke<{ stdout: string; stderr: string; exit_code: number; success: boolean }>('shell_run', {

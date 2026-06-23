@@ -12,7 +12,10 @@ import { googleWorkspaceManifest } from './providers/google-workspace/manifest';
 import { slackManifest } from './providers/slack/manifest';
 import { xManifest } from './providers/x/manifest';
 import { wordpressManifest } from './providers/wordpress/manifest';
-import { hubspotManifest, airtableManifest, moreScaffoldManifests } from './providers/extra-scaffolds';
+import { billingoManifest } from './providers/billingo/manifest';
+import { woocommerceManifest } from './providers/woocommerce/manifest';
+import { hubspotManifest } from './providers/hubspot/manifest';
+import { airtableManifest, moreScaffoldManifests } from './providers/extra-scaffolds';
 
 export const ALL_MANIFESTS: ConnectionManifest[] = [
   githubManifest,
@@ -20,6 +23,8 @@ export const ALL_MANIFESTS: ConnectionManifest[] = [
   googleWorkspaceManifest,
   xManifest,
   slackManifest,
+  billingoManifest,
+  woocommerceManifest,
   hubspotManifest,
   airtableManifest,
   wordpressManifest,

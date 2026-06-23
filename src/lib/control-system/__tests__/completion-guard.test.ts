@@ -87,6 +87,91 @@ describe('completion guard — cloud Google Sheet', () => {
   });
 });
 
+describe('completion guard — Gmail email/draft', () => {
+  const sendGoal = 'Küldj egy emailt a ninjapeti2000@gmail.com email címre a csatolt Drive file alapján. Írj egy rövid összefoglalót.';
+  const draftGoal = 'Írd meg ezt a draftot a ninjapeti2000@gmail.com címre a csatolt Drive file alapján.';
+
+  it('classifies a send-an-email task as email, not browser_webapp', () => {
+    expect(preflight(sendGoal).intent).toBe('email');
+  });
+
+  it('rejects a TXT-only "draft" as a Gmail draft', () => {
+    const s = stateFor(draftGoal);
+    const recent = [ok('document.read', 'Google Docs read via API: 4200 chars'), ok('doc.write_txt', 'wrote draft.txt')];
+    const r = verifyBeforeComplete(s, recent);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/local txt|not a gmail draft/i);
+  });
+
+  it('rejects completion when no email composer card was surfaced', () => {
+    const s = stateFor(draftGoal);
+    const recent = [ok('document.read', 'Google Docs read via API: 4200 chars')];
+    const r = verifyBeforeComplete(s, recent);
+    expect(r.ok).toBe(false);
+    expect(r.nextStepHint).toMatch(/email\.compose/i);
+  });
+
+  it('accepts a verified Gmail draft (draft-only request)', () => {
+    const s = stateFor(draftGoal);
+    const recent = [
+      ok('document.read', 'Google Docs read via API: 4200 chars'),
+      conn('google.gmail.create_draft', 'Gmail piszkozat létrehozva (ninjapeti2000@gmail.com – "Összefoglaló"). Read-back: megerősítve.'),
+    ];
+    expect(verifyBeforeComplete(s, recent).ok).toBe(true);
+  });
+
+  it('does NOT require a browser.open when the API read already succeeded', () => {
+    const s = stateFor(draftGoal);
+    const recent = [
+      ok('document.read', 'Google Docs read via API'),
+      conn('google.gmail.create_draft', 'Read-back: megerősítve.'),
+    ];
+    const r = verifyBeforeComplete(s, recent);
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects a draft when the user asked to SEND but no send is confirmed', () => {
+    const s = stateFor(sendGoal);
+    const recent = [conn('google.gmail.create_draft', 'Read-back: megerősítve.')];
+    const r = verifyBeforeComplete(s, recent);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/send|SENT/i);
+  });
+
+  it('accepts a confirmed Gmail send', () => {
+    const s = stateFor(sendGoal);
+    const recent = [
+      conn('google.gmail.create_draft', 'Read-back: megerősítve.'),
+      conn('google.gmail.send', 'Email elküldve (ninjapeti2000@gmail.com). Read-back: a SENT mappában megerősítve.'),
+    ];
+    expect(verifyBeforeComplete(s, recent).ok).toBe(true);
+  });
+
+  it('accepts a Gmail draft created via the email.compose card', () => {
+    const s = stateFor(draftGoal);
+    const recent: RecentAction[] = [
+      ok('document.read', 'Google Docs read via API'),
+      { action: 'email.compose', success: true, output: 'Gmail piszkozat létrehozva (ninjapeti2000@gmail.com – "Összefoglaló"). Read-back: megerősítve. [gmail_draft_created]' },
+    ];
+    expect(verifyBeforeComplete(s, recent).ok).toBe(true);
+  });
+
+  it('accepts an email.compose LOCAL draft card (the card has a one-click Connect button)', () => {
+    const s = stateFor(draftGoal);
+    const recent: RecentAction[] = [
+      ok('document.read', 'Google Docs read via API'),
+      { action: 'email.compose', success: true, output: 'Email vázlat elkészült a chat composerben … [local_draft]' },
+    ];
+    expect(verifyBeforeComplete(s, recent).ok).toBe(true);
+  });
+
+  it('still rejects a TXT file even when an email.compose card is absent', () => {
+    const s = stateFor(draftGoal);
+    const recent: RecentAction[] = [ok('document.read', 'read'), ok('doc.write_txt', 'wrote draft.txt')];
+    expect(verifyBeforeComplete(s, recent).ok).toBe(false);
+  });
+});
+
 describe('completion guard — local spreadsheet', () => {
   it('accepts after write + read-back', () => {
     const s = stateFor('Készíts egy Excel fájlt 5 sor adattal.');

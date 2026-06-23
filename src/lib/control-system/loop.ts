@@ -1,6 +1,5 @@
 import { emit } from '@tauri-apps/api/event';
 import { callOpenRouterWithTools, type MessageContent } from '../openrouter';
-import { supabase } from '../supabase';
 import { CONTROL_SYSTEM_PROMPT } from './prompt';
 import { parseControlAction, isLegacyVisualActionName } from './parser';
 import { extractNarration, isMeaningfulNarration } from '../assistant/narration';
@@ -33,6 +32,7 @@ import {
   type TaskTracker,
 } from '../coworker/run-context';
 import { blockedStatusFor } from '../tasks/evidence';
+import { deductCredits } from '../credit-engine';
 
 export type AgentStatus = 'idle' | 'planning' | 'executing' | 'waiting_user' | 'complete' | 'error';
 export type AutonomyMode = 'full' | 'semi' | 'manual';
@@ -178,7 +178,8 @@ async function updateOverlay(state: object): Promise<void> {
 async function finalDeduct(userId: string, costUsd: number): Promise<void> {
   if (costUsd <= 0 || !userId) return;
   try {
-    await supabase.rpc('deduct_uc_credits', { p_user_id: userId, p_cost_usd: costUsd });
+    const result = await deductCredits({ userId, usdCost: costUsd, source: 'ai_model:agent_loop' });
+    if (!result.deducted) console.warn('Agent credit deduction failed');
   } catch (err) {
     console.warn('Agent credit deduction failed:', err);
   }

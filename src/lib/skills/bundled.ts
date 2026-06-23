@@ -156,6 +156,49 @@ Use this skill to create, update, read, export, or verify Google Docs.
 - For exports, confirm the exported file exists and can be read/opened by file tools.
 - Do not claim a cloud doc exists unless the Google API or browser state confirms it.`;
 
+const gmailDraftAndSend = `---
+name: gmail-draft-and-send
+description: "Draft and send Gmail messages through the Gmail API — never a local TXT fallback. Summarize attached Google sources via API and build a real Gmail draft."
+allowed_tools: ["email.compose", "connection.call", "document.read", "document.read_many", "approval.request", "ask_user"]
+requires_connections: ["google-workspace"]
+risk: "external_send"
+trigger: "email e-mail gmail levél levelet draft piszkozat küldj írj emailt send compose reply"
+---
+
+# Gmail Draft & Send
+Use this skill when the user wants to draft, compose, reply to, or send an email.
+This is an API-first task. A local TXT/DOCX file is NEVER an acceptable result.
+
+## Process
+1. Identify the recipient(s), subject, and what the body must contain. The
+   recipient's "@gmail.com" address does NOT mean open a browser.
+2. If a Google Doc/Sheet/Slides/Drive file is attached or @mentioned, use its
+   already-read API content (or document.read on the referenced input) to write the
+   summary/body. Summarize from the real content, never from the file title.
+3. Write the body as well-structured MARKDOWN (it renders as styled HTML): greeting,
+   short scannable paragraphs, **bold** for key points/numbers, ## subheadings and
+   - bullet lists where useful, a clear call-to-action and sign-off. Make it look like
+   a polished business email, not a flat block of text.
+4. Surface it with ONE email.compose {to, subject, body, cc?, bcc?, sources} call. This
+   shows the editable, formatted email card AND creates the real Gmail draft when Gmail
+   is connected. Do NOT also call google.gmail.create_draft afterwards (duplicate).
+5. The card IS the deliverable — after one successful email.compose you are done
+   (task.complete). The user reviews/edits and sends from the card with one click; if
+   Gmail is not connected the card has a one-click "Connect Gmail" button.
+6. Only call the send tool yourself if the user explicitly asked to send now:
+   approval.request first, then connection.call google-workspace google.gmail.send
+   {draftId from the email.compose result}. external_send approval applies.
+
+## If Gmail is not connected
+- email.compose still returns an editable card with a Connect-Gmail button —
+  complete the task and tell the user they can connect + send right on the card.
+- NEVER write a TXT/DOCX file and NEVER loop with ask_user to "connect then say done".
+
+## Verification
+- A successful email.compose (the editable card) satisfies "draft prepared".
+- "Email sent" requires a google.gmail.send success confirmed in SENT.
+- A local file, a browser page, or a title-only summary never satisfies this task.`;
+
 const localOffice = `---
 name: local-office
 description: "Create/read local Excel, CSV, text and document files directly without GUI Office control."
@@ -476,6 +519,7 @@ export const BUNDLED_SKILL_FILES: string[] = [
   googleSheets,
   googleWorkspace,
   googleDocs,
+  gmailDraftAndSend,
   localOffice,
   documentAccounting,
   taskVerification,

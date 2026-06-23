@@ -17,6 +17,7 @@ import {
   listConnectedAccountsForProvider,
   getTokenSecretForProviderCall,
   refreshProviderTokenIfNeeded,
+  markAccountStatus,
   DEFAULT_CONTEXT,
   type ConnectionContext,
   type ConnectedAccount,
@@ -60,6 +61,8 @@ const ACCESS_TOKEN_TOOL_KEYS: Record<string, string[]> = {
   sendgrid: ['SENDGRID_API_KEY'],
   vercel: ['VERCEL_TOKEN'],
   stripe: ['STRIPE_SECRET_KEY'],
+  billingo: ['BILLINGO_API_KEY'],
+  woocommerce: ['WOOCOMMERCE_TOKEN'],
 };
 
 function toolTokenKeys(providerId: string): string[] {
@@ -131,11 +134,22 @@ export async function resolveRuntimeCredentials(
       }
     }
 
-    // Refresh an expired/near-expiry OAuth token before use (Google et al.).
+    // Refresh an expired/near-expiry OAuth token before use (Google et al.). If
+    // the refresh fails AND the current token is already expired, mark the account
+    // expired and surface a clear "reconnect" blocker instead of letting a dead
+    // token fail later as a vague provider 401.
     if (account.refreshTokenRef && oauthEndpoints(providerId)) {
       try {
         await refreshProviderTokenIfNeeded(account.id, (rt) => refreshOAuthTokens(providerId, rt));
-      } catch { /* fall through; a stale token surfaces as a provider 401 the caller handles */ }
+      } catch {
+        const expired = account.expiresAt ? Date.parse(account.expiresAt) <= Date.now() : false;
+        if (expired) {
+          markAccountStatus(account.id, 'expired');
+          return { ok: false, source: 'none', secrets: appCreds, blocker: 'expired', account,
+            message: `A ${providerId} kapcsolat lejárt és a token frissítése nem sikerült — csatlakoztasd újra a fiókot.` };
+        }
+        /* token still valid; continue with it (the refresh failure was transient) */
+      }
     }
     const token = await getTokenSecretForProviderCall(account.tokenRef);
     if (token) {
