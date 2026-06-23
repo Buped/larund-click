@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import {
   createConnectedAccount, listConnectedAccountsForProvider, getConnectedAccount,
   hasConnectedAccount, disconnectConnectedAccount, getTokenSecretForProviderCall,
-  markAccountStatus, __resetConnectedAccountsForTests,
+  markAccountStatus, adoptLegacyLocalConnectedAccounts, __resetConnectedAccountsForTests,
 } from '../connectedAccounts';
 
 beforeEach(() => __resetConnectedAccountsForTests());
@@ -53,5 +53,15 @@ describe('ConnectedAccount store', () => {
     markAccountStatus(account.id, 'expired');
     expect(hasConnectedAccount('slack', { userId: 'alice' })).toBe(false);
     expect(getConnectedAccount('slack', { userId: 'alice' })?.status).toBe('expired');
+  });
+
+  it('adopts legacy local accounts for the authenticated user', async () => {
+    await createConnectedAccount({ ctx: { userId: 'local' }, providerId: 'google-workspace', accountLabel: 'google', authType: 'oauth2', tokens: { access_token: 'tok' } });
+
+    expect(getConnectedAccount('google-workspace', { userId: 'alice' })).toBeUndefined();
+
+    expect(adoptLegacyLocalConnectedAccounts('alice')).toBe(1);
+    expect(getConnectedAccount('google-workspace', { userId: 'alice' })?.accountLabel).toBe('google');
+    expect(getConnectedAccount('google-workspace', { userId: 'local' })).toBeUndefined();
   });
 });

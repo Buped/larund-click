@@ -88,7 +88,7 @@ export const CATALOG: CatalogProvider[] = [
   p('notion', 'Notion', 'productivity', 'Search, read and write Notion pages and databases.', 'working',
     [nativePat('notion'), remoteMcp()], { nativeToolCount: 7, setupInstructions: 'Create an internal integration token and share pages with it.', docsUrl: 'https://www.notion.so/my-integrations' }),
   p('google-workspace', 'Google', 'productivity', 'One Google connection — Drive, Gmail, Docs, Sheets, Calendar and more, via a single sign-in.', 'working',
-    [nativeToken('google-workspace')], { nativeToolCount: 21, setupInstructions: 'Connect once with Google. Drive, Gmail, Docs, Sheets and Calendar all share this one sign-in; Ads/GA4/Search Console may need extra IDs/tokens.' }),
+    [nativeToken('google-workspace')], { nativeToolCount: 25, setupInstructions: 'Connect once with Google. Drive, Gmail, Docs, Sheets and Calendar all share this one sign-in; Ads/GA4/Search Console may need extra IDs/tokens.' }),
 
   // ── Communication ───────────────────────────────────────────────────────────
   p('slack', 'Slack', 'communication', 'Search messages, read channels, post messages (post needs approval).', 'coming_soon',
@@ -113,8 +113,11 @@ export const CATALOG: CatalogProvider[] = [
   p('stripe', 'Stripe', 'finance', 'List customers/invoices, create invoice drafts. No payments without explicit approval.', 'coming_soon', [nativeApiKey('stripe'), remoteMcp()]),
 
   // ── Social / ads ────────────────────────────────────────────────────────────
-  p('x', 'X / Twitter', 'marketing', 'Search posts, get users/posts, and create/reply/delete posts with approval.', 'working',
-    [nativeOauth('x'), remoteMcp()], { nativeToolCount: 14, setupInstructions: 'Use X_BEARER_TOKEN for read-only API access. Add X_WRITE_ACCESS_TOKEN and X_WRITE_ACCESS_TOKEN_SECRET for approval-gated posting/replies/deletes.' }),
+  p('x', 'X / Twitter', 'marketing', 'Search/read posts and users, connect multiple X accounts, then post/delete/schedule with approval and UC billing.', 'working',
+    [nativeOauth('x'), remoteMcp()], {
+      nativeToolCount: 29,
+      setupInstructions: 'Register an X OAuth 2.0 app with callback http://localhost:14200/ and scopes tweet.read, tweet.write, users.read, offline.access. Set X_CLIENT_ID/X_CLIENT_SECRET for Connect, and X_APP_BEARER for app-only search when the user has not connected X.',
+    }),
   p('meta-ads', 'Meta Ads', 'marketing', 'Ad accounts, campaigns and insights; create drafts. Publish only with approval.', 'coming_soon', [nativeOauth('meta')]),
   p('instagram-business', 'Instagram Business', 'marketing', 'Media, insights and publishing (publish needs approval).', 'coming_soon', [nativeOauth('meta')]),
   p('facebook-pages', 'Facebook Pages', 'marketing', 'Page posts and insights.', 'coming_soon', [nativeOauth('meta')]),

@@ -14,7 +14,7 @@ export interface RichMentionEditorHandle {
 function chipHtml(ref: ReferencedContext): string {
   const color = MENTION_COLORS[ref.kind];
   const json = encodeURIComponent(JSON.stringify(ref));
-  const kind = `${ref.kind[0].toUpperCase()}${ref.kind.slice(1)}`;
+  const kind = `${ref.kind[0].toUpperCase()}${ref.kind.slice(1).replace(/_/g, ' ')}`;
   return `<span class="rich-mention-chip" contenteditable="false" data-mention="${json}" data-kind="${ref.kind}" style="--mention-color:${color};">${kind} · ${escapeHtml(ref.label)}</span>`;
 }
 

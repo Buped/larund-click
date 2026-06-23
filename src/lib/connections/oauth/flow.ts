@@ -79,7 +79,7 @@ export const OAUTH_ENDPOINTS: Record<string, OAuthProviderEndpoints> = {
     clientIdEnv: 'X_CLIENT_ID',
     clientSecretEnv: 'X_CLIENT_SECRET',
     pkce: true,
-    defaultScopes: ['tweet.read', 'users.read', 'offline.access'],
+    defaultScopes: ['tweet.read', 'tweet.write', 'users.read', 'offline.access'],
   },
   'microsoft-365': {
     slug: 'microsoft',

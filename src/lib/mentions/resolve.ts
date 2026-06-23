@@ -28,7 +28,7 @@ export async function resolveReferencedContext(args: {
   const stack = args.workflowStack ?? [];
 
   for (const ref of args.references) {
-    if (ref.kind === 'file' || ref.kind === 'folder') {
+    if (ref.kind === 'file' || ref.kind === 'folder' || ref.kind === 'drive_file' || ref.kind === 'drive_folder') {
       documentReferences.push(toDocumentReference(ref));
       continue;
     }
@@ -114,6 +114,35 @@ export async function resolveReferencedContext(args: {
       const workflow = await getWorkflowTemplate(ref.refId, args.userId);
       if (!workflow) { blockers.push(`Referenced workflow "${ref.label}" was not found.`); continue; }
       lines.push(renderWorkflowPrompt(workflow));
+      continue;
+    }
+
+    if (ref.kind === 'x_post' || ref.kind === 'x_user') {
+      const url = typeof ref.metadata?.url === 'string' ? ref.metadata.url : undefined;
+      const cachedAt = typeof ref.metadata?.cachedAt === 'string' ? ref.metadata.cachedAt : undefined;
+      lines.push([
+        `## X reference: ${ref.label}`,
+        `kind: ${ref.kind}`,
+        `id: ${ref.refId}`,
+        url ? `url: ${url}` : undefined,
+        cachedAt ? `cachedAt: ${cachedAt}` : undefined,
+        ref.kind === 'x_post' && ref.metadata?.post ? `post: ${JSON.stringify(ref.metadata.post)}` : undefined,
+        ref.kind === 'x_user' && ref.metadata?.user ? `user: ${JSON.stringify(ref.metadata.user)}` : undefined,
+        'usage: Use this known X id directly. Do not run a paid duplicate search for the same post/user while the cache window is valid.',
+      ].filter(Boolean).join('\n'));
+    }
+
+    if (ref.kind === 'web_source') {
+      const source = ref.metadata?.source && typeof ref.metadata.source === 'object'
+        ? ref.metadata.source as { title?: string; url?: string; domain?: string; snippet?: string }
+        : undefined;
+      lines.push([
+        `## Web source: ${ref.label}`,
+        `url: ${source?.url ?? ref.refId}`,
+        source?.domain ? `domain: ${source.domain}` : undefined,
+        source?.snippet ? `snippet: ${source.snippet}` : undefined,
+        'usage: The user is referring to this previously cited web source. Use it as context and cite it when relevant.',
+      ].filter(Boolean).join('\n'));
     }
   }
 
@@ -129,9 +158,10 @@ function toDocumentReference(ref: ReferencedContext): DocumentReference {
   if (embedded && typeof embedded === 'object') return embedded as DocumentReference;
   return {
     id: ref.id,
-    kind: ref.kind === 'folder' ? 'folder' : 'file',
+    kind: ref.kind === 'folder' ? 'folder' : ref.kind === 'drive_folder' ? 'google_drive_folder' : ref.kind === 'drive_file' ? 'google_drive_file' : 'file',
     label: ref.label,
-    path: ref.refId,
-    source: 'user_reference',
+    path: ref.kind === 'file' || ref.kind === 'folder' ? ref.refId : undefined,
+    driveFileId: ref.kind === 'drive_file' || ref.kind === 'drive_folder' ? ref.refId : undefined,
+    source: ref.kind === 'drive_file' || ref.kind === 'drive_folder' ? 'connection' : 'user_reference',
   };
 }

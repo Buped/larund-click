@@ -4,7 +4,20 @@
 // status, MCP tools, memory content, workflow steps, file reference) rather than
 // just a label.
 
-export type MentionKind = 'app' | 'skill' | 'connection' | 'mcp' | 'memory' | 'workflow' | 'file' | 'folder';
+export type MentionKind =
+  | 'app'
+  | 'skill'
+  | 'connection'
+  | 'mcp'
+  | 'memory'
+  | 'workflow'
+  | 'web_source'
+  | 'x_post'
+  | 'x_user'
+  | 'file'
+  | 'folder'
+  | 'drive_file'
+  | 'drive_folder';
 
 export interface ReferencedContext {
   id: string;
@@ -41,8 +54,13 @@ export const MENTION_COLORS: Record<MentionKind, string> = {
   mcp: '#34BE78',        // green
   memory: '#F5A524',     // yellow
   workflow: '#FB923C',   // orange
+  web_source: '#4A9EFF',
+  x_post: '#111111',
+  x_user: '#111111',
   file: '#9CA3AF',       // gray
   folder: '#9CA3AF',     // gray
+  drive_file: '#34A853',  // Google Drive green
+  drive_folder: '#34A853',
 };
 
 export const MENTION_TABS: Array<{ kind: MentionKind; label: string }> = [
@@ -52,6 +70,9 @@ export const MENTION_TABS: Array<{ kind: MentionKind; label: string }> = [
   { kind: 'mcp', label: 'MCP' },
   { kind: 'memory', label: 'Memory' },
   { kind: 'workflow', label: 'Workflows' },
+  { kind: 'web_source', label: 'Sources' },
+  { kind: 'x_post', label: 'X posts' },
+  { kind: 'x_user', label: 'X users' },
 ];
 
 let counter = 0;

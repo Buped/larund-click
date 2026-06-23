@@ -15,8 +15,8 @@ function isMock(args: Record<string, unknown>): boolean {
   return args.mock === true || args.__mock === true;
 }
 
-interface MockDraft { id: string; to: string; subject: string; body: string }
-interface MockSent { id: string; to: string; subject: string; body: string }
+interface MockDraft { id: string; to: string; subject: string; body: string; cc?: string; bcc?: string; threadId?: string }
+interface MockSent { id: string; to: string; subject: string; body: string; cc?: string; bcc?: string; threadId?: string }
 const mockDrafts = new Map<string, MockDraft>();
 const mockSent = new Map<string, MockSent>();
 function mockId(prefix: string): string {
@@ -24,16 +24,18 @@ function mockId(prefix: string): string {
 }
 
 /** Build a base64url-encoded RFC 822 message. Body is base64 so accents survive. */
-function buildRawMessage(to: string, subject: string, body: string): string {
+function buildRawMessage(to: string, subject: string, body: string, opts: { cc?: string; bcc?: string } = {}): string {
   const headers = [
     `To: ${to}`,
+    opts.cc ? `Cc: ${opts.cc}` : undefined,
+    opts.bcc ? `Bcc: ${opts.bcc}` : undefined,
     `Subject: ${encodeMimeHeader(subject)}`,
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset="UTF-8"',
     'Content-Transfer-Encoding: base64',
     '',
     base64UrlEncode(body).replace(/-/g, '+').replace(/_/g, '/'),
-  ];
+  ].filter((line): line is string => line != null);
   return base64UrlEncode(headers.join('\r\n'));
 }
 
@@ -131,12 +133,15 @@ export const googleGmailTools: ConnectionToolDefinition[] = [
     risk: 'external_write',
     async run(args, secrets) {
       const to = String(args.to ?? '');
+      const cc = String(args.cc ?? '');
+      const bcc = String(args.bcc ?? '');
       const subject = String(args.subject ?? '');
       const body = String(args.body ?? '');
+      const threadId = String(args.threadId ?? args.thread_id ?? '');
       if (!to) return { success: false, output: '', error: 'missing_recipient' };
       if (isMock(args)) {
         const id = mockId('draft');
-        mockDrafts.set(id, { id, to, subject, body });
+        mockDrafts.set(id, { id, to, cc, bcc, subject, body, threadId });
         return { success: true, output: `Mock draft created: ${id}`, details: { draftId: id, to, subject } };
       }
       const auth = googleAuthFromSecrets(secrets);
@@ -144,7 +149,7 @@ export const googleGmailTools: ConnectionToolDefinition[] = [
       return googleResult(async () => {
         const created = await googleApiFetch('gmail', `${GMAIL}/drafts`, auth.accessToken!, {
           method: 'POST',
-          body: JSON.stringify({ message: { raw: buildRawMessage(to, subject, body) } }),
+          body: JSON.stringify({ message: { raw: buildRawMessage(to, subject, body, { cc, bcc }), ...(threadId ? { threadId } : {}) } }),
         }) as { id?: string; message?: { id?: string } };
         // Read-back: confirm the draft exists.
         const draftId = String(created.id ?? '');
@@ -166,8 +171,11 @@ export const googleGmailTools: ConnectionToolDefinition[] = [
     async run(args, secrets) {
       const draftId = String(args.draftId ?? args.draft_id ?? '');
       const to = String(args.to ?? '');
+      const cc = String(args.cc ?? '');
+      const bcc = String(args.bcc ?? '');
       const subject = String(args.subject ?? '');
       const body = String(args.body ?? '');
+      const threadId = String(args.threadId ?? args.thread_id ?? '');
       if (!draftId && !to) return { success: false, output: '', error: 'missing_draft_or_recipient' };
       if (isMock(args)) {
         if (draftId) {
@@ -178,7 +186,7 @@ export const googleGmailTools: ConnectionToolDefinition[] = [
           return { success: true, output: `Mock sent draft ${draftId}`, details: { messageId: d.id, verifiedInSent: true } };
         }
         const id = mockId('sent');
-        mockSent.set(id, { id, to, subject, body });
+        mockSent.set(id, { id, to, cc, bcc, subject, body, threadId });
         return { success: true, output: `Mock sent message ${id}`, details: { messageId: id, verifiedInSent: true } };
       }
       const auth = googleAuthFromSecrets(secrets);
@@ -193,7 +201,7 @@ export const googleGmailTools: ConnectionToolDefinition[] = [
         } else {
           sent = await googleApiFetch('gmail', `${GMAIL}/messages/send`, auth.accessToken!, {
             method: 'POST',
-            body: JSON.stringify({ raw: buildRawMessage(to, subject, body) }),
+            body: JSON.stringify({ raw: buildRawMessage(to, subject, body, { cc, bcc }), ...(threadId ? { threadId } : {}) }),
           }) as { id?: string };
         }
         // Read-back: the sent message must carry the SENT label.

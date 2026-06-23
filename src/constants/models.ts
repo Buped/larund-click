@@ -12,6 +12,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   'openai/gpt-4.1':               { input: 2.00,  output: 8.00  },
   'qwen/qwen3-vl-235b-a22b-instruct': { input: 0.20, output: 0.88 },
   'qwen/qwen3-vl-32b-instruct':    { input: 0.20,  output: 0.60  },
+  'perplexity/sonar-pro-search':   { input: 3.00,  output: 15.00 },
 };
 
 export const MARKUP = 1.2;

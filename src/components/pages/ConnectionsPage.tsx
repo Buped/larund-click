@@ -128,8 +128,8 @@ const MCP_STATE_LABEL: Record<McpProviderState, { text: string; color: string }>
   error: { text: 'Error', color: 'var(--danger)' },
 };
 
-function McpConnectCard({ providerId, name, defaultUrl, projectId, onChanged }: { providerId: string; name: string; defaultUrl?: string; projectId?: string | null; onChanged: () => void }) {
-  const ctx = { userId: 'local', workspaceId: projectId ?? undefined };
+function McpConnectCard({ providerId, name, defaultUrl, userId, projectId, onChanged }: { providerId: string; name: string; defaultUrl?: string; userId: string; projectId?: string | null; onChanged: () => void }) {
+  const ctx = { userId, workspaceId: projectId ?? undefined };
   const [url, setUrl] = useState(defaultUrl ?? '');
   const [state, setState] = useState<McpProviderState>('not_configured');
   const [serverId, setServerId] = useState<string | undefined>();
@@ -188,7 +188,7 @@ function McpConnectCard({ providerId, name, defaultUrl, projectId, onChanged }: 
 
 // ── Setup modal: developer setup (app creds) + user connection ─────────────────
 
-function SetupModal({ providerId, provider, name, isAdmin, projectId, onClose, onSaved }: { providerId: string; provider: ResolvedCatalogProvider; name: string; isAdmin: boolean; projectId?: string | null; onClose: () => void; onSaved: () => void }) {
+function SetupModal({ providerId, provider, name, userId, isAdmin, projectId, onClose, onSaved }: { providerId: string; provider: ResolvedCatalogProvider; name: string; userId: string; isAdmin: boolean; projectId?: string | null; onClose: () => void; onSaved: () => void }) {
   const schema = envSchemaForProvider(providerId);
   const auth = getProviderAuthConfig(providerId);
   const devReady = isDeveloperSetupReady(providerId);
@@ -204,7 +204,7 @@ function SetupModal({ providerId, provider, name, isAdmin, projectId, onClose, o
   const [showDevSetup, setShowDevSetup] = useState(!devReady);
   const [connecting, setConnecting] = useState(false);
   const [status, setStatus] = useState('');
-  const accounts = listConnectedAccountsForProvider(providerId);
+  const accounts = listConnectedAccountsForProvider(providerId, { userId });
 
   async function saveAppCreds() {
     const entries = Object.entries(appValues).filter(([, v]) => v.trim());
@@ -219,7 +219,7 @@ function SetupModal({ providerId, provider, name, isAdmin, projectId, onClose, o
     setConnecting(true);
     setStatus('Opening your browser to sign in…');
     try {
-      const account = await beginOAuthConnect(providerId, { userId: 'local' }, { accountLabel: label.trim() || undefined });
+      const account = await beginOAuthConnect(providerId, { userId }, { accountLabel: label.trim() || undefined });
       setLabel('');
       setStatus(`Connected ${account.accountLabel}. You can close this.`);
       onSaved();
@@ -239,7 +239,7 @@ function SetupModal({ providerId, provider, name, isAdmin, projectId, onClose, o
   async function connectApiKey() {
     if (!apiKey.trim()) { setStatus('Enter your API key to connect.'); return; }
     await createConnectedAccount({
-      ctx: { userId: 'local' },
+      ctx: { userId },
       providerId,
       accountLabel: label.trim() || `${name} account`,
       authType: auth.authMode === 'pat_user_entered' ? 'pat' : 'api_key',
@@ -261,7 +261,7 @@ function SetupModal({ providerId, provider, name, isAdmin, projectId, onClose, o
     const hub = getProvider(providerId);
     const testTool = hub?.tools.find((t) => t.name.endsWith('.test_connection'));
     if (!testTool) { setStatus('No provider-specific test is implemented yet.'); return; }
-    const result = await createConnectionRegistry().call(providerId, testTool.name, {});
+    const result = await createConnectionRegistry(userId).call(providerId, testTool.name, {});
     // Prefer the tool's own output: per-sub-service probes (e.g. Google Workspace)
     // report a green/red breakdown there even when the overall result is a failure.
     setStatus(result.output || (result.success ? `Connection test passed for ${account.accountLabel}.` : `Test failed: ${result.error ?? 'unknown error'}`));
@@ -330,7 +330,7 @@ function SetupModal({ providerId, provider, name, isAdmin, projectId, onClose, o
 
         {/* One-click MCP connect for any provider that supports a remote MCP server */}
         {provider.supportsMcp && (
-          <McpConnectCard providerId={provider.id} name={provider.name} defaultUrl={defaultMcpUrl(provider)} projectId={projectId} onChanged={onSaved} />
+          <McpConnectCard providerId={provider.id} name={provider.name} defaultUrl={defaultMcpUrl(provider)} userId={userId} projectId={projectId} onChanged={onSaved} />
         )}
 
         {/* Developer setup (app-level OAuth creds) — only when missing or in Developer Mode */}
@@ -376,7 +376,7 @@ function SetupModal({ providerId, provider, name, isAdmin, projectId, onClose, o
 
 // ── Detail ────────────────────────────────────────────────────────────────────
 
-function ProviderDetail({ provider, isAdmin, projectId, onBack, onChanged }: { provider: ResolvedCatalogProvider; isAdmin: boolean; projectId?: string | null; onBack: () => void; onChanged: () => void }) {
+function ProviderDetail({ provider, userId, isAdmin, projectId, onBack, onChanged }: { provider: ResolvedCatalogProvider; userId: string; isAdmin: boolean; projectId?: string | null; onBack: () => void; onChanged: () => void }) {
   const [setup, setSetup] = useState(false);
   const [, force] = useState(0);
   const st = RUNTIME_LABEL[provider.runtime];
@@ -497,15 +497,16 @@ function ProviderDetail({ provider, isAdmin, projectId, onBack, onChanged }: { p
         )
       )}
 
-      {setup && <SetupModal providerId={setupProviderId} provider={provider} name={provider.parentProviderId ? 'Google Workspace' : provider.name} isAdmin={isAdmin} projectId={projectId} onClose={() => setSetup(false)} onSaved={onChanged} />}
+      {setup && <SetupModal providerId={setupProviderId} provider={provider} name={provider.parentProviderId ? 'Google Workspace' : provider.name} userId={userId} isAdmin={isAdmin} projectId={projectId} onClose={() => setSetup(false)} onSaved={onChanged} />}
     </PageFrame>
   );
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export function ConnectionsPage({ isAdmin, projectId }: { isAdmin: boolean; projectId?: string | null }) {
-  const [base, setBase] = useState<ResolvedCatalogProvider[]>(() => listCatalogProviders());
+export function ConnectionsPage({ userId, isAdmin, projectId }: { userId: string; isAdmin: boolean; projectId?: string | null }) {
+  const ctx = { userId, workspaceId: projectId ?? undefined };
+  const [base, setBase] = useState<ResolvedCatalogProvider[]>(() => listCatalogProviders(ctx));
   // Live runtime overrides for MCP/CLI-backed providers, whose real state lives in
   // the async MCP store and can't be seen by the synchronous catalog resolver.
   const [mcpRuntime, setMcpRuntime] = useState<Record<string, RuntimeConnectionState>>({});
@@ -514,12 +515,11 @@ export function ConnectionsPage({ isAdmin, projectId }: { isAdmin: boolean; proj
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showUpcoming, setShowUpcoming] = useState(false);
 
-  function refresh() { setBase(listCatalogProviders()); void loadMcpRuntime(); }
+  function refresh() { setBase(listCatalogProviders(ctx)); void loadMcpRuntime(); }
 
   async function loadMcpRuntime() {
-    const ctx = { userId: 'local', workspaceId: projectId ?? undefined };
     const overrides: Record<string, RuntimeConnectionState> = {};
-    for (const p of listCatalogProviders()) {
+    for (const p of listCatalogProviders(ctx)) {
       // Only MCP-primary providers; native-first ones keep their registry state so
       // a stale MCP server can never downgrade a working native connection.
       if (p.status !== 'mcp_available') continue;
@@ -533,13 +533,17 @@ export function ConnectionsPage({ isAdmin, projectId }: { isAdmin: boolean; proj
     }
     setMcpRuntime(overrides);
   }
-  useEffect(() => { void loadMcpRuntime(); /* eslint-disable-next-line */ }, [projectId]);
+  useEffect(() => {
+    setBase(listCatalogProviders(ctx));
+    void loadMcpRuntime();
+    /* eslint-disable-next-line */
+  }, [userId, projectId]);
 
   // Overlay live MCP state onto the catalog base.
   const providers = base.map((p) => (mcpRuntime[p.id] ? { ...p, runtime: mcpRuntime[p.id] } : p));
   const selected = providers.find((p) => p.id === selectedId);
   if (selected?.id === 'higgsfield') return <HiggsfieldDetail projectId={projectId} onBack={() => { setSelectedId(null); refresh(); }} />;
-  if (selected) return <ProviderDetail provider={selected} isAdmin={isAdmin} projectId={projectId} onBack={() => { setSelectedId(null); refresh(); }} onChanged={refresh} />;
+  if (selected) return <ProviderDetail provider={selected} userId={userId} isAdmin={isAdmin} projectId={projectId} onBack={() => { setSelectedId(null); refresh(); }} onChanged={refresh} />;
 
   const NEEDS_SETUP: RuntimeConnectionState[] = ['ready_to_connect', 'api_key_required', 'developer_setup_missing', 'needs_reconnect'];
   function matches(p: ResolvedCatalogProvider): boolean {

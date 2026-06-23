@@ -65,6 +65,9 @@ const SCOPES: Record<string, ProviderScope[]> = {
     { scope: 'users.read', description: 'Read the connected user' },
     { scope: 'tweet.write', description: 'Post/reply/delete', write: true },
     { scope: 'offline.access', description: 'Refresh token for long-lived access' },
+    { scope: 'tweet.moderate.write', description: 'Hide/unhide replies when the X app is approved for it', write: true },
+    { scope: 'list.read', description: 'Read X Lists when available' },
+    { scope: 'list.write', description: 'Write X Lists when available', write: true },
   ],
 };
 

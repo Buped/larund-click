@@ -1,5 +1,11 @@
 import { supabase, getUserCredits } from './supabase';
 import { MODEL_PRICING, MARKUP } from '../constants/models';
+import {
+  normalizeSearchCitations,
+  type SearchCitation,
+  type SearchContextSize,
+  type SearchMode,
+} from './search-citations';
 
 const OPENROUTER_KEY = import.meta.env.VITE_OPENROUTER_API_KEY as string | undefined;
 
@@ -32,6 +38,17 @@ export interface UsageResult {
   outputTokens: number;
   costUsd: number;
   model: string;
+  searchMode?: SearchMode;
+  searchCostUsd?: number;
+  citations?: SearchCitation[];
+}
+
+export interface OpenRouterWebSearchOptions {
+  mode: SearchMode;
+  contextSize?: SearchContextSize;
+  maxResults?: number;
+  maxTotalResults?: number;
+  messageId?: string;
 }
 
 function estimateInputChars(messages: ChatMessage[]): number {
@@ -50,6 +67,7 @@ export async function callOpenRouter(
   onError: (error: string) => void,
   serviceTier?: string,
   signal?: AbortSignal,
+  webSearch?: OpenRouterWebSearchOptions,
 ): Promise<void> {
   if (!OPENROUTER_KEY || OPENROUTER_KEY === 'your_openrouter_key_here') {
     onError('OpenRouter API key not configured');
@@ -71,14 +89,28 @@ export async function callOpenRouter(
   // stream_options.include_usage instructs OpenRouter to attach real token
   // counts to the final SSE chunk, which we use for the single accurate
   // deduction at the end.
+  const billedModel = webSearch?.mode === 'deep' ? 'perplexity/sonar-pro-search' : openrouterId;
   const body: Record<string, unknown> = {
-    model: openrouterId,
+    model: billedModel,
     messages,
     stream: true,
     stream_options: { include_usage: true },
     // No max_tokens — the AI runs until it finishes or credits run out
   };
-  if (serviceTier) body.service_tier = serviceTier;
+  if (serviceTier && webSearch?.mode !== 'deep') body.service_tier = serviceTier;
+  if (webSearch?.mode === 'fast') {
+    body.tools = [
+      {
+        type: 'openrouter:web_search',
+        parameters: {
+          engine: 'auto',
+          search_context_size: webSearch.contextSize ?? 'medium',
+          max_results: webSearch.maxResults ?? 5,
+          max_total_results: webSearch.maxTotalResults ?? 10,
+        },
+      },
+    ];
+  }
 
   let res: Response;
   try {
@@ -105,7 +137,7 @@ export async function callOpenRouter(
     return;
   }
 
-  const pricing = MODEL_PRICING[openrouterId] ?? { input: 0, output: 0 };
+  const pricing = MODEL_PRICING[billedModel] ?? { input: 0, output: 0 };
 
   // Kept for the fallback estimate in case OpenRouter doesn't send usage data
   const inputChars = messages.reduce((sum, m) => {
@@ -117,6 +149,7 @@ export async function callOpenRouter(
   // Real token counts delivered by OpenRouter in the final SSE chunk
   let finalInputTokens  = 0;
   let finalOutputTokens = 0;
+  const rawAnnotations: unknown[] = [];
 
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
@@ -157,6 +190,10 @@ export async function callOpenRouter(
             finalInputTokens  = parsed.usage.prompt_tokens     ?? 0;
             finalOutputTokens = parsed.usage.completion_tokens ?? 0;
           }
+          const annotations = parsed.choices?.[0]?.delta?.annotations
+            ?? parsed.choices?.[0]?.message?.annotations
+            ?? parsed.annotations;
+          if (Array.isArray(annotations)) rawAnnotations.push(...annotations);
         } catch { /* malformed SSE chunk — skip */ }
       }
 
@@ -195,7 +232,10 @@ export async function callOpenRouter(
     ? finalOutputTokens
     : Math.ceil(accumulatedOutputChars / CHARS_PER_TOKEN);
 
-  const costUsd = ((usedInputTok * pricing.input + usedOutputTok * pricing.output) / 1_000_000) * MARKUP;
+  const tokenCostUsd = ((usedInputTok * pricing.input + usedOutputTok * pricing.output) / 1_000_000) * MARKUP;
+  const citations = normalizeSearchCitations(rawAnnotations, webSearch?.messageId);
+  const searchCostUsd = estimateSearchCostUsd(webSearch?.mode ?? 'none', citations.length > 0);
+  const costUsd = tokenCostUsd + searchCostUsd;
 
   if (costUsd > 0) {
     const { error } = await supabase.rpc('deduct_uc_credits', {
@@ -213,7 +253,10 @@ export async function callOpenRouter(
     inputTokens: usedInputTok,
     outputTokens: usedOutputTok,
     costUsd,
-    model: openrouterId,
+    model: billedModel,
+    searchMode: webSearch?.mode ?? 'none',
+    searchCostUsd,
+    citations,
   });
 }
 
@@ -425,4 +468,10 @@ export async function callOpenRouterJson(
       model: modelId,
     },
   };
+}
+
+function estimateSearchCostUsd(mode: SearchMode, hasCitations: boolean): number {
+  if (mode === 'deep') return 0.018 * MARKUP;
+  if (mode === 'fast' && hasCitations) return 0.005 * MARKUP;
+  return 0;
 }

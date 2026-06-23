@@ -357,7 +357,7 @@ export async function runControlLoop(
 
   // Read attached references into model-ready content (text + image blocks).
   // Shared with the normal chat path via ../references/ingest.
-  const ingest = resolvedReferences.documentReferences.length > 0 ? await ingestReferences(resolvedReferences.documentReferences, task) : null;
+  const ingest = resolvedReferences.documentReferences.length > 0 ? await ingestReferences(resolvedReferences.documentReferences, task, { userId }) : null;
   if (ingest) {
     emitStep({
       id: nowStepId('refs-plan'),

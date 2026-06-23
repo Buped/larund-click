@@ -9,6 +9,8 @@ import { listCatalogProviders } from '../connections/catalog';
 import { listMcpServers, listMcpTools } from '../mcp/store';
 import { listMemory } from '../memory/store';
 import { listWorkflowTemplates } from '../workflows/templates/store';
+import { listRecentXReferences } from '../connections/providers/x/references';
+import { listRecentSearchCitations } from '../search-citations';
 
 export async function listMentionResources(opts: {
   userId: string;
@@ -79,6 +81,33 @@ export async function listMentionResources(opts: {
   if (want('workflow')) {
     const wfs = await listWorkflowTemplates({ userId: opts.userId, workspaceId: opts.workspaceId }).catch(() => []);
     for (const w of wfs) out.push({ kind: 'workflow', refId: w.id, label: w.name, detail: `${w.steps.length} steps`, available: true, metadata: { source: w.source } });
+  }
+
+  if (want('web_source')) {
+    for (const source of listRecentSearchCitations(opts.userId)) {
+      out.push({
+        kind: 'web_source',
+        refId: source.url,
+        label: source.title || source.domain,
+        detail: source.domain,
+        available: true,
+        metadata: { source },
+      });
+    }
+  }
+
+  if (want('x_post') || want('x_user')) {
+    for (const item of listRecentXReferences(opts.userId)) {
+      if (!want(item.kind)) continue;
+      out.push({
+        kind: item.kind,
+        refId: item.refId,
+        label: item.label,
+        detail: item.detail,
+        available: true,
+        metadata: { ...item.metadata, url: item.url, cachedAt: item.cachedAt },
+      });
+    }
   }
 
   return out;

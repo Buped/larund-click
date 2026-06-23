@@ -1,12 +1,28 @@
 import { Icon } from '../icons';
-import type { DocumentReference, DocumentReferenceKind } from '../../lib/references/types';
+import type { DocumentReference } from '../../lib/references/types';
 
 /**
  * Per-kind colour palette so an attached reference reads clearly as a live
  * pointer to a real file/folder, visually distinct from surrounding chips.
  */
-function paletteFor(kind: DocumentReferenceKind): { icon: string; fg: string; bg: string; border: string } {
-  switch (kind) {
+function paletteFor(ref: Pick<DocumentReference, 'kind' | 'mimeType'>): { icon: string; fg: string; bg: string; border: string } {
+  if (ref.mimeType === 'application/pdf') {
+    return { icon: 'fileText', fg: '#EA4335', bg: 'rgba(234,67,53,.13)', border: 'rgba(234,67,53,.42)' };
+  }
+  if (ref.mimeType?.startsWith('image/')) {
+    return { icon: 'image', fg: '#A142F4', bg: 'rgba(161,66,244,.13)', border: 'rgba(161,66,244,.42)' };
+  }
+  switch (ref.kind) {
+    case 'google_drive_folder':
+      return { icon: 'folder', fg: '#34A853', bg: 'rgba(52,168,83,.13)', border: 'rgba(52,168,83,.42)' };
+    case 'google_doc':
+      return { icon: 'fileText', fg: '#4285F4', bg: 'rgba(66,133,244,.13)', border: 'rgba(66,133,244,.42)' };
+    case 'google_sheet':
+      return { icon: 'fileSpreadsheet', fg: '#34A853', bg: 'rgba(52,168,83,.13)', border: 'rgba(52,168,83,.42)' };
+    case 'google_slide':
+      return { icon: 'presentation', fg: '#F9AB00', bg: 'rgba(249,171,0,.15)', border: 'rgba(249,171,0,.45)' };
+    case 'google_drive_file':
+      return { icon: 'externalLink', fg: '#34A853', bg: 'rgba(52,168,83,.13)', border: 'rgba(52,168,83,.42)' };
     case 'folder':
       // amber — folders
       return { icon: 'folder', fg: '#e0a84e', bg: 'rgba(224,168,78,.13)', border: 'rgba(224,168,78,.4)' };
@@ -23,10 +39,13 @@ export function ReferenceChip({ refItem, onRemove }: {
   refItem: DocumentReference;
   onRemove?: () => void;
 }) {
-  const palette = paletteFor(refItem.kind);
+  const palette = paletteFor(refItem);
   return (
     <span
-      title={refItem.path ?? refItem.url ?? refItem.label}
+      title={refItem.webViewLink ?? refItem.path ?? refItem.url ?? refItem.label}
+      onClick={() => {
+        if (!onRemove && refItem.webViewLink) window.open(refItem.webViewLink, '_blank');
+      }}
       style={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -40,6 +59,7 @@ export function ReferenceChip({ refItem, onRemove }: {
         color: palette.fg,
         fontSize: 12,
         fontWeight: 500,
+        cursor: !onRemove && refItem.webViewLink ? 'pointer' : 'default',
       }}
     >
       <Icon name={palette.icon} size={13} stroke={1.8} style={{ color: palette.fg }} />

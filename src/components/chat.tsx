@@ -6,6 +6,16 @@ import { Sidebar } from './sidebar';
 import { MODELS } from '../constants/models';
 import { getMessages, addMessage, createSession, updateMessage, touchSession, getSettings, setAutoSessionTitle } from '../lib/database';
 import { callOpenRouter, type ChatMessage } from '../lib/openrouter';
+import {
+  injectCitationMarkers,
+  isDeepResearchRequest,
+  parseSearchCitations,
+  rememberSearchCitations,
+  shouldUseWebSearch,
+  type SearchCitation,
+  type SearchMode,
+  type WebSearchPreference,
+} from '../lib/search-citations';
 import { buildChatSystemPrompt } from '../lib/assistant/persona';
 import { generateChatTitle } from '../lib/assistant/title';
 import { runMemoryExtraction } from '../lib/memory/pipeline';
@@ -229,10 +239,12 @@ function UserMsg({ children }: { children: React.ReactNode }) {
   );
 }
 
-function AgentMsg({ children, rich, streaming }: {
+function AgentMsg({ children, rich, streaming, userId, citations = [] }: {
   children?: React.ReactNode;
   rich?: string;
   streaming?: boolean;
+  userId?: string;
+  citations?: SearchCitation[];
 }) {
   return (
     <div className="msg-ai-row">
@@ -242,7 +254,7 @@ function AgentMsg({ children, rich, streaming }: {
       <div className="msg-ai-body">
         {rich != null ? (
           <>
-            <RichMessage content={rich} />
+            <RichMessage content={rich} userId={userId} citations={citations} />
             {streaming && <span className="streaming-cursor" />}
           </>
         ) : children}
@@ -676,12 +688,13 @@ interface AgentMsgContentProps {
   onPreviewArtifact?: (artifact: ChatArtifactAttachment) => void;
   onArtifactsChanged?: () => void;
   selectedArtifactId?: string;
+  userId?: string;
 }
 
 function AgentMsgContent({
   steps, status,
   askQuestion, askAnswer, onAskAnswerChange, onAskSubmit,
-  onAskQuickAnswer, onStop, finalText, isError, artifacts = [], onPreviewArtifact, onArtifactsChanged, selectedArtifactId,
+  onAskQuickAnswer, onStop, finalText, isError, artifacts = [], onPreviewArtifact, onArtifactsChanged, selectedArtifactId, userId,
 }: AgentMsgContentProps) {
   // Collapsed by default: the action timeline is evidence, not the headline. The
   // human-readable narration carries the story; details expand on demand.
@@ -858,7 +871,7 @@ function AgentMsgContent({
         }}>
           {isError
             ? <span style={{ color: 'var(--danger)', fontSize: 13.5, lineHeight: 1.65 }}>{finalText}</span>
-            : <RichMessage content={finalText} />
+            : <RichMessage content={finalText} userId={userId} />
           }
         </div>
       )}
@@ -894,6 +907,8 @@ type Message = {
   agent_ask_question?: string | null;
   references_json?: string | null;
   artifacts_json?: string | null;
+  search_citations_json?: string | null;
+  search_mode?: SearchMode | null;
   _loading?: boolean;
   _usage?: string;
   _error?: boolean;
@@ -905,6 +920,8 @@ type Message = {
   _agentAskQuestion?: string | null;
   _references?: ReferencedContext[];
   _artifacts?: ChatArtifactAttachment[];
+  _searchCitations?: SearchCitation[];
+  _searchMode?: SearchMode;
   // Subtle routing label shown after send ("Answering" / "Needs confirmation").
   _intentLabel?: string;
 };
@@ -965,6 +982,8 @@ function hydrateMessage(row: any): Message {
     _error: Boolean(row._error) || (isAgent && row.agent_status === 'error'),
     _references: references,
     _artifacts: parseChatArtifacts(row.artifacts_json),
+    _searchCitations: parseSearchCitations(row.search_citations_json),
+    _searchMode: (row.search_mode as SearchMode | null) ?? 'none',
   };
 }
 
@@ -997,6 +1016,8 @@ export function ChatScreen({
   const [references,        setReferences       ] = useState<ReferencedContext[]>([]);
   const [referencePickerOpen, setReferencePickerOpen] = useState(false);
   const [previewState,      setPreviewState     ] = useState<ArtifactPreviewState>({ isOpen: false, mode: 'preview' });
+  const [webSearchPreference, setWebSearchPreference] = useState<WebSearchPreference>('auto');
+  const [deepResearch, setDeepResearch] = useState(false);
 
   const editorRef     = useRef<RichMentionEditorHandle>(null);
   const fileRef       = useRef<HTMLInputElement>(null);
@@ -1376,6 +1397,24 @@ export function ChatScreen({
     // Clean message for display/storage: only what the user wrote. Attached
     // references are shown as chips; the model gets their contents via ingest.
     const messageText = text || 'Use the referenced input(s).';
+    const wantsDeepResearch = deepResearch || isDeepResearchRequest(messageText);
+    const wantsFastWeb = webSearchPreference === 'always'
+      || (webSearchPreference === 'auto' && shouldUseWebSearch(messageText));
+    const searchMode: SearchMode = wantsDeepResearch
+      ? 'deep'
+      : webSearchPreference === 'never'
+        ? 'none'
+        : wantsFastWeb ? 'fast' : 'none';
+
+    if (searchMode === 'deep') {
+      const estimatedUsd = 0.03;
+      if (credits && credits.uc_balance < estimatedUsd) {
+        alert('Not enough UC for deep research. Please top up before starting this search.');
+        return;
+      }
+      const ok = window.confirm('Deep research uses Perplexity Sonar Pro Search and costs more than normal chat. Estimated minimum: about 0.03 UC. Continue?');
+      if (!ok) return;
+    }
     // First exchange in this session → generate a semantic title afterwards.
     const isFirstExchange = messages.length === 0;
 
@@ -1468,7 +1507,9 @@ export function ChatScreen({
     setMessages(prev => [...prev, {
       id: asstMsgId, session_id: sessionId!, role: 'assistant',
       content: '', created_at: new Date().toISOString(), streaming: true,
-      _intentLabel: clarify ? 'Needs confirmation' : 'Answering',
+      _intentLabel: searchMode === 'deep' ? 'Deep research' : searchMode === 'fast' ? 'Searching web' : clarify ? 'Needs confirmation' : 'Answering',
+      _searchMode: searchMode,
+      _searchCitations: [],
     }]);
     setRunningTask({ kind: 'chat', assistantMessageId: asstMsgId, sessionId: sessionId! });
 
@@ -1496,6 +1537,13 @@ export function ChatScreen({
     // Send the actual contents of attached references (text + images) so the
     // model can analyze them — not just their filenames. Stored/displayed
     // message stays plain `messageText`; only what we send to the model differs.
+    if (searchMode !== 'none') {
+      history.unshift({
+        role: 'system',
+        content: 'Use live web search for current facts. Paraphrase sources instead of copying long passages. Ground factual claims in the web results and preserve source citations when the API provides them. If search fails, say that live search was unavailable before answering from general knowledge.',
+      });
+    }
+
     let userContent: ChatMessage['content'] = messageText;
     if (taskReferences.length > 0) {
       const resolved = await resolveReferencedContext({
@@ -1506,7 +1554,7 @@ export function ChatScreen({
       if (resolved.blockers.length > 0) {
         throw new Error(`Referenced context is not ready:\n${resolved.blockers.map((b) => `- ${b}`).join('\n')}`);
       }
-      const ingest = await ingestReferences(resolved.documentReferences, text);
+      const ingest = await ingestReferences(resolved.documentReferences, text, { userId });
       const textBlocks = [...(resolved.promptBlock ? [resolved.promptBlock] : []), ...ingest.textBlocks];
       if (textBlocks.length > 0 || ingest.imageBlocks.length > 0) {
         const textPart = [messageText, ...textBlocks].join('\n\n');
@@ -1534,17 +1582,26 @@ export function ChatScreen({
       },
       async (usage) => {
         const totalTok = usage.inputTokens + usage.outputTokens;
-        const usageStr = `${modelDef.name} · ${totalTok.toLocaleString()} tok · $${usage.costUsd.toFixed(5)}`;
+        const searchLabel = usage.searchMode && usage.searchMode !== 'none'
+          ? ` · ${usage.searchMode === 'deep' ? 'deep web' : 'web'}`
+          : '';
+        const usageStr = `${usage.model === 'perplexity/sonar-pro-search' ? 'Deep research' : modelDef.name}${searchLabel} · ${totalTok.toLocaleString()} tok · $${usage.costUsd.toFixed(5)}`;
+        const citations = usage.citations ?? [];
+        rememberSearchCitations(userId, citations);
+        const citedContent = injectCitationMarkers(fullContent, citations);
         setMessages(prev => prev.map(m =>
-          m.id === asstMsgId ? { ...m, streaming: false, _usage: usageStr } : m,
+          m.id === asstMsgId ? { ...m, content: citedContent, streaming: false, _usage: usageStr, _searchCitations: citations, _searchMode: usage.searchMode ?? searchMode } : m,
         ));
-        await addMessage(asstMsgId, sessionId!, 'assistant', fullContent).catch(err =>
+        await addMessage(asstMsgId, sessionId!, 'assistant', citedContent, {
+          search_citations_json: JSON.stringify(citations),
+          search_mode: usage.searchMode ?? searchMode,
+        }).catch(err =>
           console.warn('Failed to save assistant message:', err),
         );
         setSending(false);
         setRunningTask(prev => prev?.assistantMessageId === asstMsgId ? null : prev);
         onCreditsRefresh?.();
-        if (isFirstExchange) void maybeGenerateTitle(sessionId!, messageText, fullContent);
+        if (isFirstExchange) void maybeGenerateTitle(sessionId!, messageText, citedContent);
         void runMemoryExtraction({
           userId: userId!,
           workspaceId: projectId ?? undefined,
@@ -1562,6 +1619,13 @@ export function ChatScreen({
       },
       serviceTier,
       controller.signal,
+      searchMode === 'none' ? undefined : {
+        mode: searchMode,
+        contextSize: 'medium',
+        maxResults: searchMode === 'deep' ? 10 : 5,
+        maxTotalResults: searchMode === 'deep' ? 25 : 10,
+        messageId: asstMsgId,
+      },
     );
     if (controller.signal.aborted) {
       const stoppedContent = fullContent.trim() ? fullContent : 'Stopped.';
@@ -1665,6 +1729,7 @@ export function ChatScreen({
                               selectedArtifactId={previewState.selectedArtifactId}
                               onPreviewArtifact={previewArtifact}
                               onArtifactsChanged={refreshCurrentMessages}
+                              userId={userId ?? undefined}
                             />
                           </div>
                         </div>
@@ -1684,6 +1749,8 @@ export function ChatScreen({
                       <AgentMsg
                         rich={msg._error ? undefined : msg.content}
                         streaming={msg.streaming}
+                        userId={userId ?? undefined}
+                        citations={msg._searchCitations ?? []}
                       >
                         {msg._error && (
                           <span style={{ color: 'var(--danger)', fontSize: 13.5 }}>{msg.content}</span>
@@ -1779,11 +1846,34 @@ export function ChatScreen({
                 onPicked={handleReferencesPicked}
                 onClose={() => setReferencePickerOpen(false)}
                 triggerRef={referencePickerTriggerRef}
+                userId={userId ?? ''}
               />
 
               {/* Toolbar */}
               <div className="chat-toolbar">
                 <InlineModelPicker model={model} setModel={setModel} />
+
+                <button
+                  className={`toolbar-btn${webSearchPreference !== 'auto' ? ' toolbar-btn--active' : ''}`}
+                  onClick={() => setWebSearchPreference((value) => value === 'auto' ? 'always' : value === 'always' ? 'never' : 'auto')}
+                  title="Web search mode: Auto / Always / Never"
+                  style={{ width: 'auto', padding: '0 8px', gap: 5, display: 'inline-flex' }}
+                >
+                  <Icon name="globe" size={14} stroke={1.5} />
+                  <span style={{ fontSize: 11.5, fontWeight: 650 }}>
+                    {webSearchPreference === 'auto' ? 'Auto' : webSearchPreference === 'always' ? 'Web' : 'No web'}
+                  </span>
+                </button>
+
+                <button
+                  className={`toolbar-btn${deepResearch ? ' toolbar-btn--active' : ''}`}
+                  onClick={() => setDeepResearch((value) => !value)}
+                  title="Deep research with Perplexity Sonar Pro Search"
+                  style={{ width: 'auto', padding: '0 8px', gap: 5, display: 'inline-flex' }}
+                >
+                  <Icon name="search" size={14} stroke={1.5} />
+                  <span style={{ fontSize: 11.5, fontWeight: 650 }}>Deep</span>
+                </button>
 
                 <button
                   ref={referencePickerTriggerRef}

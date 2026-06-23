@@ -150,12 +150,12 @@ const RAW_PROVIDER_ENV: Record<string, RawSchema> = {
     notes: 'Discord may also run bot-only in developer mode via DEV_DISCORD_BOT_TOKEN.',
   }),
   x: def('x', 'oauth2_authorization_code_pkce', ['X_CLIENT_ID'], {
-    appOptional: ['X_CLIENT_SECRET'],
+    appOptional: ['X_CLIENT_SECRET', 'X_APP_BEARER'],
     supportsRefreshToken: true,
     devShortcut: ['DEV_X_BEARER_TOKEN', 'DEV_X_WRITE_ACCESS_TOKEN', 'DEV_X_WRITE_ACCESS_TOKEN_SECRET'],
     legacyUserTokenKeys: ['X_BEARER_TOKEN', 'X_WRITE_ACCESS_TOKEN', 'X_WRITE_ACCESS_TOKEN_SECRET', 'X_API_KEY', 'X_API_SECRET'],
     active: true,
-    notes: 'OAuth2 PKCE. Reading/posting on a user account requires their connected tokens. DEV_X_BEARER_TOKEN is app-only read shortcut for development.',
+    notes: 'OAuth2 PKCE. User tokens live in ConnectedAccount storage. X_APP_BEARER enables app-only read/search for users who have not connected X yet; DEV_X_BEARER_TOKEN is a development shortcut.',
   }),
   'microsoft-365': def('microsoft-365', 'oauth2_authorization_code_confidential', ['MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_TENANT_ID'], {
     supportsRefreshToken: true,
@@ -238,7 +238,7 @@ export const APP_ENV_SECTIONS: Array<{ title: string; keys: string[] }> = [
   { title: 'GitHub OAuth app', keys: ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET'] },
   { title: 'Notion OAuth app', keys: ['NOTION_CLIENT_ID', 'NOTION_CLIENT_SECRET'] },
   { title: 'Slack OAuth app', keys: ['SLACK_CLIENT_ID', 'SLACK_CLIENT_SECRET', 'SLACK_SIGNING_SECRET'] },
-  { title: 'X / Twitter OAuth app', keys: ['X_CLIENT_ID', 'X_CLIENT_SECRET'] },
+  { title: 'X / Twitter OAuth app', keys: ['X_CLIENT_ID', 'X_CLIENT_SECRET', 'X_APP_BEARER'] },
   { title: 'Meta app', keys: ['META_APP_ID', 'META_APP_SECRET'] },
   { title: 'Microsoft OAuth app', keys: ['MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_TENANT_ID'] },
   { title: 'Discord app', keys: ['DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET'] },

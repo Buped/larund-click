@@ -3,8 +3,10 @@ export type DocumentReferenceKind =
   | 'folder'
   | 'url'
   | 'google_drive_file'
+  | 'google_drive_folder'
   | 'google_doc'
-  | 'google_sheet';
+  | 'google_sheet'
+  | 'google_slide';
 
 export type DocumentReferenceSource = 'user_reference' | 'tool_result' | 'connection';
 
@@ -16,6 +18,11 @@ export interface DocumentReference {
   url?: string;
   mimeType?: string;
   source: DocumentReferenceSource;
+  driveFileId?: string;
+  webViewLink?: string;
+  lastModified?: string;
+  owner?: string;
+  resolvedContentSummary?: string;
 }
 
 export interface ChatInputPayload {

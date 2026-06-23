@@ -14,6 +14,7 @@ import { envSchemaForProvider } from './env/schema';
 import { getProviderSecret, isDeveloperSetupReady, devPatShortcutsEnabled, getMissingAppCredentials } from './env/resolve';
 import {
   getConnectedAccount,
+  listConnectedAccountsForProvider,
   getTokenSecretForProviderCall,
   refreshProviderTokenIfNeeded,
   DEFAULT_CONTEXT,
@@ -23,7 +24,7 @@ import {
 import { oauthEndpoints, refreshOAuthTokens } from './oauth/flow';
 import { loadUserProviderSecrets, credentialFieldsForAccount } from './userCredentials';
 
-export type CredentialSource = 'connected_account' | 'dev_shortcut' | 'mcp' | 'none';
+export type CredentialSource = 'connected_account' | 'app_only' | 'dev_shortcut' | 'mcp' | 'none';
 
 export type CredentialBlocker =
   | 'developer_setup_missing'
@@ -79,6 +80,7 @@ function appCredentials(providerId: string): Record<string, string> {
 export async function resolveRuntimeCredentials(
   providerId: string,
   ctx: ConnectionContext = DEFAULT_CONTEXT,
+  options: { connectedAccountId?: string; appOnlyRead?: boolean } = {},
 ): Promise<ResolvedCredentials> {
   const schema = envSchemaForProvider(providerId);
   const appCreds = appCredentials(providerId);
@@ -91,8 +93,18 @@ export async function resolveRuntimeCredentials(
       : { ok: false, source: 'none', secrets: {}, blocker: 'developer_setup_missing', message: `Configure ${schema.appRequired.join(', ')} (MCP server URL) first.` };
   }
 
-  // 1) Connected account for the current user.
-  const account = getConnectedAccount(providerId, ctx);
+  // 1) Connected account for the current user. Older local-first builds stored
+  // accounts under the synthetic "local" user; keep those usable until startup
+  // migration rewrites the metadata to the real auth user.
+  const accountsInContext = listConnectedAccountsForProvider(providerId, ctx);
+  const localFallbackAccounts = ctx.userId !== DEFAULT_CONTEXT.userId
+    ? listConnectedAccountsForProvider(providerId, DEFAULT_CONTEXT)
+    : [];
+  const account = (options.connectedAccountId
+    ? [...accountsInContext, ...localFallbackAccounts].find((a) => a.id === options.connectedAccountId)
+    : undefined)
+    ?? getConnectedAccount(providerId, ctx)
+    ?? (ctx.userId !== DEFAULT_CONTEXT.userId ? getConnectedAccount(providerId, DEFAULT_CONTEXT) : undefined);
   if (account) {
     if (account.status !== 'connected') {
       // Surface the precise reason so Chat/Tasks can offer the right action.
@@ -130,7 +142,29 @@ export async function resolveRuntimeCredentials(
       const secrets = { ...appCreds };
       for (const key of toolTokenKeys(providerId)) secrets[key] = token;
       if (account.externalAccountEmail) secrets.GOOGLE_WORKSPACE_ACCOUNT_EMAIL = account.externalAccountEmail;
+      secrets.LARUND_CONNECTED_ACCOUNT_ID = account.id;
+      secrets.LARUND_CONNECTED_ACCOUNT_COUNT = String([...accountsInContext, ...localFallbackAccounts].filter((a) => a.status === 'connected').length);
       return { ok: true, source: 'connected_account', secrets, account };
+    }
+  }
+
+  // X public search/read may run through Larund's app-only bearer token even
+  // when this user has not connected their own X account. Write/delete/schedule
+  // tools still require a connected-account token.
+  if (providerId === 'x' && options.appOnlyRead) {
+    const appBearer = appCreds.X_APP_BEARER ?? getProviderSecret(providerId, 'X_APP_BEARER');
+    if (appBearer) {
+      return {
+        ok: true,
+        source: 'app_only',
+        secrets: {
+          ...appCreds,
+          X_APP_BEARER: appBearer,
+          X_BEARER_TOKEN: appBearer,
+          LARUND_APP_ONLY_READ: 'true',
+          LARUND_CONNECTED_ACCOUNT_COUNT: String(accountsInContext.filter((a) => a.status === 'connected').length),
+        },
+      };
     }
   }
 

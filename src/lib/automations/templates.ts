@@ -102,4 +102,28 @@ export const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
     suggestedConnectionIds: ['google-calendar'],
     verification: [v('Prep brief file exists', 'file_exists')],
   },
+  {
+    id: 'daily-calendar-summary', name: 'Daily calendar summary', iconProviderId: 'google-workspace',
+    description: 'Every morning, write today\'s agenda and conflicts into the linked chat.',
+    prompt: 'Every morning, use @Google to list today\'s calendar events in time order, flag overlaps and tight gaps, and write a concise agenda summary into this linked chat. Do not create or move events.',
+    suggestedTrigger: { kind: 'schedule', cron: '0 8 * * *', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    suggestedConnectionIds: ['google-workspace'],
+    verification: [v('Calendar events were read', 'connection_read_back')],
+  },
+  {
+    id: 'weekly-calendar-summary', name: 'Weekly calendar summary', iconProviderId: 'google-workspace',
+    description: 'Every Friday, summarize the week\'s meetings, conflicts and follow-ups.',
+    prompt: 'Every Friday afternoon, use @Google to summarize this week\'s calendar events, group them by theme, flag missed or overloaded days, and write the summary into the linked chat.',
+    suggestedTrigger: { kind: 'schedule', cron: '0 16 * * 5', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    suggestedConnectionIds: ['google-workspace'],
+    verification: [v('Calendar events were read', 'connection_read_back')],
+  },
+  {
+    id: 'calendar-meeting-watch', name: 'Calendar meeting watch', iconProviderId: 'google-workspace',
+    description: 'Detect upcoming meetings matching keywords and prepare context.',
+    prompt: 'Watch for upcoming Google Calendar events whose title contains meeting, demo or call. When one is found, prepare a short call-prep note in the linked chat using available Drive and Gmail context. Ask before sending anything externally.',
+    suggestedTrigger: { kind: 'connection_event', providerId: 'google-workspace', eventType: 'calendar_watch', filter: { keywords: ['meeting', 'demo', 'call'] } },
+    suggestedConnectionIds: ['google-workspace'],
+    verification: [v('Calendar event was read', 'connection_read_back')],
+  },
 ];

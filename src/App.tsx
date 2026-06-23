@@ -17,9 +17,11 @@ import { getUserCredits } from './lib/supabase';
 import { initDatabase, adoptOrphanSessions } from './lib/database';
 import { installSqlCoworkerBackend } from './lib/coworker/sql-backend';
 import { restoreAutomationScheduler } from './lib/automations/scheduler';
+import { startXScheduledPostWorker } from './lib/connections/providers/x/scheduled';
 import { configureAutomationQueueProcessor } from './lib/automations/agent-processor';
 import { restoreDailySummaryScheduler } from './lib/memory/daily-summary';
 import { createProject, listProjects, resolveActiveProject, setActiveProjectId as persistActiveProjectId } from './lib/projects/store';
+import { adoptLegacyLocalConnectedAccounts } from './lib/connections/connectedAccounts';
 import type { AuthUser } from './lib/auth';
 import type { UserCredits } from './lib/supabase';
 import type { Project } from './lib/projects/types';
@@ -38,9 +40,11 @@ type ProjectState = {
 
 async function initStores(userId: string): Promise<void> {
   await initDatabase(userId);
+  adoptLegacyLocalConnectedAccounts(userId);
   await installSqlCoworkerBackend();
   configureAutomationQueueProcessor();
   await restoreAutomationScheduler(userId);
+  startXScheduledPostWorker(userId);
   restoreDailySummaryScheduler(userId);
 }
 
@@ -278,7 +282,7 @@ export default function App() {
         {route === 'artifacts'   && <ArtifactsPage />}
         {route === 'skills'      && <SkillsPage userId={uid} projectId={activeProjectId} />}
         {route === 'memory'      && <MemoryPage userId={uid} projectId={activeProjectId} />}
-        {route === 'connections' && <ConnectionsPage projectId={activeProjectId} isAdmin={user?.isAdmin ?? false} />}
+        {route === 'connections' && <ConnectionsPage userId={uid} projectId={activeProjectId} isAdmin={user?.isAdmin ?? false} />}
         {route === 'logins'      && <LoginsPage />}
         {route === 'mcp'         && <McpPage userId={uid} projectId={activeProjectId} />}
       </div>

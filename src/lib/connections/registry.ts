@@ -63,7 +63,8 @@ export function providerRuntimeState(providerId: string, ctx: ConnectionContext 
   if (schema.authMode === 'mcp_url') {
     return isDeveloperSetupReady(providerId) ? 'mcp_available' : 'developer_setup_missing';
   }
-  const account = getConnectedAccount(providerId, ctx);
+  const account = getConnectedAccount(providerId, ctx)
+    ?? (ctx.userId !== DEFAULT_CONTEXT.userId ? getConnectedAccount(providerId, DEFAULT_CONTEXT) : undefined);
   if (account) return account.status === 'connected' ? 'connected' : 'needs_reconnect';
   if (devPatShortcutsEnabled() && schema.devShortcut.some((key) => Boolean(getProviderSecret(providerId, key)))) {
     return 'dev_shortcut_active';
@@ -123,12 +124,26 @@ export function createConnectionRegistry(userId = ''): ConnectionRegistry {
 
       // Resolve user credentials: connected account → dev shortcut → mcp → blocker.
       // The app-level client secret is NEVER used as a user token here.
-      const resolved = await resolveRuntimeCredentials(m.id, ctx);
+      const connectedAccountId = typeof args.connectedAccountId === 'string'
+        ? args.connectedAccountId
+        : typeof args.xAccountId === 'string'
+          ? args.xAccountId
+          : typeof args.x_account_id === 'string'
+            ? args.x_account_id
+            : undefined;
+      const resolved = await resolveRuntimeCredentials(m.id, ctx, {
+        connectedAccountId,
+        appOnlyRead: m.id === 'x' && (def.risk === 'external_read' || def.risk === 'read_only'),
+      });
       if (!resolved.ok && !mockConnectionsAllowed()) {
         return missingAuth(m.name, fq, resolved.message ?? 'Connect your account first.', resolved.blocker);
       }
       try {
-        return await def.run(args, resolved.secrets);
+        return await def.run(args, {
+          ...resolved.secrets,
+          LARUND_USER_ID: ctx.userId,
+          ...(ctx.workspaceId ? { LARUND_WORKSPACE_ID: ctx.workspaceId } : {}),
+        });
       } catch (e) {
         return { success: false, output: '', error: `connection_error: ${String(e)}` };
       }

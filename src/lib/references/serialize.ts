@@ -54,7 +54,7 @@ function normalizeReference(value: unknown): StoredReference | null {
 }
 
 function isMentionKind(kind: unknown): kind is MentionKind {
-  return kind === 'skill' || kind === 'connection' || kind === 'mcp' || kind === 'memory' || kind === 'workflow' || kind === 'file' || kind === 'folder';
+  return kind === 'skill' || kind === 'connection' || kind === 'mcp' || kind === 'memory' || kind === 'workflow' || kind === 'file' || kind === 'folder' || kind === 'drive_file' || kind === 'drive_folder';
 }
 
 function isDocumentReference(value: unknown): value is DocumentReference {
@@ -63,5 +63,5 @@ function isDocumentReference(value: unknown): value is DocumentReference {
   return typeof ref.id === 'string'
     && typeof ref.kind === 'string'
     && typeof ref.label === 'string'
-    && ref.source === 'user_reference';
+    && (ref.source === 'user_reference' || ref.source === 'connection' || ref.source === 'tool_result');
 }

@@ -99,6 +99,8 @@ async function initSchema(db: Database): Promise<void> {
   await ensureColumn(db, 'messages', 'agent_ask_question', 'TEXT DEFAULT NULL');
   await ensureColumn(db, 'messages', 'references_json', 'TEXT DEFAULT NULL');
   await ensureColumn(db, 'messages', 'artifacts_json', 'TEXT DEFAULT NULL');
+  await ensureColumn(db, 'messages', 'search_citations_json', 'TEXT DEFAULT NULL');
+  await ensureColumn(db, 'messages', 'search_mode', "TEXT DEFAULT 'none'");
 
   await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_messages_session

@@ -42,6 +42,17 @@ describe('runtime credential resolution', () => {
     expect(other.ok).toBe(false);
   });
 
+  it('can use a legacy local account for an authenticated user during migration', async () => {
+    await createConnectedAccount({ ctx: { userId: 'local' }, providerId: 'github', accountLabel: 'legacy', authType: 'oauth2', tokens: { access_token: 'ghp_legacy_token' } });
+
+    const r = await resolveRuntimeCredentials('github', { userId: 'alice' });
+
+    expect(r.ok).toBe(true);
+    expect(r.source).toBe('connected_account');
+    expect(r.account?.userId).toBe('local');
+    expect(r.secrets.GITHUB_TOKEN).toBe('ghp_legacy_token');
+  });
+
   it('falls back to a DEV_* shortcut only when Developer Mode is enabled', async () => {
     setSecret('DEV_GITHUB_TOKEN', 'ghp_dev_shortcut');
     // Disabled by default → still blocked.

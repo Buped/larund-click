@@ -37,12 +37,14 @@ Current native probes/tools use `GOOGLE_WORKSPACE_ACCESS_TOKEN` and `GOOGLE_WORK
 
 X supports two native modes:
 
-- Read-only: `X_BEARER_TOKEN`
-- User-context write: `X_WRITE_ACCESS_TOKEN` and `X_WRITE_ACCESS_TOKEN_SECRET` plus the scopes granted by the X developer app
+- App-only public search/read: `X_APP_BEARER`. This is Larund's developer credential and is used even when the user has not connected their own X account.
+- Per-user OAuth 2.0 PKCE: `X_CLIENT_ID` and optional `X_CLIENT_SECRET` let each user connect one or more X accounts. Request `tweet.read`, `tweet.write`, `users.read`, and `offline.access`.
 
-Posting, replying, scheduling, and deleting are never automatic. Create/reply/schedule require approval; delete is destructive and requires strong approval policy.
+Posting, replying, scheduling, and deleting are never automatic. Create/reply/schedule require approval; delete is destructive and requires strong approval policy. X has no native scheduled-post endpoint; Larund stores pending scheduled posts and sends them from its own scheduler/worker at `scheduled_for`.
 
-Optional app/API credentials such as `X_CLIENT_ID`, `X_CLIENT_SECRET`, `X_API_KEY`, and `X_API_SECRET` are reserved for later flows that actually need them.
+The legacy `X_BEARER_TOKEN`, `X_WRITE_ACCESS_TOKEN`, and `X_WRITE_ACCESS_TOKEN_SECRET` keys are development shortcuts only. Production user tokens live in the ConnectedAccount store, never in `.env`.
+
+Like/follow/unfollow and standalone quote-action tools are intentionally unavailable in the normal Larund X integration. UI cards should expose "Open on X" only for those actions.
 
 ## Evidence
 

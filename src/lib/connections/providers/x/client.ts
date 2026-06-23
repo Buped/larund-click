@@ -4,18 +4,22 @@ import { mapXStatus, xError } from './errors';
 const API = 'https://api.x.com';
 
 export interface XAuthSummary {
+  appBearerToken?: string;
   bearerToken?: string;
   userAccessToken?: string;
   userAccessTokenSecret?: string;
   hasWriteTokens: boolean;
+  connectedAccountCount: number;
 }
 
 export function xAuthFromSecrets(secrets: Record<string, string>): XAuthSummary {
   return {
-    bearerToken: secrets.X_BEARER_TOKEN,
+    appBearerToken: secrets.X_APP_BEARER ?? secrets.X_APP_BEARER_TOKEN,
+    bearerToken: secrets.X_APP_BEARER ?? secrets.X_APP_BEARER_TOKEN ?? secrets.X_BEARER_TOKEN,
     userAccessToken: secrets.X_WRITE_ACCESS_TOKEN,
     userAccessTokenSecret: secrets.X_WRITE_ACCESS_TOKEN_SECRET,
-    hasWriteTokens: Boolean(secrets.X_WRITE_ACCESS_TOKEN && secrets.X_WRITE_ACCESS_TOKEN_SECRET),
+    hasWriteTokens: Boolean(secrets.X_WRITE_ACCESS_TOKEN),
+    connectedAccountCount: Number(secrets.LARUND_CONNECTED_ACCOUNT_COUNT || 0),
   };
 }
 
@@ -36,14 +40,18 @@ export async function xFetch(
     });
     const text = await res.text();
     if (!res.ok) return mapXStatus(res.status, text);
-    return { success: true, output: text || '{}', details: text ? JSON.parse(text) as Record<string, unknown> : {} };
+    let details: Record<string, unknown> = {};
+    if (text) {
+      try { details = JSON.parse(text) as Record<string, unknown>; } catch { details = { raw: text }; }
+    }
+    return { success: true, output: text || '{}', details };
   } catch (error) {
     return xError('provider_error', `X API request failed: ${String(error)}`);
   }
 }
 
 export function readToken(auth: XAuthSummary): string | undefined {
-  return auth.bearerToken ?? auth.userAccessToken;
+  return auth.userAccessToken ?? auth.bearerToken ?? auth.appBearerToken;
 }
 
 export function writeToken(auth: XAuthSummary): string | undefined {

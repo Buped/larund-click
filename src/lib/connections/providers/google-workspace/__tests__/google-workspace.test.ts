@@ -97,6 +97,23 @@ describe('google workspace provider', () => {
     expect(ev?.risk).toBe('external_send');
   });
 
+  it('calendar mock: search, update and delete event round-trip', async () => {
+    const start = '2026-07-02T09:00:00.000Z';
+    const end = '2026-07-02T10:00:00.000Z';
+    const created = await call('google.calendar.create_event', { mock: true, summary: 'Demo call', start, end, attendees: ['x@y.com'] });
+    const eventId = String(created.details?.eventId);
+
+    const found = await call('google.calendar.search_events', { mock: true, query: 'Demo', time_min: start, time_max: '2026-07-03T00:00:00.000Z' });
+    expect(found.output).toContain(eventId);
+
+    const updated = await call('google.calendar.update_event', { mock: true, eventId, summary: 'Updated demo call' });
+    expect(updated.success).toBe(true);
+
+    const deleted = await call('google.calendar.delete_event', { mock: true, eventId });
+    expect(deleted.success).toBe(true);
+    expect(deleted.details?.verifiedDeleted).toBe(true);
+  });
+
   it('sheets write read-back reports verified row count in mock mode', async () => {
     const created = await call('google.sheets.create', { mock: true, title: 'RB' });
     const spreadsheetId = String(created.details?.spreadsheetId);

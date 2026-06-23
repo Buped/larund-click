@@ -6,6 +6,7 @@ import {
   formatFolderScan,
 } from '../document-reader';
 import type { ReadDocumentResult, FolderScanResult } from '../document-reader';
+import { resolveGoogleDriveReference } from './google-drive';
 
 /** A model-ready image content block in OpenRouter/Anthropic shape. */
 export interface ImageBlock {
@@ -51,6 +52,7 @@ const MAX_VISION_IMAGES = 8;
 export async function ingestReferences(
   references: DocumentReference[],
   query: string,
+  options: { userId?: string } = {},
 ): Promise<ReferenceIngest> {
   const textBlocks: string[] = [];
   const imageBlocks: ImageBlock[] = [];
@@ -99,7 +101,25 @@ export async function ingestReferences(
   };
 
   for (const ref of references) {
-    if (ref.kind === 'folder') {
+    if (ref.kind === 'google_drive_file' || ref.kind === 'google_drive_folder' || ref.kind === 'google_doc' || ref.kind === 'google_sheet' || ref.kind === 'google_slide') {
+      if (!options.userId) {
+        const output = 'Google Drive referencia feloldasahoz bejelentkezett felhasznalo szukseges.';
+        perRef.push({ ref, kind: ref.kind === 'google_drive_folder' ? 'folder' : 'file', ok: false, output, error: 'missing_user_id_for_google_drive_reference' });
+        textBlocks.push(`### ${ref.label}\n${output}`);
+        continue;
+      }
+      const resolved = await resolveGoogleDriveReference(ref, options.userId);
+      perRef.push({
+        ref: resolved.ref,
+        kind: resolved.ref.kind === 'google_drive_folder' ? 'folder' : 'file',
+        ok: resolved.ok,
+        output: resolved.output || resolved.error || '',
+        error: resolved.error,
+        documentRead: resolved.documentRead,
+      });
+      if (resolved.textBlock) textBlocks.push(resolved.textBlock);
+      if (resolved.imageBlocks?.length) imageBlocks.push(...resolved.imageBlocks.slice(0, MAX_VISION_IMAGES));
+    } else if (ref.kind === 'folder') {
       // Smart, bounded folder analysis: full recursive inventory + read the
       // relevant documents so their contents reach the model context.
       const { scan, documents } = await readRelevantFromFolder(ref, query);

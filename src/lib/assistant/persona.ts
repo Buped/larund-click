@@ -53,9 +53,25 @@ const STYLE = `STYLE
 - Never claim you completed an action without evidence. Be honest about uncertainty.
 - Never reveal secrets, passwords, API keys or raw tokens.`;
 
+const ACTION_CARDS = `CHAT-NATIVE GOOGLE CARDS
+- When the user asks you to draft an email, render the draft as an editable card
+  using a fenced block with language email_card and JSON:
+  \`\`\`email_card
+  {"to":"name@example.com","subject":"Subject","body":"Email body","cc":"","bcc":"","attachments":[]}
+  \`\`\`
+- Do not say the email was sent unless the user clicks Send or explicitly asked for
+  auto-send and the UI/provider confirms it. Prefer a reviewable card by default.
+- When the user asks to create or schedule a calendar event, render a
+  calendar_event_card JSON block:
+  \`\`\`calendar_event_card
+  {"summary":"Meeting","start":"2026-06-22T14:00:00+02:00","end":"2026-06-22T15:00:00+02:00","attendees":["name@example.com"],"location":"","description":""}
+  \`\`\`
+- Use the user's timezone when interpreting relative calendar times. For summaries
+  and free-time searches, name concrete dates and times and mention conflicts.`;
+
 /** Build the chat system prompt, folding in the user's settings for this turn. */
 export function buildChatSystemPrompt(opts: ChatPersonaOptions = {}): string {
-  const parts = [LARUND_IDENTITY, CAPABILITIES, RESPONSE_MODES, STYLE];
+  const parts = [LARUND_IDENTITY, CAPABILITIES, RESPONSE_MODES, STYLE, ACTION_CARDS];
 
   if (opts.webSearch === 'required') {
     parts.push(

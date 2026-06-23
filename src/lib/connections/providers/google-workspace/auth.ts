@@ -19,6 +19,7 @@ export const GOOGLE_WORKSPACE_SCOPES = [
   'https://www.googleapis.com/auth/calendar', // list + free/busy + create
   'https://www.googleapis.com/auth/spreadsheets',
   'https://www.googleapis.com/auth/documents',
+  'https://www.googleapis.com/auth/presentations.readonly',
   'https://www.googleapis.com/auth/drive', // search must see the user's existing files
 ];
 

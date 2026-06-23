@@ -4,12 +4,16 @@ import type { MentionKind, ReferencedContext } from '../../lib/mentions/types';
 export type ComposerReference = ReferencedContext;
 
 export function documentReferenceToMention(ref: DocumentReference): ReferencedContext {
-  const kind: MentionKind = ref.kind === 'folder' ? 'folder' : 'file';
+  const kind: MentionKind =
+    ref.kind === 'folder' ? 'folder'
+    : ref.kind === 'google_drive_folder' ? 'drive_folder'
+    : ref.kind === 'google_drive_file' || ref.kind === 'google_doc' || ref.kind === 'google_sheet' || ref.kind === 'google_slide' ? 'drive_file'
+    : 'file';
   return {
     id: ref.id,
     kind,
     label: ref.label,
-    refId: ref.path ?? ref.url ?? ref.id,
+    refId: ref.driveFileId ?? ref.path ?? ref.url ?? ref.id,
     displayText: `@${ref.label}`,
     metadata: { documentReference: ref },
     insertedAt: new Date().toISOString(),
@@ -21,13 +25,14 @@ export function documentReferenceToMention(ref: DocumentReference): ReferencedCo
 export function mentionToDocumentReference(ref: ReferencedContext): DocumentReference | null {
   const doc = ref.metadata?.documentReference;
   if (doc && typeof doc === 'object') return doc as DocumentReference;
-  if (ref.kind !== 'file' && ref.kind !== 'folder') return null;
+  if (ref.kind !== 'file' && ref.kind !== 'folder' && ref.kind !== 'drive_file' && ref.kind !== 'drive_folder') return null;
   return {
     id: ref.id,
-    kind: ref.kind,
+    kind: ref.kind === 'drive_file' ? 'google_drive_file' : ref.kind === 'drive_folder' ? 'google_drive_folder' : ref.kind,
     label: ref.label,
-    path: ref.refId,
-    source: 'user_reference',
+    path: ref.kind === 'file' || ref.kind === 'folder' ? ref.refId : undefined,
+    driveFileId: ref.kind === 'drive_file' || ref.kind === 'drive_folder' ? ref.refId : undefined,
+    source: ref.kind === 'drive_file' || ref.kind === 'drive_folder' ? 'connection' : 'user_reference',
   };
 }
 
@@ -70,5 +75,5 @@ function normalizeReference(value: unknown): ReferencedContext | null {
 }
 
 function isMentionKind(kind: unknown): kind is MentionKind {
-  return kind === 'skill' || kind === 'connection' || kind === 'mcp' || kind === 'memory' || kind === 'workflow' || kind === 'file' || kind === 'folder';
+  return kind === 'skill' || kind === 'connection' || kind === 'mcp' || kind === 'memory' || kind === 'workflow' || kind === 'web_source' || kind === 'file' || kind === 'folder' || kind === 'drive_file' || kind === 'drive_folder';
 }

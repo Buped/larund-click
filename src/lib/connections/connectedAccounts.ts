@@ -251,6 +251,26 @@ export function markAccountStatus(id: string, status: ConnectedAccountStatus): v
   persistSnapshot();
 }
 
+/**
+ * Earlier local-first builds stored user connections under the synthetic
+ * "local" user. Once real auth is active, chat/tool calls use the real user id.
+ * Move those legacy account metadata records forward so the same token refs stay
+ * usable without asking the user to reconnect.
+ */
+export function adoptLegacyLocalConnectedAccounts(userId: string): number {
+  hydrateConnectedAccounts();
+  if (!userId || userId === DEFAULT_CONTEXT.userId) return 0;
+  let moved = 0;
+  for (const account of accounts) {
+    if (account.userId !== DEFAULT_CONTEXT.userId) continue;
+    account.userId = userId;
+    account.updatedAt = now();
+    moved += 1;
+  }
+  if (moved > 0) persistSnapshot();
+  return moved;
+}
+
 /** Refresh a provider token if it is close to expiry. Returns true if refreshed. */
 export async function refreshProviderTokenIfNeeded(
   id: string,
