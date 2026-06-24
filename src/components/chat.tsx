@@ -38,6 +38,7 @@ import type { EmailDraft } from '../lib/email/types';
 import { policyForAutonomyMode, type AutonomyMode as PolicyAutonomyMode } from '../lib/tools/policy';
 import { classifyIntent } from '../lib/intent/classify';
 import { ArtifactCard } from './artifacts/ArtifactCard';
+import { AggregateResultCard, parseAggregateResult } from './artifacts/AggregateResultCard';
 import { ArtifactPreviewRail } from './artifacts/ArtifactPreviewRail';
 import {
   dedupeArtifacts,
@@ -46,6 +47,7 @@ import {
   type ArtifactPreviewState,
   type ChatArtifactAttachment,
 } from '../lib/artifacts/ui';
+import type { CodeRunDetails, CodeRunFile } from '../lib/code-exec/types';
 
 /** Read and clear the one-shot workflow template armed on the Workflows page. */
 function consumeActiveWorkflowTemplate(): string | undefined {
@@ -317,6 +319,8 @@ const TOOL_ICONS: Record<string, string> = {
   'process.start':     'command',
   'process.status':    'command',
   'process.kill':      'command',
+  'code.execute':      'cpu',
+  'code.install_package': 'upload',
   'file.read':         'fileText',
   'file.write':        'upload',
   'file.edit':         'upload',
@@ -386,6 +390,8 @@ const TOOL_ICONS: Record<string, string> = {
 const TOOL_LABELS: Record<string, string> = {
   'cli.run': 'Running command',
   'process.start': 'Starting process',
+  'code.execute': 'Running Python',
+  'code.install_package': 'Installing Python package',
   'file.read': 'Reading file',
   'file.write': 'Writing file',
   'file.edit': 'Editing file',
@@ -514,6 +520,183 @@ function ArtifactResultCard({ manifest }: { manifest: ArtifactCardManifest }) {
   );
 }
 
+function codeRunFromStep(step: AgentStep): CodeRunDetails | null {
+  const run = (step.details as { codeRun?: CodeRunDetails } | undefined)?.codeRun;
+  return run && run.language === 'python' ? run : null;
+}
+
+function codeCallFromStep(step: AgentStep): CodeRunDetails | null {
+  if (step.tool !== 'code.execute' || !step.input) return null;
+  try {
+    const parsed = JSON.parse(step.input) as { code?: string; label?: string; allow_network?: boolean; timeout_secs?: number };
+    if (typeof parsed.code !== 'string') return null;
+    return {
+      stage: 'ran',
+      language: 'python',
+      code: parsed.code,
+      label: parsed.label,
+      allowNetwork: Boolean(parsed.allow_network),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function codeFileLabel(file: CodeRunFile): string {
+  const kb = file.size > 0 ? `, ${file.size < 1024 ? `${file.size} B` : `${Math.round(file.size / 1024)} KB`}` : '';
+  return `${file.name} (${file.kind}${kb})`;
+}
+
+function CodeExecutionCard({ run, running = false }: { run: CodeRunDetails; running?: boolean }) {
+  const [outputOpen, setOutputOpen] = useState(false);
+  const statusColor = running ? 'var(--accent)' : run.success ? 'var(--success)' : 'var(--danger)';
+  const statusIcon = running ? 'hourglass' : run.success ? 'check' : 'alert';
+  const statusLabel = running
+    ? 'Futas...'
+    : run.success
+      ? `Sikeres futas${run.durationMs ? `, ${(run.durationMs / 1000).toFixed(1)}s` : ''}`
+      : run.timedOut
+        ? 'Idokorlat miatt leallitva'
+        : 'Hibaval leallt';
+  const files = run.files ?? [];
+  const images = run.images ?? [];
+
+  return (
+    <div style={{
+      margin: '6px 0 8px 24px',
+      border: '1px solid var(--border-md)',
+      borderRadius: 10,
+      background: 'linear-gradient(180deg, rgba(var(--ov-color),0.075), rgba(var(--ov-color),0.035))',
+      overflow: 'hidden',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
+        <span style={{
+          width: 28, height: 28, borderRadius: 7,
+          display: 'grid', placeItems: 'center',
+          background: `${statusColor}22`,
+          color: statusColor,
+        }}>
+          <Icon name={statusIcon} size={14} stroke={1.9} />
+        </span>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 750, color: 'var(--text-primary)' }}>
+            {run.label || 'Kodfuttatas'}
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--text-hint)' }}>
+            Python sandbox · {statusLabel}{run.allowNetwork ? ' · network engedelyezve' : ''}
+          </div>
+        </div>
+        {running && <span className="dot dot-blue dot-pulse" />}
+      </div>
+
+      <div style={{ padding: 12, display: 'grid', gap: 10 }}>
+        {run.error && (
+          <div style={{ color: 'var(--danger)', fontSize: 12, lineHeight: 1.5 }}>
+            {run.error}
+          </div>
+        )}
+
+        {images.length > 0 && (
+          <div style={{ display: 'grid', gap: 8 }}>
+            {images.map((img) => (
+              <figure key={img.path} style={{ margin: 0 }}>
+                <img
+                  src={img.dataUrl}
+                  alt={img.name}
+                  style={{
+                    maxWidth: '100%',
+                    maxHeight: 360,
+                    borderRadius: 8,
+                    border: '1px solid var(--border-md)',
+                    background: '#fff',
+                    objectFit: 'contain',
+                  }}
+                />
+                <figcaption style={{ marginTop: 5, fontSize: 11, color: 'var(--text-hint)' }}>{img.name}</figcaption>
+              </figure>
+            ))}
+          </div>
+        )}
+
+        {files.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {files.map((file) => (
+              <span key={file.path} title={file.path} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                minHeight: 26, maxWidth: '100%',
+                border: '1px solid var(--border-md)',
+                borderRadius: 999,
+                padding: '3px 8px',
+                fontSize: 11.5,
+                color: 'var(--text-muted)',
+                background: 'rgba(0,0,0,.18)',
+              }}>
+                <Icon name={file.kind === 'image' ? 'image' : file.kind === 'csv' || file.kind === 'json' ? 'fileSpreadsheet' : 'fileText'} size={12} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{codeFileLabel(file)}</span>
+              </span>
+            ))}
+          </div>
+        )}
+
+        <details>
+          <summary style={{ cursor: 'pointer', fontSize: 11.5, color: 'var(--text-muted)', fontWeight: 700 }}>
+            Futtatott kod
+          </summary>
+          <pre style={{
+            margin: '8px 0 0',
+            maxHeight: 260,
+            overflow: 'auto',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            color: 'var(--text-muted)',
+            background: 'rgba(0,0,0,.3)',
+            borderRadius: 7,
+            padding: 10,
+          }}>
+            {run.code}
+          </pre>
+        </details>
+
+        {(run.stdout || run.stderr) && (
+          <div>
+            <button
+              onClick={() => setOutputOpen((v) => !v)}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                background: 'none', border: 'none', padding: 0,
+                color: 'var(--text-muted)', cursor: 'pointer',
+                fontSize: 11.5, fontWeight: 700,
+              }}
+            >
+              <Icon name="chevronDown" size={10} stroke={1.7} style={{ transform: outputOpen ? 'none' : 'rotate(-90deg)', transition: 'transform .15s' }} />
+              Kimenet
+            </button>
+            {outputOpen && (
+              <pre style={{
+                margin: '8px 0 0',
+                maxHeight: 220,
+                overflow: 'auto',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 11,
+                color: run.stderr ? 'var(--danger)' : 'var(--text-hint)',
+                background: 'rgba(0,0,0,.3)',
+                borderRadius: 7,
+                padding: 10,
+              }}>
+                {run.stdout ? `STDOUT:\n${run.stdout}` : ''}{run.stdout && run.stderr ? '\n\n' : ''}{run.stderr ? `STDERR:\n${run.stderr}` : ''}
+              </pre>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AgentStepItem({ step }: { step: AgentStep }) {
   const [open, setOpen] = useState(false);
 
@@ -541,6 +724,9 @@ function AgentStepItem({ step }: { step: AgentStep }) {
   }
 
   if (step.type === 'tool_call') {
+    const codeRun = codeCallFromStep(step);
+    if (codeRun) return <CodeExecutionCard run={codeRun} running />;
+
     const toolName = step.tool || '';
     const iconName = TOOL_ICONS[toolName] || 'circle';
     let argPreview = '';
@@ -608,6 +794,9 @@ function AgentStepItem({ step }: { step: AgentStep }) {
   }
 
   if (step.type === 'tool_result') {
+    const codeRun = codeRunFromStep(step);
+    if (codeRun) return <CodeExecutionCard run={codeRun} />;
+
     const hasErr = Boolean(step.error);
     const rawText = step.error || step.output || '';
     const artifactManifest = !hasErr && step.tool?.startsWith('artifact.render_') ? parseArtifactManifest(rawText) : null;
@@ -895,6 +1084,19 @@ function AgentMsgContent({
         </div>
       )}
 
+      {(() => {
+        const aggregates = steps
+          .filter((s) => s.type === 'tool_result' && s.tool === 'sheet.query')
+          .map((s) => parseAggregateResult(s.output))
+          .filter((r): r is NonNullable<ReturnType<typeof parseAggregateResult>> => r != null);
+        if (aggregates.length === 0) return null;
+        return (
+          <div style={{ display: 'grid', gap: 10 }}>
+            {aggregates.map((result, i) => <AggregateResultCard key={i} result={result} />)}
+          </div>
+        );
+      })()}
+
       {emailDraft && (
         <div style={{ marginTop: 12 }}>
           <EmailComposerCard draft={emailDraft} userId={userId} onChange={(d) => onEmailDraftChange?.(d)} />
@@ -990,6 +1192,14 @@ function emailDraftFromSteps(steps: AgentStep[]): EmailDraft | undefined {
     if (draft) return draft;
   }
   return undefined;
+}
+
+function codeArtifactsFromStep(step: AgentStep): ChatArtifactAttachment[] {
+  const run = codeRunFromStep(step);
+  if (!run?.files?.length) return [];
+  return run.files
+    .map((file) => file.artifactManifest ? manifestToChatArtifact(file.artifactManifest) : null)
+    .filter((artifact): artifact is ChatArtifactAttachment => artifact != null);
 }
 
 function hydrateMessage(row: any): Message {
@@ -1336,6 +1546,22 @@ export function ChatScreen({
             ...state,
             isOpen: true,
             selectedArtifactId: artifact.id,
+            mode: 'preview',
+          }));
+          persistAgentState(agentState);
+        }
+      }
+
+      if (step.type === 'tool_result' && step.tool === 'code.execute') {
+        const generatedArtifacts = codeArtifactsFromStep(step);
+        if (generatedArtifacts.length) {
+          const nextArtifacts = dedupeArtifacts([...agentState.artifacts, ...generatedArtifacts]);
+          agentState = { ...agentState, artifacts: nextArtifacts };
+          patchMsg({ _artifacts: nextArtifacts, artifacts_json: JSON.stringify(nextArtifacts) });
+          setPreviewState((state) => ({
+            ...state,
+            isOpen: state.isOpen || generatedArtifacts.some((artifact) => artifact.kind === 'image'),
+            selectedArtifactId: generatedArtifacts.find((artifact) => artifact.kind === 'image')?.id ?? state.selectedArtifactId,
             mode: 'preview',
           }));
           persistAgentState(agentState);

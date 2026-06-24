@@ -3,6 +3,8 @@ export type {
   DocumentIO,
   DocumentReadOptions,
   ReadDocumentResult,
+  DocumentSection,
+  SectionSummarizer,
   FolderScanResult,
   FolderInventoryEntry,
 } from './types';

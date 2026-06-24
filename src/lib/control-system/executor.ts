@@ -7,9 +7,34 @@ import { getCredentialForDomain, getCredential, resolveCredentialPassword, markC
 import { getApp, markAppUsed } from '../apps/store';
 import { getBrowserProfile, DEFAULT_BROWSER_PROFILE } from '../browser/profiles';
 import { planArtifact } from '../artifacts/planner';
+import { executeCode, installPackageAction } from '../code-exec/execute';
 import { lintPresentation } from '../artifacts/presentation/quality-lint';
 import type { EmailDraft } from '../email/types';
 import { newEmailDraftId, gmailDraftUrl, toSourceChips } from '../email/compose';
+import type { SectionSummarizer } from '../document-reader';
+import { callOpenRouterJson } from '../openrouter';
+import { MODELS } from '../../constants/models';
+
+const PULSE_MODEL = MODELS[0].openrouter_id; // cheap/fast tier for map-reduce summarization
+
+/** Cheap-tier section summarizer for long-document map-reduce. Costs are reported
+ *  through ctx.addCost so the agent loop batches them; deduction is deferred. */
+function makeSectionSummarizer(ctx: ToolContext): SectionSummarizer | undefined {
+  if (!ctx.userId) return undefined;
+  return async ({ text, hint }) => {
+    const { content, usage } = await callOpenRouterJson(
+      [
+        { role: 'system', content: 'You condense one section of a long document. Reply with only the summary — no preamble. Keep concrete numbers, names, dates.' },
+        { role: 'user', content: `${hint}\n\n---\n${text}` },
+      ],
+      PULSE_MODEL,
+      ctx.userId,
+      false,
+    );
+    ctx.addCost?.(usage.costUsd);
+    return content;
+  };
+}
 
 /** Resolve a browser-profile id to the launch config the Rust layer expects. The
  *  managed default needs no config (Rust defaults to Agent Chrome). */
@@ -133,6 +158,12 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
       return r.ok ? { success: true, output: r.value } : ERR(r.error);
     }
 
+    // ── isolated Python code execution ─────────────────────────────────────
+    case 'code.execute':
+      return executeCode(action, ctx);
+    case 'code.install_package':
+      return installPackageAction(action);
+
     // ── files ────────────────────────────────────────────────────────────
     case 'file.read': {
       const r = await tryInvoke<string>('file_read', { path: action.path });
@@ -196,7 +227,7 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
 
     case 'document.read': {
       const ref = refFromAction(ctx, action);
-      const result = await readDocument(ref);
+      const result = await readDocument(ref, { summarizer: makeSectionSummarizer(ctx) });
       return {
         success: result.ok,
         output: JSON.stringify(result, null, 2),
@@ -206,7 +237,10 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
     }
     case 'document.read_many': {
       const refs = (action.refs ?? []).map((ref) => refFromAction(ctx, ref));
-      const results = await readManyDocuments(refs.length ? refs : (ctx.references ?? []).filter((ref) => ref.kind !== 'folder'));
+      const results = await readManyDocuments(
+        refs.length ? refs : (ctx.references ?? []).filter((ref) => ref.kind !== 'folder'),
+        { summarizer: makeSectionSummarizer(ctx) },
+      );
       const ok = results.every((result) => result.ok);
       return {
         success: ok,
@@ -229,6 +263,7 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
       const ref = refFromAction(ctx, action, 'folder');
       const result = await readRelevantFromFolder(ref, action.query ?? ctx.task, {
         limits: { maxFolderEntries: action.max_entries, maxDepth: action.max_depth },
+        summarizer: makeSectionSummarizer(ctx),
       });
       const ok = result.scan.ok && result.documents.every((doc) => doc.ok);
       return {
@@ -240,7 +275,7 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
     }
     case 'document.summarize': {
       const ref = refFromAction(ctx, action);
-      const result = await readDocument(ref);
+      const result = await readDocument(ref, { summarizer: makeSectionSummarizer(ctx) });
       return {
         success: result.ok,
         output: result.summary ?? result.contentText ?? '',
@@ -286,10 +321,75 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
       const r = await tryInvoke<string>('sheet_read', { path: action.path, sheet: action.sheet ?? null, maxRows: action.max_rows ?? null });
       return r.ok ? { success: true, output: r.value } : ERR(r.error);
     }
+    case 'sheet.profile': {
+      const r = await tryInvoke<string>('sheet_profile', {
+        path: action.path, sheet: action.sheet ?? null, sampleSize: action.sample_size ?? null,
+      });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'sheet.query': {
+      const r = await tryInvoke<string>('sheet_query', {
+        path: action.path,
+        sheet: action.sheet ?? null,
+        query: {
+          filter: action.filter ?? null,
+          columns: action.columns ?? null,
+          aggregate: action.aggregate ?? null,
+          group_by: action.group_by ?? null,
+          limit: action.limit ?? null,
+        },
+      });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'sheet.format_range': {
+      const r = await tryInvoke<string>('sheet_format_range', {
+        path: action.path,
+        sheet: action.sheet ?? null,
+        format: {
+          range: action.range,
+          background: action.background ?? null,
+          font_color: action.font_color ?? null,
+          bold: action.bold ?? null,
+          italic: action.italic ?? null,
+          font_size: action.font_size ?? null,
+          border: action.border ?? null,
+          number_format: action.number_format ?? null,
+          column_width: action.column_width ?? null,
+          freeze_rows: action.freeze_rows ?? null,
+          freeze_cols: action.freeze_cols ?? null,
+          conditional: action.conditional ?? null,
+        },
+      });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'sheet.add_chart': {
+      const r = await tryInvoke<string>('sheet_add_chart', {
+        path: action.path,
+        sheet: action.sheet ?? null,
+        chart: {
+          chart_type: action.chart_type,
+          series: action.series,
+          series_titles: action.series_titles ?? null,
+          categories: action.categories ?? null,
+          title: action.title ?? null,
+          from_cell: action.from_cell ?? null,
+          to_cell: action.to_cell ?? null,
+        },
+      });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'sheet.add_table': {
+      const r = await tryInvoke<string>('sheet_add_table', {
+        path: action.path,
+        sheet: action.sheet ?? null,
+        table: { range: action.range, name: action.name ?? null, style: action.style ?? null },
+      });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
 
     case 'doc.read': {
       const ref = refFromAction(ctx, { path: action.path, label: action.path }, 'file');
-      const result = await readDocument(ref);
+      const result = await readDocument(ref, { summarizer: makeSectionSummarizer(ctx) });
       return { success: result.ok, output: JSON.stringify(result, null, 2), error: result.ok ? undefined : result.error, details: { documentRead: result } };
     }
     case 'doc.write_txt': {

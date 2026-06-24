@@ -174,6 +174,66 @@ pub async fn sheet_write(
     super::sheets::write(&expanded, sheet, rows, cells, start_cell, mode)
 }
 
+/// Streaming statistical profile of a (possibly large) spreadsheet/CSV. Returns
+/// per-column type/null/unique stats + numeric min/max/mean/sum + a small
+/// representative sample, WITHOUT loading the raw rows into the caller context.
+#[tauri::command]
+pub async fn sheet_profile(
+    path: String,
+    sheet: Option<String>,
+    sample_size: Option<usize>,
+) -> Result<String, String> {
+    let expanded = expand_tilde(&path);
+    super::sheets::profile(&expanded, sheet, sample_size)
+}
+
+/// Streaming filter / aggregate / group-by over the full dataset. Returns only the
+/// result (e.g. a sum or per-group totals), not the raw rows, when `aggregate` is set.
+#[tauri::command]
+pub async fn sheet_query(
+    path: String,
+    sheet: Option<String>,
+    query: super::sheets::QueryArgs,
+) -> Result<String, String> {
+    let expanded = expand_tilde(&path);
+    super::sheets::query(&expanded, sheet, query)
+}
+
+/// Apply native Excel formatting to a cell range (fill, font, border, number format,
+/// column width, freeze panes, value-threshold conditional fills).
+#[tauri::command]
+pub async fn sheet_format_range(
+    path: String,
+    sheet: Option<String>,
+    format: super::sheets::FormatArgs,
+) -> Result<String, String> {
+    let expanded = expand_tilde(&path);
+    super::sheets::format_range(&expanded, sheet, format)
+}
+
+/// Insert a native chart (bar/line/pie/...) from sheet-qualified data ranges.
+#[tauri::command]
+pub async fn sheet_add_chart(
+    path: String,
+    sheet: Option<String>,
+    chart: super::sheets::ChartArgs,
+) -> Result<String, String> {
+    let expanded = expand_tilde(&path);
+    super::sheets::add_chart(&expanded, sheet, chart)
+}
+
+/// Create a native Excel Table (ListObject) over a header+data range for instant
+/// filter/sort.
+#[tauri::command]
+pub async fn sheet_add_table(
+    path: String,
+    sheet: Option<String>,
+    table: super::sheets::TableArgs,
+) -> Result<String, String> {
+    let expanded = expand_tilde(&path);
+    super::sheets::add_table(&expanded, sheet, table)
+}
+
 #[tauri::command]
 pub async fn app_open(name: String) -> Result<(), String> {
     if desktop::active_agent_desktop().is_some() {

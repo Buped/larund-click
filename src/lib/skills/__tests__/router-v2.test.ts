@@ -66,6 +66,22 @@ describe('skill router v2', () => {
     expect(result.shouldAskUser).toBe(true);
   });
 
+  it('routes a correlation analysis question to data-analysis-and-code', () => {
+    const result = route('Van-e korrelacio a kampanykoltes es a konverziok kozott ebben a tablazatban?');
+    expect(result.selectedSkills.map((s) => s.name)).toContain('data-analysis-and-code');
+    expect(result.primarySkill?.name).toBe('data-analysis-and-code');
+  });
+
+  it('routes a chart/outlier request to data-analysis-and-code', () => {
+    const result = route('Keress kiugro ertekeket es rajzolj egy oszlopdiagramot a havi bevetelekrol.');
+    expect(result.selectedSkills.map((s) => s.name)).toContain('data-analysis-and-code');
+  });
+
+  it('does NOT pull in code execution for a simple total (sheet.query territory)', () => {
+    const result = route('Mennyi az osszesen ebben a tablazatban az Osszeg oszlopban?');
+    expect(result.primarySkill?.name).not.toBe('data-analysis-and-code');
+  });
+
   it('explicit @skill wins', () => {
     const result = route('@landing-page-copy Irj rovid weboldal szoveget.');
     expect(result.primarySkill?.name).toBe('landing-page-copy');

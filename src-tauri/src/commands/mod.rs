@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod app_catalog;
 pub mod browser;
+pub mod code_exec;
 pub mod desktop;
 pub mod documents;
 pub mod fs_ops;

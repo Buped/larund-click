@@ -512,7 +512,65 @@ Use this skill after every artifact render and before task.complete.
 5. Preview/thumbnail exists when generated.
 6. Manifest appears in artifact.list.`;
 
+const dataAnalysisAndCode = `---
+name: data-analysis-and-code
+description: "Run real computation on company data with isolated Python (pandas/numpy/matplotlib): statistics, correlation, trend/regression, outlier & anomaly detection, custom multi-step transforms, chart generation, bulk text/regex processing, and programmatic mapping of an existing Excel/Doc structure."
+allowed_tools: ["code.execute", "code.install_package", "sheet.read", "sheet.profile", "sheet.query", "sheet.write", "sheet.format_range", "sheet.add_chart", "document.read", "file.read", "file.write", "ask_user", "task.complete"]
+requires_connections: []
+risk: "process_exec"
+trigger: "elemzes elemzés statisztika statisztikai diagram grafikon abra ábra python kod kód korrelacio korreláció regresszio regresszió trend szoras szórás eloszlas eloszlás kiugro kiugró anomalia anomália outlier analysis statistics correlation regression deviation distribution chart plot scatter histogram percentile anomaly"
+when_not_to_use: ["egyszeru osszeg vagy osszesites", "simple sum or total use sheet.query", "mennyi az osszesen", "egy oszlop osszege"]
+---
+
+# Data Analysis & Code Execution
+Use this skill when the user needs a REAL computation/analysis/transformation on
+their data that the native sheet tools cannot express — statistical analysis,
+correlation, trend/regression, outlier/anomaly detection, a custom multi-step
+transform, a generated chart, bulk text processing with regex, simple statistical
+tests, or programmatically mapping the structure of an existing Excel/Doc.
+
+## Decision guide — pick the cheapest tool that answers the question
+1. SIMPLE summary / filter / group over a table ("mennyi az összes X", "per-region
+   total")? Use \`sheet.query\` FIRST — it is faster, exact, and needs no code run.
+   Do NOT spin up Python for a plain sum/average/count that sheet.query computes.
+2. More than that — statistics, correlation, trend/regression line, std-dev,
+   outlier/anomaly detection, a custom multi-step transform, or a chart? Use
+   \`code.execute\` with pandas/numpy/matplotlib.
+3. LARGE table (>1000 rows): do NOT load the raw rows into your own context first.
+   Pass the input by reference and write Python that reads the file itself
+   (\`pandas.read_csv\`/\`read_excel\` on the input's file name) and returns ONLY the
+   result — a number, a small table, or a saved chart — never the raw data.
+4. Charts: save the figure as a PNG into the run directory
+   (\`plt.savefig("chart.png")\`); it is harvested and shown inline in chat. Never
+   return a long inline base64 string.
+5. Final goal is a formatted Word/Excel/PPTX? Python does the COMPUTATION only; hand
+   the result to \`sheet.write\`/\`sheet.format_range\` (Excel) or the
+   artifact.render_* engine (Word/PPTX). NEVER write the polished .xlsx/.docx/.pptx
+   directly from Python — Larund already has a unified, design-token-driven engine.
+   openpyxl/python-docx/python-pptx in the venv are for READING/inspecting existing
+   files, not for producing the final artifact.
+6. Always explain in plain language what the code did and what the result means
+   BEFORE the raw code/output — the code itself is a collapsible "details" section,
+   not the main answer.
+
+## Packages
+Pre-approved (auto-provisioned): pandas, numpy, openpyxl, matplotlib, python-docx,
+python-pptx, PyMuPDF (fitz). Anything else is NOT installed silently — call
+\`code.install_package\` (one package, approval-gated) and explain why it is needed.
+
+## Isolation
+The code runs in a throwaway sandbox folder. It cannot read/write outside that
+folder except the input files you reference (they are copied in by file name).
+Network is OFF unless explicitly enabled, and enabling it always asks for approval.
+
+## Verification
+- For a numeric/statistical answer, state the concrete computed value(s).
+- For a chart, confirm the PNG was generated (it appears inline).
+- If the goal was an Excel/Word/PPTX deliverable, verify it was produced by the
+  native sheet/artifact engine, not by Python directly.`;
+
 export const BUNDLED_SKILL_FILES: string[] = [
+  dataAnalysisAndCode,
   fileOrganizer,
   browserAutomation,
   googleSheetsWeb,

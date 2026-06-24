@@ -4,6 +4,7 @@ import type { ControlAction, ControlActionName } from './types';
 export const ALLOWED_ACTIONS: ReadonlySet<ControlActionName> = new Set<ControlActionName>([
   // runtime
   'cli.run', 'process.start', 'process.status', 'process.kill',
+  'code.execute', 'code.install_package',
   // files
   'file.read', 'file.write', 'file.edit', 'file.list', 'file.mkdir',
   'file.copy', 'file.move', 'file.delete', 'file.search', 'file.tree',
@@ -12,6 +13,7 @@ export const ALLOWED_ACTIONS: ReadonlySet<ControlActionName> = new Set<ControlAc
   'folder.scan', 'folder.read_relevant',
   // data
   'sheet.read', 'sheet.write', 'sheet.append', 'sheet.export_csv', 'sheet.to_json',
+  'sheet.profile', 'sheet.query', 'sheet.format_range', 'sheet.add_chart', 'sheet.add_table',
   'doc.read', 'doc.write_txt', 'doc.write_docx',
   // artifacts
   'artifact.plan', 'artifact.render_pdf', 'artifact.render_docx', 'artifact.render_pptx',

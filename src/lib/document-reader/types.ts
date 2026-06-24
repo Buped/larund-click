@@ -2,12 +2,30 @@ import type { DocumentReference } from '../references/types';
 
 export type { DocumentReference } from '../references/types';
 
+/** One logical slice of a long document, retained so the agent can drill back into
+ *  the full source text of a specific section after reading a map-reduce summary. */
+export interface DocumentSection {
+  /** Stable index within the document (0-based). */
+  index: number;
+  /** Human label, e.g. "Page 3", a heading, or "Part 4/12". */
+  label: string;
+  /** Character offset range in the original extracted text. */
+  range: [number, number];
+  /** Full original text of this section. */
+  text: string;
+  /** Short summary of this section (AI map step, or extractive fallback). */
+  summary?: string;
+}
+
 export interface ReadDocumentResult {
   ref: DocumentReference;
   ok: boolean;
   contentText?: string;
   structured?: unknown;
   summary?: string;
+  /** Present when a long document was summarized section-by-section instead of
+   *  blindly truncated. The full per-section text is kept here for drill-back. */
+  sections?: DocumentSection[];
   /** For image references: a base64 `data:` URL to pass to a vision model. */
   imageDataUrl?: string;
   /** For scanned/image PDFs: one base64 `data:` URL per page image, for vision. */
@@ -19,6 +37,9 @@ export interface ReadDocumentResult {
     sheetNames?: string[];
     rowCount?: number;
     truncated?: boolean;
+    /** True when the long document was condensed into section summaries. */
+    summarized?: boolean;
+    sectionCount?: number;
   };
   error?: string;
 }
@@ -80,9 +101,16 @@ export interface DocumentIO {
   metadata(path: string): Promise<FileMetadata>;
 }
 
+/** Cheap-tier summarizer used for the map step of long-document map-reduce.
+ *  Returns a short summary of `text`. `hint` describes the section context. */
+export type SectionSummarizer = (input: { text: string; hint: string }) => Promise<string>;
+
 export interface DocumentReadOptions {
   io?: DocumentIO;
   limits?: Partial<DocumentReaderLimits>;
+  /** When provided, long documents are condensed section-by-section with this
+   *  cheap model instead of being blindly truncated. */
+  summarizer?: SectionSummarizer;
 }
 
 export const DEFAULT_DOCUMENT_LIMITS: DocumentReaderLimits = {

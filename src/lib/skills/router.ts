@@ -61,6 +61,7 @@ const SYNONYMS: Array<{ pattern: RegExp; terms: string[] }> = [
   { pattern: /landing page|weboldal sz[oö]veg|hero copy/i, terms: ['landing-page-copy', 'content-production'] },
   { pattern: /blog|seo|cikk|article|poszt/i, terms: ['content-production', 'seo-audit'] },
   { pattern: /heti riport|dashboard|analytics|marketing report/i, terms: ['marketing-report', 'data-reporting'] },
+  { pattern: /korrel|regresszi|\btrend\b|sz[oó]r[aá]s|kiugr[oó]|anom[aá]li|outlier|statisztik|eloszl[aá]s|diagram|grafikon|\bpython\b|elemz[eé]s/i, terms: ['data-analysis-and-code', 'analysis', 'statistics', 'chart'] },
   { pattern: /form|űrlap|urlap|browser|webapp/i, terms: ['browser-automation', 'form-filler'] },
 ];
 

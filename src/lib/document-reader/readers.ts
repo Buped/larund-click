@@ -4,11 +4,14 @@ import {
   DEFAULT_DOCUMENT_LIMITS,
   type DocumentIO,
   type DocumentReadOptions,
+  type DocumentSection,
   type FileMetadata,
   type ReadDocumentResult,
   type RichExtraction,
+  type SectionSummarizer,
 } from './types';
 import { summarizeDocument, summarizeText } from './summarize';
+import { splitIntoSections, summarizeSections } from './sectionize';
 import { getCachedDocument, setCachedDocument } from './cache';
 
 const TEXT_EXT = new Set(['.txt', '.md', '.csv', '.json', '.xml', '.html', '.htm', '.log']);
@@ -33,6 +36,32 @@ function extOf(pathOrLabel: string): string {
 function truncate(text: string, maxChars: number): { text: string; truncated: boolean } {
   if (text.length <= maxChars) return { text, truncated: false };
   return { text: text.slice(0, maxChars), truncated: true };
+}
+
+interface FittedText {
+  contentText: string;
+  sections?: DocumentSection[];
+  summarized: boolean;
+  truncated: boolean;
+}
+
+/**
+ * Fit a long free-text document into the context budget. Instead of blindly
+ * dropping the tail, split into logical sections and condense each with the cheap
+ * `summarizer` (map-reduce). The full per-section text is retained for drill-back.
+ * Falls back to a head+tail keep when the text can't be meaningfully sectioned.
+ */
+async function fitLongText(text: string, maxChars: number, summarizer?: SectionSummarizer): Promise<FittedText> {
+  if (text.length <= maxChars) return { contentText: text, summarized: false, truncated: false };
+  const sections = splitIntoSections(text);
+  if (sections.length <= 1) {
+    const half = Math.floor(maxChars / 2);
+    const head = text.slice(0, half).trim();
+    const tail = text.slice(text.length - half).trim();
+    return { contentText: `${head}\n\n…[middle omitted — ask for a specific part to see it]…\n\n${tail}`, summarized: false, truncated: true };
+  }
+  const { reducedText, sections: enriched } = await summarizeSections(sections, summarizer);
+  return { contentText: reducedText, sections: enriched, summarized: true, truncated: false };
 }
 
 function parseCsv(text: string): string[][] {
@@ -156,19 +185,36 @@ export async function readDocument(ref: DocumentReference, options: DocumentRead
     let result: ReadDocumentResult;
     if (TEXT_EXT.has(ext)) {
       const raw = await io.readText(target);
-      const cut = truncate(raw, limits.maxTextChars);
-      const structured = ext === '.csv' ? { rows: parseCsv(cut.text) } : ext === '.json' ? tryParseJson(cut.text) : undefined;
-      result = {
-        ref,
-        ok: true,
-        contentText: cut.text,
-        structured,
-        metadata: {
-          ...normalizeMetadata(md),
-          rowCount: ext === '.csv' ? (structured as { rows: string[][] } | undefined)?.rows.length : undefined,
-          truncated: cut.truncated,
-        },
-      };
+      if (ext === '.csv' || ext === '.json') {
+        // Structured text: keep simple truncation (large tables go through sheet.profile/query).
+        const cut = truncate(raw, limits.maxTextChars);
+        const structured = ext === '.csv' ? { rows: parseCsv(cut.text) } : tryParseJson(cut.text);
+        result = {
+          ref,
+          ok: true,
+          contentText: cut.text,
+          structured,
+          metadata: {
+            ...normalizeMetadata(md),
+            rowCount: ext === '.csv' ? (structured as { rows: string[][] } | undefined)?.rows.length : undefined,
+            truncated: cut.truncated,
+          },
+        };
+      } else {
+        const fit = await fitLongText(raw, limits.maxTextChars, options.summarizer);
+        result = {
+          ref,
+          ok: true,
+          contentText: fit.contentText,
+          sections: fit.sections,
+          metadata: {
+            ...normalizeMetadata(md),
+            truncated: fit.truncated,
+            summarized: fit.summarized,
+            sectionCount: fit.sections?.length,
+          },
+        };
+      }
     } else if (SHEET_EXT.has(ext)) {
       const structured = await io.readSheet(target, limits.maxRows);
       result = sheetResult(ref, md, structured);
@@ -203,13 +249,21 @@ export async function readDocument(ref: DocumentReference, options: DocumentRead
             metadata: { ...normalizeMetadata(md), pageCount: rich.pageCount, truncated: cut.truncated },
             summary: `Scanned PDF (${rich.pageCount} page(s)) — ${rich.images.length} page image(s) attached for vision analysis.`,
           };
-        } else if (cut.text.trim()) {
+        } else if ((rich.text ?? '').trim()) {
+          const fit = await fitLongText(rich.text ?? '', limits.maxTextChars, options.summarizer);
           result = {
             ref,
             ok: true,
-            contentText: cut.text,
+            contentText: fit.contentText,
+            sections: fit.sections,
             structured: { extraction: 'text', format: 'pdf', pageCount: rich.pageCount },
-            metadata: { ...normalizeMetadata(md), pageCount: rich.pageCount, truncated: cut.truncated },
+            metadata: {
+              ...normalizeMetadata(md),
+              pageCount: rich.pageCount,
+              truncated: fit.truncated,
+              summarized: fit.summarized,
+              sectionCount: fit.sections?.length,
+            },
           };
         } else {
           result = {
@@ -222,13 +276,19 @@ export async function readDocument(ref: DocumentReference, options: DocumentRead
         }
       } else {
         const raw = await (io.extractText ? io.extractText(target) : invoke<string>('document_extract_text', { path: target }));
-        const cut = truncate(raw, limits.maxTextChars);
+        const fit = await fitLongText(raw, limits.maxTextChars, options.summarizer);
         result = {
           ref,
           ok: true,
-          contentText: cut.text,
+          contentText: fit.contentText,
+          sections: fit.sections,
           structured: { extraction: 'text', format: ext.slice(1) },
-          metadata: { ...normalizeMetadata(md), truncated: cut.truncated },
+          metadata: {
+            ...normalizeMetadata(md),
+            truncated: fit.truncated,
+            summarized: fit.summarized,
+            sectionCount: fit.sections?.length,
+          },
         };
       }
     } else if (IMAGE_EXT.has(ext)) {

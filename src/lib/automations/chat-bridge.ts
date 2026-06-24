@@ -18,6 +18,7 @@ import {
   parseArtifactManifest,
   type ChatArtifactAttachment,
 } from '../artifacts/ui';
+import type { CodeRunDetails } from '../code-exec/types';
 import type { AgentStep } from '../control-system/loop';
 import type { Automation, AutomationRun } from './types';
 
@@ -179,6 +180,12 @@ function artifactsFromSteps(steps: AgentStep[]): ChatArtifactAttachment[] {
     if (step.type === 'tool_result' && step.tool?.startsWith('artifact.render_') && step.output) {
       const manifest = parseArtifactManifest(step.output);
       if (manifest) found.push(manifestToChatArtifact(manifest));
+    }
+    if (step.type === 'tool_result' && step.tool === 'code.execute') {
+      const run = (step.details as { codeRun?: CodeRunDetails } | undefined)?.codeRun;
+      for (const file of run?.files ?? []) {
+        if (file.artifactManifest) found.push(manifestToChatArtifact(file.artifactManifest));
+      }
     }
   }
   return dedupeArtifacts(found);

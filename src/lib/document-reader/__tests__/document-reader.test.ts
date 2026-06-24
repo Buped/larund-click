@@ -58,6 +58,48 @@ describe('document reader', () => {
     expect(results.every((result) => result.ok)).toBe(true);
   });
 
+  it('condenses a long document into section summaries (drill-back retained) instead of truncating the tail', async () => {
+    // Build a 60-"page" document with a unique marker only at the very end.
+    const pages: string[] = [];
+    for (let i = 1; i <= 60; i += 1) {
+      pages.push(`Page ${i} heading.\n` + `Body content for page ${i}. `.repeat(60));
+    }
+    pages[59] += '\nKEY_FINDING_AT_END: total revenue was 4 230 000 Ft.';
+    const longText = pages.join('\f');
+    const longIo: DocumentIO = {
+      ...io,
+      async extractText() {
+        return longText;
+      },
+    };
+    // No summarizer → extractive fallback (still per-section, no AI dependency).
+    const result = await readDocument(ref('C:\\docs\\big.docx'), { io: longIo });
+    expect(result.ok).toBe(true);
+    expect(result.metadata.summarized).toBe(true);
+    expect((result.sections?.length ?? 0)).toBeGreaterThan(1);
+    // The end of the document survives — it is NOT silently dropped.
+    const lastSection = result.sections?.[result.sections.length - 1];
+    expect(lastSection?.text).toContain('KEY_FINDING_AT_END');
+    // And the full original text of any section is available for drill-back.
+    expect(result.sections?.every((s) => s.text.length > 0)).toBe(true);
+  });
+
+  it('uses the injected summarizer for the map step when provided', async () => {
+    const longText = Array.from({ length: 40 }, (_, i) => `Section ${i}: ` + 'lorem ipsum '.repeat(200)).join('\f');
+    const longIo: DocumentIO = { ...io, async extractText() { return longText; } };
+    let calls = 0;
+    const result = await readDocument(ref('C:\\docs\\big2.docx'), {
+      io: longIo,
+      summarizer: async ({ text }) => {
+        calls += 1;
+        return `SUMMARY(${text.slice(0, 10)})`;
+      },
+    });
+    expect(calls).toBeGreaterThan(0);
+    expect(result.contentText).toContain('SUMMARY(');
+    expect(result.metadata.summarized).toBe(true);
+  });
+
   it('reads csv as structured rows', async () => {
     const result = await readDocument(ref('C:\\docs\\data.csv'), { io });
     expect(result.metadata.rowCount).toBe(3);

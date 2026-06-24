@@ -84,10 +84,31 @@ export interface ArtifactAsset {
   alt?: string;
 }
 
+/** One inline run of styled text inside a paragraph or list item. */
+export interface TextRun {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  /** Hex color, e.g. "#EE7E3A". */
+  color?: string;
+  /** Turns the run into a hyperlink. */
+  link?: string;
+}
+
+/** A list item; may carry styled runs and nested sub-items (max ~2-3 deep). */
+export interface ListItem {
+  text?: string;
+  runs?: TextRun[];
+  children?: ListItem[];
+}
+
 export type DocumentSection =
   | { type: 'cover'; title: string; subtitle?: string; kicker?: string; summary?: string }
   | { type: 'heading'; level: 1 | 2 | 3; text: string }
-  | { type: 'paragraph'; text: string }
+  // A paragraph is either plain `text` or styled `runs` (runs win when present).
+  | { type: 'paragraph'; text?: string; runs?: TextRun[] }
+  | { type: 'list'; ordered?: boolean; items: ListItem[] }
   | { type: 'callout'; tone: 'info' | 'warning' | 'success' | 'premium'; title?: string; text: string }
   | { type: 'table'; tableId: string }
   | { type: 'image'; assetId: string; caption?: string }
@@ -111,7 +132,14 @@ export interface DocumentArtifactModel {
   tables?: ArtifactTable[];
   charts?: ArtifactChart[];
   assets?: ArtifactAsset[];
+  /** Running header text (top of every page). */
+  header?: string;
   footer?: string;
+  /** Show "page X / Y" in the footer area. */
+  pageNumbers?: boolean;
+  /** Render a table of contents from the heading structure. When omitted, a TOC is
+   *  auto-generated for documents with 3+ level-1 headings. */
+  toc?: boolean;
 }
 
 export type SlideModel =

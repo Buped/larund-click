@@ -21,6 +21,15 @@ export type ControlAction =
   | { action: 'process.status'; process_id: string }
   | { action: 'process.kill'; process_id: string }
 
+  // ── Isolated Python code execution ────────────────────────────────────
+  // Runs agent-authored Python in a Larund-owned venv inside a throwaway run
+  // directory (input files copied in, new output files harvested out). Static
+  // isolation gate blocks out-of-sandbox FS access, network (unless allowed) and
+  // sandbox-escape calls. Risk is process_exec; network always needs approval.
+  | { action: 'code.execute'; code: string; input_refs?: string[]; timeout_secs?: number; allow_network?: boolean; label?: string }
+  // Approval-gated install of ONE package outside the base allowlist.
+  | { action: 'code.install_package'; package: string; reason?: string }
+
   // ── Files / folders ───────────────────────────────────────────────────
   | { action: 'file.read'; path: string }
   | { action: 'file.write'; path: string; content: string }
@@ -49,6 +58,47 @@ export type ControlAction =
   | { action: 'sheet.append'; path: string; sheet?: string; rows: string[][] }
   | { action: 'sheet.export_csv'; path: string; target_path: string; sheet?: string }
   | { action: 'sheet.to_json'; path: string; sheet?: string; max_rows?: number }
+  | { action: 'sheet.profile'; path: string; sheet?: string; sample_size?: number }
+  | {
+      action: 'sheet.query';
+      path: string;
+      sheet?: string;
+      filter?: { match?: 'all' | 'any'; conditions: Array<{ column: string; op: string; value?: unknown }> };
+      columns?: string[];
+      aggregate?: Array<{ op: string; column?: string; as?: string }>;
+      group_by?: string[];
+      limit?: number;
+    }
+  | {
+      action: 'sheet.format_range';
+      path: string;
+      sheet?: string;
+      range: string;
+      background?: string;
+      font_color?: string;
+      bold?: boolean;
+      italic?: boolean;
+      font_size?: number;
+      border?: boolean;
+      number_format?: string;
+      column_width?: number;
+      freeze_rows?: number;
+      freeze_cols?: number;
+      conditional?: { op: string; value: number; background: string; font_color?: string };
+    }
+  | {
+      action: 'sheet.add_chart';
+      path: string;
+      sheet?: string;
+      chart_type: 'bar' | 'line' | 'pie' | 'area' | 'doughnut' | 'scatter' | 'radar';
+      series: string[];
+      series_titles?: string[];
+      categories?: string[];
+      title?: string;
+      from_cell?: string;
+      to_cell?: string;
+    }
+  | { action: 'sheet.add_table'; path: string; sheet?: string; range: string; name?: string; style?: string }
 
   // Local documents. GUI Office automation is optional; file output is primary.
   | { action: 'doc.read'; path: string }

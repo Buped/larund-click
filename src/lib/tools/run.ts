@@ -37,6 +37,34 @@ function skillAllows(action: ControlAction, ctx: ToolContext): { ok: boolean; re
   };
 }
 
+function approvalSummary(action: ControlAction, risk: string): { reason: string; argsSummary: string } {
+  if (action.action === 'code.execute') {
+    const lines = String(action.code ?? '').split(/\r?\n/).filter((line) => line.trim()).length;
+    const inputs = action.input_refs?.length ? action.input_refs.join(', ') : 'none';
+    const network = action.allow_network ? 'requested (requires approval)' : 'off';
+    return {
+      reason: 'Run Python in the Larund isolated code workspace. The run uses a dedicated venv, copies declared inputs into a throwaway folder, and harvests generated files back as artifacts.',
+      argsSummary: [
+        action.label ? `Purpose: ${action.label}` : 'Purpose: Python data analysis / transformation',
+        `Code size: ${lines} non-empty line(s)`,
+        `Inputs: ${inputs}`,
+        `Timeout: ${action.timeout_secs ?? 45}s`,
+        `Network: ${network}`,
+      ].join('\n'),
+    };
+  }
+  if (action.action === 'code.install_package') {
+    return {
+      reason: 'Install one Python package into the Larund venv. This never runs silently because it changes the code-execution environment.',
+      argsSummary: `Package: ${action.package}${action.reason ? `\nReason: ${action.reason}` : ''}`,
+    };
+  }
+  return {
+    reason: `Action ${action.action} is classified ${risk} and needs approval.`,
+    argsSummary: sanitizeArgs(action),
+  };
+}
+
 /**
  * The single gated entry point for executing an action: schema is already
  * guaranteed by the parser; here we apply policy → approval → execute → audit.
@@ -83,11 +111,12 @@ export async function runControlAction(
 
   let approvalId: string | undefined;
   if (decision === 'ask') {
+    const approval = approvalSummary(action, risk);
     const approved = await ctx.approvals.request({
       action,
       risk,
-      reason: `Action ${action.action} is classified ${risk} and needs approval.`,
-      argsSummary,
+      reason: approval.reason,
+      argsSummary: approval.argsSummary,
     });
     if (!approved) {
       const result: ControlToolResult = { success: false, output: '', error: 'approval_denied', approvalRequired: true };

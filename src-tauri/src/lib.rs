@@ -24,6 +24,11 @@ pub fn run() {
             commands::process::process_start,
             commands::process::process_status,
             commands::process::process_kill,
+            // ── isolated Python code execution ───────────────────────────────
+            commands::code_exec::python_runtime_status,
+            commands::code_exec::python_ensure_runtime,
+            commands::code_exec::python_install_package,
+            commands::code_exec::code_execute,
             // ── files ────────────────────────────────────────────────────────
             commands::agent::file_read,
             commands::agent::file_write,
@@ -39,6 +44,11 @@ pub fn run() {
             // ── data (spreadsheets) ──────────────────────────────────────────
             commands::agent::sheet_read,
             commands::agent::sheet_write,
+            commands::agent::sheet_profile,
+            commands::agent::sheet_query,
+            commands::agent::sheet_format_range,
+            commands::agent::sheet_add_chart,
+            commands::agent::sheet_add_table,
             commands::documents::document_extract_text,
             commands::documents::document_extract_rich,
             commands::documents::docx_write,

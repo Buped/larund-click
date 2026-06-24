@@ -261,10 +261,26 @@ pub async fn artifact_render_pdf(
     if is_invoice {
         invoice::write_invoice_pdf(&output_path, &model)?;
     } else {
+        // Primary path: rich, design-token-driven HTML → PDF via LibreOffice (full
+        // CSS layout + embedded fonts so accents and styling survive). Fallback to
+        // the pure-Rust line-based writer when LibreOffice is not available.
         let html = pdf::render_html(&model, resolved_template.as_deref());
         let html_path = dir.join("output").join(make_output_name(&title, None, "html"));
-        std::fs::write(&html_path, html).map_err(|e| format!("html_write_failed: {e}"))?;
-        pdf::write_pdf(&output_path, &model)?;
+        std::fs::write(&html_path, &html).map_err(|e| format!("html_write_failed: {e}"))?;
+        let out_dir = output_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+        match libreoffice::convert(&html_path, "pdf", &out_dir) {
+            Ok(produced) => {
+                if produced != output_path {
+                    std::fs::rename(&produced, &output_path)
+                        .or_else(|_| std::fs::copy(&produced, &output_path).map(|_| ()))
+                        .map_err(|e| format!("pdf_move_failed: {e}"))?;
+                }
+            }
+            Err(_) => {
+                // LibreOffice unavailable/failed — fall back to the line-based PDF.
+                pdf::write_pdf(&output_path, &model)?;
+            }
+        }
     }
     let preview_path = dir.join("preview").join("thumbnail.png");
     preview::write_thumbnail(&preview_path, &title, "pdf")?;

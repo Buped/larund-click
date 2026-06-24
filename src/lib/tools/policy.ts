@@ -1,6 +1,7 @@
 import type { ControlAction, ToolRisk } from '../control-system/types';
 import type { ToolCategory } from './types';
 import { connectionToolDeclaredRisk } from '../connections/registry';
+import { getCodeExecApprovalMode } from '../code-exec/settings';
 
 export type PolicyDecision = 'auto' | 'ask' | 'block';
 
@@ -62,12 +63,15 @@ export function policyForAutonomyMode(mode: AutonomyMode): RiskPolicy {
 /** Static category per action name. */
 export const ACTION_CATEGORY: Record<string, ToolCategory> = {
   'cli.run': 'runtime', 'process.start': 'runtime', 'process.status': 'runtime', 'process.kill': 'runtime',
+  'code.execute': 'runtime', 'code.install_package': 'runtime',
   'file.read': 'files', 'file.write': 'files', 'file.edit': 'files', 'file.list': 'files',
   'file.mkdir': 'files', 'file.copy': 'files', 'file.move': 'files', 'file.delete': 'files',
   'file.search': 'files', 'file.tree': 'files', 'file.exists': 'files', 'file.metadata': 'files',
   'document.read': 'documents', 'document.read_many': 'documents', 'document.summarize': 'documents',
   'folder.scan': 'documents', 'folder.read_relevant': 'documents',
   'sheet.read': 'data', 'sheet.write': 'data', 'sheet.append': 'data', 'sheet.export_csv': 'data', 'sheet.to_json': 'data',
+  'sheet.profile': 'data', 'sheet.query': 'data',
+  'sheet.format_range': 'data', 'sheet.add_chart': 'data', 'sheet.add_table': 'data',
   'doc.read': 'documents', 'doc.write_txt': 'documents', 'doc.write_docx': 'documents',
   'artifact.plan': 'artifacts', 'artifact.render_pdf': 'artifacts', 'artifact.render_docx': 'artifacts',
   'artifact.render_pptx': 'artifacts', 'artifact.convert': 'artifacts', 'artifact.preview': 'artifacts',
@@ -140,6 +144,9 @@ export function assessRisk(action: ControlAction): ToolRisk {
       return action.risk ?? commandRisk(action.cmd);
     case 'process.start':
       return 'process_exec';
+    case 'code.execute':
+    case 'code.install_package':
+      return 'process_exec';
     case 'process.status':
       return 'read_only';
     case 'process.kill':
@@ -149,12 +156,14 @@ export function assessRisk(action: ControlAction): ToolRisk {
     case 'file.exists': case 'file.metadata': case 'sheet.read':
     case 'document.read': case 'document.read_many': case 'document.summarize':
     case 'folder.scan': case 'folder.read_relevant': case 'sheet.to_json':
+    case 'sheet.profile': case 'sheet.query':
     case 'doc.read': case 'artifact.plan': case 'artifact.preview': case 'artifact.verify':
     case 'artifact.list': case 'artifact.pdf_extract_text': case 'artifact.pdf_metadata':
     case 'artifact.pdf_page_count':
       return 'read_only';
     case 'file.write': case 'file.edit': case 'file.mkdir': case 'file.copy':
     case 'sheet.write': case 'sheet.append': case 'sheet.export_csv':
+    case 'sheet.format_range': case 'sheet.add_chart': case 'sheet.add_table':
     case 'doc.write_txt': case 'doc.write_docx': case 'clipboard.set':
     case 'artifact.render_pdf': case 'artifact.render_docx': case 'artifact.render_pptx':
     case 'artifact.open': case 'artifact.copy_to': case 'artifact.pdf_merge': case 'artifact.pdf_split':
@@ -224,5 +233,13 @@ export function decide(action: ControlAction, policy: RiskPolicy = DEFAULT_POLIC
   let decision = policy[risk] ?? 'ask';
   // Hard overrides: destructive shell + credential access never auto-run.
   if (action.action === 'cli.run' && isDangerousCommand(action.cmd)) decision = 'ask';
+  // Code execution follows the dedicated code-exec approval setting, independent
+  // of the autonomy policy: default is always-ask; "auto_local" lets non-network
+  // runs through; network ALWAYS asks. Installing a package always asks.
+  if (action.action === 'code.execute') {
+    if (action.allow_network) decision = 'ask';
+    else decision = getCodeExecApprovalMode() === 'auto_local' ? 'auto' : 'ask';
+  }
+  if (action.action === 'code.install_package') decision = 'ask';
   return { risk, decision };
 }

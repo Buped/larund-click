@@ -20,6 +20,7 @@ import { BUILTIN_SANDBOX_PROFILES } from '../lib/sandbox/profiles';
 import { GatewayTab } from './phase3';
 import { McpHubTab, CustomApiTab, LocalCatalogTab } from './phase4';
 import { setTheme as applyTheme, getStoredThemePref, themeLabel, themePrefFromSetting } from '../lib/theme';
+import { getCodeExecApprovalMode, setCodeExecApprovalMode, type CodeExecApprovalMode } from '../lib/code-exec/settings';
 
 function emailInitials(email: string): string {
   const local = email.split('@')[0];
@@ -248,6 +249,9 @@ export function SettingsScreen({ onClose, user, credits, onSignOut, activeProjec
   const [fontSize,   setFontSize  ] = useState("Medium");
   const [startupApp, setStartupApp] = useState("Last chat");
   const [autonomyMode, setAutonomyMode] = useState("Semi-automatic");
+  const [codeApproval, setCodeApproval] = useState(() => (
+    getCodeExecApprovalMode() === 'auto_local' ? 'Auto for local read-only' : 'Always ask'
+  ));
   const [pauseHrs,   setPauseHrs  ] = useState("8 hours");
   const [notifSound, setNotifSound] = useState(true);
   const [autoStart,  setAutoStart ] = useState(false);
@@ -372,6 +376,12 @@ export function SettingsScreen({ onClose, user, credits, onSignOut, activeProjec
     await updateSettings({ autonomy_mode: mode });
   }
 
+  function handleCodeApprovalChange(v: string) {
+    setCodeApproval(v);
+    const mode: CodeExecApprovalMode = v === 'Auto for local read-only' ? 'auto_local' : 'always_ask';
+    setCodeExecApprovalMode(mode);
+  }
+
   async function handleClearMemories() {
     for (const m of memories) await deleteMemoryEntry(m.id);
     setMemories([]);
@@ -490,6 +500,7 @@ export function SettingsScreen({ onClose, user, credits, onSignOut, activeProjec
               <>
                 <SettingRow label="Control system" sub="No-mouse operator: CLI, files, browser DOM, connections and skills"><span style={{ fontSize: 12.5, color: "var(--text-hint)" }}>Always on</span></SettingRow>
                 <SettingRow label="Autonomy mode" sub="Controls when the operator asks before tool calls"><Select value={autonomyMode} options={["Semi-automatic","Manual","Full autonomous"]} onChange={handleAutonomyChange} /></SettingRow>
+                <SettingRow label="Code execution approval" sub="Python code runs always ask by default; local no-network analysis can auto-run only if you opt in"><Select value={codeApproval} options={["Always ask","Auto for local read-only"]} onChange={handleCodeApprovalChange} /></SettingRow>
                 <SettingRow label="External writes" sub="Semi asks before remote writes, sends and logins; full acts silently except genuinely destructive actions"><span style={{ fontSize: 12.5, color: "var(--text-hint)" }}>Policy enforced</span></SettingRow>
                 <SettingRow label="Max task duration" sub="Abort task if it runs longer than this"><Select value="15 minutes" options={["5 minutes","10 minutes","15 minutes","30 minutes","No limit"]} onChange={() => {}} /></SettingRow>
                 <SettingRow label="Proactive suggestions" sub="Click suggests follow-up tasks based on context"><Toggle checked={true} onChange={() => {}} /></SettingRow>
@@ -651,6 +662,7 @@ export function SettingsScreen({ onClose, user, credits, onSignOut, activeProjec
             {area === "personal" && section === "advanced" && (
               <>
                 <SettingRow label="Autonomy mode" sub="Controls when Larund asks before tool calls"><Select value={autonomyMode} options={["Semi-automatic","Manual","Full autonomous"]} onChange={handleAutonomyChange} /></SettingRow>
+                <SettingRow label="Code execution approval" sub="Default is conservative: every Python run asks. Network and package installs always ask."><Select value={codeApproval} options={["Always ask","Auto for local read-only"]} onChange={handleCodeApprovalChange} /></SettingRow>
                 <SettingRow label="No-mouse guarantee" sub="Larund never controls mouse/pixels; it acts through structured tools only"><span style={{ fontSize: 12.5, color: "var(--success)" }}>Enforced</span></SettingRow>
                 <div style={{ padding: "14px 0 8px", fontSize: 12.5, color: "var(--text-hint)" }}>Sandbox profiles constrain filesystem, network, risk, credential, process and send access.</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
