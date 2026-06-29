@@ -84,7 +84,7 @@ export function OperatorPanel() {
       <section>
         <h4 style={{ margin: '0 0 8px', fontSize: 13 }}>Tool catalog</h4>
         <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>
-          {TOOL_CATALOG.length} structured tools · No mouse / cursor / visual control.
+          {TOOL_CATALOG.length} structured tools · CLI, files, browser pages, apps and connections.
         </span>
       </section>
     </div>

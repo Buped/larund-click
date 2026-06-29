@@ -202,7 +202,7 @@ This is an API-first task. A local TXT/DOCX file is NEVER an acceptable result.
 const localOffice = `---
 name: local-office
 description: "Create/read local Excel, CSV, text and document files directly without GUI Office control."
-allowed_tools: ["document.read", "doc.read", "doc.write_txt", "doc.write_docx", "sheet.read", "sheet.write", "sheet.append", "sheet.export_csv", "sheet.to_json", "file.exists"]
+allowed_tools: ["document.read", "doc.read", "doc.write_txt", "doc.write_docx", "sheet.read", "sheet.write", "sheet.append", "sheet.export_csv", "sheet.to_json", "sheet.format_range", "sheet.add_table", "sheet.add_chart", "file.exists"]
 requires_connections: []
 risk: "local_write"
 trigger: "excel xlsx csv word docx txt local office libreoffice"
@@ -214,9 +214,17 @@ Use this skill for local spreadsheet, CSV, DOCX, TXT, and office-style file work
 ## Process
 1. Determine the requested local format and output path.
 2. For spreadsheets, use sheet.write, sheet.append, sheet.export_csv, or sheet.to_json.
-3. For text/DOCX output, use doc.write_txt or doc.write_docx.
-4. Avoid GUI Office automation. Opening a file is preview only, not editing.
-5. If the user asked for Google Sheets or Google Docs, switch to the cloud skill instead.
+3. For Excel/XLSX reports, produce a polished workbook: use .xlsx by default, write
+   a main data sheet plus a summary sheet, add a native Excel Table, apply header
+   styling, freeze panes, column widths, currency/percent/date formats, conditional
+   fills, and add a useful chart when the request is a report/performance workbook.
+   The table must visibly look styled in LibreOffice too: dark header, banded rows,
+   borders, and colored KPI cells for change/risk/trend-style fields.
+4. For vague report wording like "and everything like that" / "meg minden ilyesmi",
+   expand the schema with business-relevant columns instead of creating a tiny grid.
+5. For text/DOCX output, use doc.write_txt or doc.write_docx.
+6. Avoid GUI Office automation. Opening a file is preview only, not editing.
+7. If the user asked for Google Sheets or Google Docs, switch to the cloud skill instead.
 
 ## Verification
 - Read spreadsheet outputs with sheet.read or sheet.to_json.
@@ -515,7 +523,7 @@ Use this skill after every artifact render and before task.complete.
 const dataAnalysisAndCode = `---
 name: data-analysis-and-code
 description: "Run real computation on company data with isolated Python (pandas/numpy/matplotlib): statistics, correlation, trend/regression, outlier & anomaly detection, custom multi-step transforms, chart generation, bulk text/regex processing, and programmatic mapping of an existing Excel/Doc structure."
-allowed_tools: ["code.execute", "code.install_package", "sheet.read", "sheet.profile", "sheet.query", "sheet.write", "sheet.format_range", "sheet.add_chart", "document.read", "file.read", "file.write", "ask_user", "task.complete"]
+allowed_tools: ["code.execute", "code.install_package", "sheet.read", "sheet.profile", "sheet.query", "sheet.write", "sheet.format_range", "sheet.add_table", "sheet.add_chart", "document.read", "file.read", "file.write", "ask_user", "task.complete"]
 requires_connections: []
 risk: "process_exec"
 trigger: "elemzes elemzés statisztika statisztikai diagram grafikon abra ábra python kod kód korrelacio korreláció regresszio regresszió trend szoras szórás eloszlas eloszlás kiugro kiugró anomalia anomália outlier analysis statistics correlation regression deviation distribution chart plot scatter histogram percentile anomaly"
@@ -544,7 +552,7 @@ tests, or programmatically mapping the structure of an existing Excel/Doc.
    (\`plt.savefig("chart.png")\`); it is harvested and shown inline in chat. Never
    return a long inline base64 string.
 5. Final goal is a formatted Word/Excel/PPTX? Python does the COMPUTATION only; hand
-   the result to \`sheet.write\`/\`sheet.format_range\` (Excel) or the
+   the result to \`sheet.write\`/\`sheet.format_range\`/\`sheet.add_table\`/\`sheet.add_chart\` (Excel) or the
    artifact.render_* engine (Word/PPTX). NEVER write the polished .xlsx/.docx/.pptx
    directly from Python — Larund already has a unified, design-token-driven engine.
    openpyxl/python-docx/python-pptx in the venv are for READING/inspecting existing

@@ -93,7 +93,7 @@ function RoleBadge({ role }: { role: 'owner' | 'member' }) {
         padding: '2px 6px',
         borderRadius: 5,
         color: owner ? 'var(--accent)' : 'var(--text-hint)',
-        background: owner ? 'rgba(74,158,255,0.14)' : 'rgba(var(--ov-color),0.06)',
+        background: owner ? 'rgba(var(--accent-rgb),0.14)' : 'rgba(var(--ov-color),0.06)',
       }}
     >
       {owner ? 'Owner' : 'Member'}
@@ -166,12 +166,12 @@ function ProjectSelector({
   return (
     <div ref={ref} style={{ position: 'relative', padding: '0 10px 10px' }}>
       <button onClick={() => setOpen((v) => !v)} className="nav-ws-btn" title="Switch project">
-        <span style={{ width: 22, height: 22, borderRadius: 6, background: 'rgba(74,158,255,0.16)', display: 'grid', placeItems: 'center', flex: 'none' }}>
-          <Icon name={activeProject?.icon ?? 'folder'} size={12} stroke={1.7} style={{ color: 'var(--accent)' }} />
+        <span style={{ width: 30, height: 30, borderRadius: 9, background: 'var(--bg-surface)', border: '1px solid var(--border)', display: 'grid', placeItems: 'center', flex: 'none', color: 'var(--text-muted)' }}>
+          <Icon name={activeProject?.icon ?? 'folder'} size={15} stroke={1.8} />
         </span>
         <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
-          <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{activeProject?.name ?? 'Project'}</span>
-          <span style={{ display: 'block', fontSize: 10, color: 'var(--text-hint)', textTransform: 'uppercase', letterSpacing: '.05em' }}>{activeProject?.kind ?? 'project'}</span>
+          <span style={{ display: 'block', fontSize: 13.5, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{activeProject?.name ?? 'Project'}</span>
+          <span style={{ display: 'block', fontSize: 10, fontWeight: 600, color: 'var(--text-hint)', textTransform: 'uppercase', letterSpacing: '.14em', marginTop: 2 }}>{activeProject?.kind ?? 'project'}</span>
         </span>
         <Icon name="chevronDown" size={11} stroke={1.6} style={{ color: 'var(--text-hint)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
       </button>
@@ -312,11 +312,11 @@ function NotificationBell({
               <div
                 key={n.id}
                 onClick={() => { if (!n.readAt && !actionable(n)) void markCloudRead(n.id).then(load); }}
-                onMouseEnter={(e) => { if (!actionable(n)) e.currentTarget.style.background = n.readAt ? 'rgba(var(--ov-color),0.03)' : 'rgba(74,158,255,0.10)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = n.readAt ? 'transparent' : 'rgba(74,158,255,0.07)'; }}
+                onMouseEnter={(e) => { if (!actionable(n)) e.currentTarget.style.background = n.readAt ? 'rgba(var(--ov-color),0.03)' : 'rgba(var(--accent-rgb),0.10)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = n.readAt ? 'transparent' : 'rgba(var(--accent-rgb),0.07)'; }}
                 style={{
                   padding: '11px 12px', borderRadius: 10, marginBottom: 2, position: 'relative',
-                  background: n.readAt ? 'transparent' : 'rgba(74,158,255,0.07)',
+                  background: n.readAt ? 'transparent' : 'rgba(var(--accent-rgb),0.07)',
                   transition: 'background .12s',
                   cursor: !n.readAt && !actionable(n) ? 'pointer' : 'default',
                 }}
@@ -372,8 +372,8 @@ export function NavRail({
   return (
     <nav className="nav-rail">
       <div className="nav-brand">
-        <ClickMark size={26} radius={8} glow />
-        <span className="nav-brand-name">Larund</span>
+        <ClickMark size={32} radius={11} glow />
+        <span className="nav-brand-name" style={{ fontSize: 18 }}>Larund</span>
       </div>
 
       <ProjectSelector
@@ -388,7 +388,7 @@ export function NavRail({
       <div className="nav-items">
         {NAV.filter((item) => !item.adminOnly || isAdmin).map((item) => (
           <button key={item.id} className={`nav-item${route === item.id ? ' nav-item--active' : ''}`} onClick={() => onNavigate(item.id)} title={item.label}>
-            <Icon name={item.icon} size={16} stroke={1.6} />
+            <Icon name={item.icon} size={18} stroke={1.7} />
             <span>{item.label}</span>
           </button>
         ))}

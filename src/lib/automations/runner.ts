@@ -2,6 +2,7 @@ import { createNotification } from '../notifications/store';
 import { enqueueTask } from '../queue/store';
 import { ensureAutomationQueueProcessor } from './agent-processor';
 import { normalizeAutomation, referencedConnectionIds, referencedSkillIds, referencedMcpIds, type NormalizedAutomation } from './migrate';
+import { isAutomationSetupReady, renderProvisionedBindingsBlock } from './setup';
 import { resolveReferencedContext } from '../mentions/resolve';
 import {
   createAutomationRun,
@@ -28,9 +29,14 @@ export async function runAutomation(
     return { automationRunId: skipped.id };
   }
 
-  const run = await createAutomationRun({ automationId, status: 'queued', triggerPayload });
+  const norm = normalizeAutomation(automation);
+  if (!isAutomationSetupReady(norm)) {
+    const status = norm.setupPlan.status;
+    throw new Error(`Automation setup is not ready (${status}). Run setup before starting this automation.`);
+  }
+
+  const run = await createAutomationRun({ automationId, status: 'queued', triggerPayload: { ...triggerPayload, automationPhase: triggerPayload.automationPhase ?? 'run' } });
   try {
-    const norm = normalizeAutomation(automation);
     const allReferences = [
       ...norm.referencedContext,
       ...norm.steps.flatMap((s) => s.referencedContext),
@@ -101,6 +107,8 @@ export function renderAutomationPrompt(a: NormalizedAutomation, payload: Record<
   }
 
   if (resolvedContext) lines.push('', resolvedContext);
+  const bindingsBlock = renderProvisionedBindingsBlock(a.setupPlan);
+  if (bindingsBlock) lines.push('', bindingsBlock, '- Use these provisioned resources as the durable targets for this run. Do not recreate setup infrastructure during a recurring run.');
 
   const triggerContext = renderTriggerContext(payload);
   if (triggerContext.length) {

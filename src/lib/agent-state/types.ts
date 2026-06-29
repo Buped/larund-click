@@ -62,6 +62,34 @@ export interface UserCorrection {
   timestamp: number;
 }
 
+export interface SpreadsheetExpectedScope {
+  kind: 'spreadsheet_rows';
+  sourcePath: string;
+  sheet?: string;
+  headerRow: number;
+  dataRows: number;
+  requiredRows: number[];
+  requiredColumns: string[];
+  allowPartial: boolean;
+}
+
+export interface BulkTaskProgress {
+  taskId: string;
+  inputCount: number;
+  completedCount: number;
+  failedCount: number;
+  skippedCount: number;
+  allowPartial: boolean;
+  items: Array<{
+    id: string;
+    label: string;
+    rowIndex?: number;
+    status: 'pending' | 'running' | 'done' | 'failed' | 'ambiguous' | 'skipped' | 'not_found';
+    result?: unknown;
+    error?: string;
+  }>;
+}
+
 export interface ActiveTaskState {
   id: string;
   originalUserGoal: string;
@@ -80,6 +108,8 @@ export interface ActiveTaskState {
     values?: string[];
     source?: string;
   };
+  expectedScope?: SpreadsheetExpectedScope;
+  bulkProgress?: BulkTaskProgress;
   referencedInputs?: import('../references/types').DocumentReference[];
   filesRead?: string[];
   activeSkills?: import('../skills/types').SkillRuntimeContext[];

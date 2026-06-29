@@ -20,9 +20,33 @@ export interface UserCredits {
   tier: string;
   visible_balance: number;
   monthly_credit_limit: number;
+  unlimited?: boolean;
+}
+
+export async function isUserAdminForCredits(userId: string): Promise<boolean> {
+  if (!userId) return false;
+  try {
+    const { data, error } = await supabase.rpc('is_admin', { uid: userId });
+    if (error) return false;
+    return data === true;
+  } catch {
+    return false;
+  }
 }
 
 export async function getUserCredits(userId: string): Promise<UserCredits | null> {
+  const unlimited = await isUserAdminForCredits(userId);
+  if (unlimited) {
+    return {
+      uc_balance: Number.POSITIVE_INFINITY,
+      monthly_uc_limit: Number.POSITIVE_INFINITY,
+      tier: 'admin',
+      visible_balance: Number.POSITIVE_INFINITY,
+      monthly_credit_limit: Number.POSITIVE_INFINITY,
+      unlimited: true,
+    };
+  }
+
   const { data, error } = await supabase
     .from('user_credits')
     .select('uc_balance, monthly_uc_limit, tier')

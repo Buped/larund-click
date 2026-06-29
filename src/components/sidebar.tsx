@@ -70,12 +70,6 @@ function ChatRow({ chat, active, onSelect, onRename, onDelete }: {
         className={`sidebar-row${active ? ' sidebar-row--active' : ''}`}
         title={chat.title}
       >
-        <span style={{
-          width: 6, height: 6, borderRadius: '50%', flex: 'none',
-          background: active ? 'var(--accent)' : 'rgba(var(--ov-color),0.18)',
-          transition: 'background .15s',
-        }} />
-
         <span style={{ flex: 1, minWidth: 0 }}>
           {renaming ? (
             <input
@@ -102,7 +96,7 @@ function ChatRow({ chat, active, onSelect, onRename, onDelete }: {
                 fontSize: 13, flex: 1, minWidth: 0,
                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                 color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                fontWeight: active ? 500 : 400,
+                fontWeight: active ? 600 : 500,
                 transition: 'color .15s',
               }}>
                 {chat.title}
@@ -215,10 +209,11 @@ export function Sidebar({ activeChat, onChatChange, userEmail, projectId, refres
   const username = userEmail ? userEmail.split('@')[0] : 'User';
   const isNewChat = activeChat === null;
 
-  const creditPct = credits && credits.monthly_credit_limit > 0
+  const creditPct = credits && !credits.unlimited && credits.monthly_credit_limit > 0
     ? Math.min(100, Math.round((credits.visible_balance / credits.monthly_credit_limit) * 100))
     : null;
-  const creditColor = creditPct === null ? 'var(--text-hint)'
+  const creditColor = credits?.unlimited ? 'var(--success)'
+    : creditPct === null ? 'var(--text-hint)'
     : creditPct >= 60 ? 'var(--success)'
     : creditPct >= 25 ? 'var(--warning)'
     : 'var(--danger)';
@@ -247,15 +242,13 @@ export function Sidebar({ activeChat, onChatChange, userEmail, projectId, refres
         >
           <span style={{
             display: 'grid', placeItems: 'center', flex: 'none',
-            color: isNewChat ? 'var(--text-primary)' : 'var(--text-hint)',
-            transition: 'color .15s',
+            color: 'var(--accent)',
           }}>
-            <Icon name="plus" size={12} stroke={2.2} />
+            <Icon name="plus" size={15} stroke={2.2} />
           </span>
           <span style={{
-            fontSize: 13, fontWeight: isNewChat ? 500 : 400,
-            color: isNewChat ? 'var(--text-primary)' : 'var(--text-muted)',
-            transition: 'color .15s',
+            fontSize: 13, fontWeight: 600,
+            color: 'var(--accent)',
           }}>
             New chat
           </span>
@@ -296,7 +289,12 @@ export function Sidebar({ activeChat, onChatChange, userEmail, projectId, refres
             Workspace
           </div>
         </div>
-        {creditPct !== null ? (
+        {credits?.unlimited ? (
+          <div className="credit-pill" style={{ color: creditColor }} title="Admin unlimited credits">
+            <Icon name="battery" size={13} stroke={1.5} />
+            <span>∞</span>
+          </div>
+        ) : creditPct !== null ? (
           <div className="credit-pill" style={{ color: creditColor }}>
             <Icon name="battery" size={13} stroke={1.5} />
             <span>{creditPct}%</span>

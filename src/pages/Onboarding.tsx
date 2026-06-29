@@ -66,7 +66,7 @@ function ProgressBar({ step }: { step: number }) {
 
 const FEATURES = [
   { icon: 'zap',      bg: 'rgba(245,165,36,.13)', color: '#F5A524', title: 'Structured tools',    desc: 'Uses files, CLI, browser DOM and skills' },
-  { icon: 'calendar', bg: 'rgba(74,158,255,.13)',  color: 'var(--accent)',  title: 'Scheduled tasks',    desc: 'Runs tasks automatically while you sleep' },
+  { icon: 'calendar', bg: 'rgba(var(--accent-rgb),.13)',  color: 'var(--accent)',  title: 'Scheduled tasks',    desc: 'Runs tasks automatically while you sleep' },
   { icon: 'eye',      bg: 'rgba(62,207,142,.13)',  color: 'var(--success)', title: 'No mouse control',   desc: 'Works without cursor or pixel control' },
   { icon: 'lock',     bg: 'rgba(139,92,246,.13)',  color: '#8B5CF6',       title: 'Always in control',  desc: 'Pauses and asks before risky actions' },
 ];
@@ -191,7 +191,7 @@ const MODES: { id: AutonomyMode; iconBg: string; iconColor: string; icon: string
     desc: 'Runs trusted local and configured external actions automatically; still asks for destructive, send or credential actions.',
   },
   {
-    id: 'semi', icon: 'shield', iconBg: 'rgba(74,158,255,.15)', iconColor: 'var(--accent)',
+    id: 'semi', icon: 'shield', iconBg: 'rgba(var(--accent-rgb),.15)', iconColor: 'var(--accent)',
     title: 'Semi-Autonomous', badge: 'Recommended',
     desc: 'Read-only and safe local writes run automatically; external writes and risky actions ask first.',
   },
@@ -218,7 +218,7 @@ function StepAutonomy({ mode, setMode, onNext }: {
           const sel = mode === m.id;
           return (
             <button key={m.id} onClick={() => setMode(m.id)} style={{
-              background: sel ? 'rgba(74,158,255,.08)' : 'var(--bg-elevated)',
+              background: sel ? 'rgba(var(--accent-rgb),.08)' : 'var(--bg-elevated)',
               border: `1px solid ${sel ? 'var(--accent)' : 'var(--border-md)'}`,
               borderLeft: `3px solid ${sel ? 'var(--accent)' : 'var(--border-md)'}`,
               borderRadius: 10, padding: '13px 14px',
@@ -239,7 +239,7 @@ function StepAutonomy({ mode, setMode, onNext }: {
                   {m.badge && (
                     <span style={{
                       fontSize: 10.5, fontWeight: 600, color: 'var(--accent)',
-                      background: 'rgba(74,158,255,.15)', border: '1px solid rgba(74,158,255,.3)',
+                      background: 'rgba(var(--accent-rgb),.15)', border: '1px solid rgba(var(--accent-rgb),.3)',
                       borderRadius: 5, padding: '2px 7px',
                     }}>{m.badge}</span>
                   )}
@@ -297,7 +297,7 @@ function StepHowItWorks({ onNext }: { onNext: () => void }) {
           <div key={i} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
             <span style={{
               width: 32, height: 32, borderRadius: '50%', flex: 'none',
-              background: 'rgba(74,158,255,.12)', border: '1px solid rgba(74,158,255,.25)',
+              background: 'rgba(var(--accent-rgb),.12)', border: '1px solid rgba(var(--accent-rgb),.25)',
               display: 'grid', placeItems: 'center',
               fontSize: 14, fontWeight: 700, color: 'var(--accent)',
             }}>{i + 1}</span>
@@ -372,7 +372,7 @@ function StepAllSet({ user, mode, screenGranted, accessGranted, onComplete }: {
         display: 'flex', alignItems: 'center', gap: 14,
       }}>
         <div style={{
-          width: 42, height: 42, borderRadius: 10, background: 'rgba(74,158,255,.15)',
+          width: 42, height: 42, borderRadius: 10, background: 'rgba(var(--accent-rgb),.15)',
           display: 'grid', placeItems: 'center', flex: 'none',
         }}>
           <Icon name="zap" size={18} stroke={1.5} style={{ color: 'var(--accent)' }} />
@@ -384,10 +384,10 @@ function StepAllSet({ user, mode, screenGranted, accessGranted, onComplete }: {
           ) : credits ? (
             <>
               <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)' }}>
-                {Number(credits.visible_balance).toFixed(2).replace(/\.00$/, '')} kredit
+                {credits.unlimited ? '∞ kredit' : `${Number(credits.visible_balance).toFixed(2).replace(/\.00$/, '')} kredit`}
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-hint)', marginTop: 2 }}>
-                {credits.monthly_credit_limit} kredit monthly limit · <span style={{ textTransform: 'capitalize' }}>{credits.tier}</span> plan
+                {credits.unlimited ? 'Unlimited monthly usage' : `${credits.monthly_credit_limit} kredit monthly limit`} · <span style={{ textTransform: 'capitalize' }}>{credits.tier}</span> plan
               </div>
             </>
           ) : (

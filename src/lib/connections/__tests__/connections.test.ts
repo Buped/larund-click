@@ -1,12 +1,16 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import { createConnectionRegistry, listConnections, connectionStatus, ALL_MANIFESTS } from '../registry';
 import { githubManifest } from '../providers/github/manifest';
+import { createConnectedAccount, __resetConnectedAccountsForTests } from '../connectedAccounts';
 
 type MockGlobal = { LARUND_ALLOW_MOCK_CONNECTIONS?: unknown };
 function allowMocks(v: boolean) { (globalThis as MockGlobal).LARUND_ALLOW_MOCK_CONNECTIONS = v; }
 
 describe('connections', () => {
-  afterEach(() => { delete (globalThis as MockGlobal).LARUND_ALLOW_MOCK_CONNECTIONS; });
+  afterEach(() => {
+    delete (globalThis as MockGlobal).LARUND_ALLOW_MOCK_CONNECTIONS;
+    __resetConnectedAccountsForTests();
+  });
 
   it('lists all providers with statuses', () => {
     const list = listConnections();
@@ -62,5 +66,21 @@ describe('connections', () => {
     expect((await reg.call('nope', 'x', {})).error).toContain('unknown_connection');
     expect((await reg.call('github', 'no_such_tool', {})).error).toContain('unknown_tool');
     expect((await reg.call('slack', 'send_message', {})).error).toContain('scaffold');
+  });
+
+  it('recognizes workspace-scoped Google aliases as the Google Workspace connection', async () => {
+    await createConnectedAccount({
+      ctx: { userId: 'alice', workspaceId: 'project-1' },
+      providerId: 'google-workspace',
+      accountLabel: 'Google',
+      authType: 'oauth2',
+      tokens: { access_token: 'google-token' },
+    });
+
+    const reg = createConnectionRegistry('alice', 'project-1');
+
+    expect(reg.isConfigured('google-workspace')).toBe(true);
+    expect(reg.isConfigured('gmail')).toBe(true);
+    expect(reg.isConfigured('google-sheets')).toBe(true);
   });
 });

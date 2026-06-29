@@ -31,7 +31,7 @@ function paletteFor(ref: Pick<DocumentReference, 'kind' | 'mimeType'>): { icon: 
       return { icon: 'link', fg: '#b48cff', bg: 'rgba(180,140,255,.13)', border: 'rgba(180,140,255,.4)' };
     default:
       // blue/accent — files
-      return { icon: 'fileText', fg: 'var(--accent)', bg: 'rgba(74,158,255,.13)', border: 'rgba(74,158,255,.4)' };
+      return { icon: 'fileText', fg: 'var(--accent)', bg: 'rgba(var(--accent-rgb),.13)', border: 'rgba(var(--accent-rgb),.4)' };
   }
 }
 

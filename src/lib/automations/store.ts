@@ -54,6 +54,7 @@ export async function createAutomation(input: CreateAutomationInput): Promise<Au
     steps: input.steps ?? [],
     verificationChecklist: input.verificationChecklist,
     safetyPolicy: input.safetyPolicy,
+    setupPlan: input.setupPlan,
     createdAt: now,
     updatedAt: now,
     metadata: input.metadata,

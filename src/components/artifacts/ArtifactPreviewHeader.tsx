@@ -34,7 +34,7 @@ export function ArtifactPreviewHeader({
     }}>
       <span style={{
         width: 30, height: 30, borderRadius: 8, display: 'grid', placeItems: 'center',
-        background: 'rgba(74,158,255,.13)', color: 'var(--accent)', flex: 'none',
+        background: 'rgba(var(--accent-rgb),.13)', color: 'var(--accent)', flex: 'none',
       }}>
         <Icon name="fileText" size={15} />
       </span>

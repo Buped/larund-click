@@ -15,7 +15,9 @@
 use serde::Deserialize;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// One explicit cell edit, e.g. `{ "ref": "B2", "value": "42" }`.
 #[derive(Debug, Clone, Deserialize)]
@@ -28,6 +30,7 @@ pub struct CellEdit {
 enum Format {
     Xlsx,
     Csv,
+    Ods,
     /// Readable (calamine) but not writable here.
     ReadOnly,
 }
@@ -36,7 +39,8 @@ fn detect_format(path: &str) -> Format {
     match path.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
         "csv" | "tsv" | "txt" => Format::Csv,
         "xlsx" | "xlsm" => Format::Xlsx,
-        "xls" | "ods" => Format::ReadOnly,
+        "ods" => Format::Ods,
+        "xls" => Format::ReadOnly,
         _ => Format::Xlsx,
     }
 }
@@ -175,10 +179,127 @@ pub fn write(
     match detect_format(path) {
         Format::Csv => write_csv(path, rows, cells, start_cell),
         Format::Xlsx => write_xlsx(path, sheet, rows, cells, start_cell, mode),
+        Format::Ods => write_ods_roundtrip(path, sheet, rows, cells, start_cell, mode),
         Format::ReadOnly => Err(format!(
-            "unsupported_write_format: cannot write '{path}'. Save as .xlsx (opens in LibreOffice Calc and Excel) or .csv instead."
+            "unsupported_write_format: cannot write '{path}'. Ask before changing format, or save as .xlsx/.csv only when the user explicitly approves."
         )),
     }
+}
+
+fn libreoffice_candidates() -> Vec<PathBuf> {
+    let mut candidates = vec![PathBuf::from("soffice"), PathBuf::from("libreoffice")];
+    #[cfg(target_os = "windows")]
+    {
+        candidates.push(PathBuf::from(r"C:\Program Files\LibreOffice\program\soffice.exe"));
+        candidates.push(PathBuf::from(r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"));
+    }
+    candidates
+}
+
+fn find_libreoffice() -> Option<PathBuf> {
+    for candidate in libreoffice_candidates() {
+        if Command::new(&candidate)
+            .arg("--version")
+            .output()
+            .is_ok_and(|out| out.status.success())
+        {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn unique_temp_dir() -> Result<PathBuf, String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis();
+    let dir = std::env::temp_dir().join(format!("larund_ods_roundtrip_{stamp}"));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("failed_to_create_temp_dir: {e}"))?;
+    Ok(dir)
+}
+
+fn convert_with_libreoffice(soffice: &Path, input: &Path, to: &str, out_dir: &Path) -> Result<PathBuf, String> {
+    let output = Command::new(soffice)
+        .arg("--headless")
+        .arg("--convert-to")
+        .arg(to)
+        .arg("--outdir")
+        .arg(out_dir)
+        .arg(input)
+        .output()
+        .map_err(|e| format!("libreoffice_start_failed: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "libreoffice_convert_failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let stem = input.file_stem().and_then(|s| s.to_str()).ok_or_else(|| "bad_input_filename".to_string())?;
+    let ext = to.split(':').next().unwrap_or(to).trim_start_matches('.');
+    let converted = out_dir.join(format!("{stem}.{ext}"));
+    if converted.exists() {
+        Ok(converted)
+    } else {
+        Err(format!("libreoffice_output_missing: {}", converted.display()))
+    }
+}
+
+fn backup_path_for(path: &Path) -> PathBuf {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("spreadsheet");
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("ods");
+    path.with_file_name(format!("{stem}.backup.{ext}"))
+}
+
+fn write_ods_roundtrip(
+    path: &str,
+    sheet: Option<String>,
+    rows: Option<Vec<Vec<String>>>,
+    cells: Option<Vec<CellEdit>>,
+    start_cell: Option<String>,
+    mode: Option<String>,
+) -> Result<String, String> {
+    let source = Path::new(path);
+    if !source.exists() {
+        return Err(format!("file_not_found: {path}"));
+    }
+    let soffice = find_libreoffice().ok_or_else(|| {
+        "ods_write_requires_libreoffice: direct ODS write is not available and LibreOffice headless was not found. Ask the user before creating an XLSX copy.".to_string()
+    })?;
+    let temp = unique_temp_dir()?;
+    let temp_ods = temp.join(source.file_name().ok_or_else(|| "bad_ods_filename".to_string())?);
+    std::fs::copy(source, &temp_ods).map_err(|e| format!("failed_to_stage_ods: {e}"))?;
+
+    let temp_xlsx = convert_with_libreoffice(&soffice, &temp_ods, "xlsx", &temp)?;
+    let write_result = write_xlsx(
+        temp_xlsx.to_string_lossy().as_ref(),
+        sheet,
+        rows,
+        cells,
+        start_cell,
+        mode,
+    )?;
+    let _ = std::fs::remove_file(&temp_ods);
+    let converted_ods = convert_with_libreoffice(&soffice, &temp_xlsx, "ods", &temp)?;
+
+    let backup = backup_path_for(source);
+    std::fs::copy(source, &backup).map_err(|e| format!("failed_to_create_backup {}: {e}", backup.display()))?;
+    std::fs::copy(&converted_ods, source).map_err(|e| format!("failed_to_replace_original_ods: {e}"))?;
+    let readback = read(path, None, Some(5))?;
+    let _ = std::fs::remove_dir_all(&temp);
+
+    serde_json::to_string(&serde_json::json!({
+        "status": "saved",
+        "path": path,
+        "format": "ods",
+        "policy": "roundtrip_with_backup",
+        "backup": backup.to_string_lossy(),
+        "write_result": serde_json::from_str::<serde_json::Value>(&write_result).unwrap_or_else(|_| serde_json::json!(write_result)),
+        "readback": serde_json::from_str::<serde_json::Value>(&readback).unwrap_or_else(|_| serde_json::json!(readback)),
+        "message": format!("Updated original ODS via LibreOffice round-trip with backup {}.", backup.display()),
+    }))
+    .map_err(|e| e.to_string())
 }
 
 fn write_xlsx(
@@ -272,6 +393,17 @@ fn write_csv(
         .unwrap_or((1, 1));
 
     let mut grid: Vec<Vec<String>> = Vec::new();
+    if Path::new(path).exists() && cells.is_some() {
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .flexible(true)
+            .from_path(path)
+            .map_err(|e| format!("Failed to open existing csv {path}: {e}"))?;
+        for record in reader.records() {
+            let record = record.map_err(|e| format!("Failed to read existing csv row: {e}"))?;
+            grid.push(record.iter().map(|s| s.to_string()).collect());
+        }
+    }
     let put = |col1: u32, row1: u32, value: String, grid: &mut Vec<Vec<String>>| {
         let r = (row1 - 1) as usize;
         let c = (col1 - 1) as usize;
@@ -1611,6 +1743,56 @@ pub struct TableArgs {
     pub style: Option<String>,
 }
 
+fn report_kpi_fill(header: &str, raw: &str) -> Option<&'static str> {
+    let h = header.to_lowercase();
+    let v = raw.trim().to_lowercase();
+    if h.contains("ltoz") || h.contains("change") || h.contains("delta") {
+        if let Some(n) = parse_number(raw) {
+            if n > 0.0 {
+                return Some("#C6F6D5");
+            }
+            if n < 0.0 {
+                return Some("#FEB2B2");
+            }
+            return Some("#FEF3C7");
+        }
+    }
+    if h.contains("kock") || h.contains("risk") {
+        if v.contains("alacsony") || v.contains("low") {
+            return Some("#C6F6D5");
+        }
+        if v.contains("kozep") || v.contains("medium") || v.contains("moderate") {
+            return Some("#FEF3C7");
+        }
+        if v.contains("magas") || v.contains("high") {
+            return Some("#FEB2B2");
+        }
+    }
+    if h.contains("trend") || h.contains("moz") || h.contains("movement") {
+        if v.contains("nov") || v.contains("emelk") || v.contains("grow") || v.contains("up") {
+            return Some("#C6F6D5");
+        }
+        if v.contains("csokk") || v.contains("declin") || v.contains("down") {
+            return Some("#FEB2B2");
+        }
+        if v.contains("stabil") || v.contains("stable") {
+            return Some("#FEF3C7");
+        }
+    }
+    if h.contains("szlet") || h.contains("stockout") || h.contains("shortage") || h.contains("vissz") || h.contains("return") {
+        if let Some(n) = parse_number(raw) {
+            if n >= 7.0 {
+                return Some("#FEB2B2");
+            }
+            if n >= 3.0 {
+                return Some("#FEF3C7");
+            }
+            return Some("#C6F6D5");
+        }
+    }
+    None
+}
+
 pub fn add_table(path: &str, sheet: Option<String>, args: TableArgs) -> Result<String, String> {
     if detect_format(path) != Format::Xlsx {
         return Err("unsupported_format: native tables are only supported for .xlsx files.".to_string());
@@ -1659,6 +1841,32 @@ pub fn add_table(path: &str, sheet: Option<String>, args: TableArgs) -> Result<S
     )));
     worksheet.add_table(table);
 
+    // Apply visible static styling too. Some spreadsheet viewers, especially
+    // LibreOffice, do not reliably render the built-in Excel table theme, so the
+    // table must look polished even without native theme interpretation.
+    for r in r1..=r2 {
+        for c in c1..=c2 {
+            let raw = if r == r1 { String::new() } else { worksheet.get_value((c, r)) };
+            let style = worksheet.get_style_mut((c, r));
+            if r == r1 {
+                style.set_background_color(to_argb("#1F5A85"));
+                let font = style.get_font_mut();
+                font.set_bold(true);
+                font.get_color_mut().set_argb_str(to_argb("#FFFFFF"));
+            } else {
+                let col_idx = (c - c1) as usize;
+                let base = if (r - r1) % 2 == 1 { "#BFE8F7" } else { "#F7FBFF" };
+                style.set_background_color(to_argb(report_kpi_fill(&col_names[col_idx], &raw).unwrap_or(base)));
+                style.get_font_mut().get_color_mut().set_argb_str(to_argb("#111827"));
+            }
+            let borders = style.get_borders_mut();
+            borders.get_left_mut().set_border_style(umya_spreadsheet::Border::BORDER_THIN);
+            borders.get_right_mut().set_border_style(umya_spreadsheet::Border::BORDER_THIN);
+            borders.get_top_mut().set_border_style(umya_spreadsheet::Border::BORDER_THIN);
+            borders.get_bottom_mut().set_border_style(umya_spreadsheet::Border::BORDER_THIN);
+        }
+    }
+
     umya_spreadsheet::writer::xlsx::write(&book, Path::new(path))
         .map_err(|e| format!("Failed to save xlsx {path}: {e:?}"))?;
 
@@ -1669,6 +1877,8 @@ pub fn add_table(path: &str, sheet: Option<String>, args: TableArgs) -> Result<S
         "table": name,
         "columns": col_names,
         "range": args.range,
+        "visible_static_style": true,
+        "styled_cells": (r2 - r1 + 1) * (c2 - c1 + 1),
     }))
     .map_err(|e| e.to_string())
 }
@@ -1970,6 +2180,48 @@ mod tests {
         let book = umya_spreadsheet::reader::xlsx::read(Path::new(&path)).expect("reopen");
         let ws = book.sheet_by_name("Sheet1").expect("sheet");
         assert!(!ws.get_tables().is_empty(), "table missing");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn add_table_applies_visible_static_report_style() {
+        let path = tmp("styled_table.xlsx");
+        let _ = std::fs::remove_file(&path);
+        write(
+            &path,
+            None,
+            Some(vec![
+                vec!["Store".into(), "Change %".into(), "Risk".into(), "Trend".into()],
+                vec!["A".into(), "8.5".into(), "Low".into(), "Growing".into()],
+                vec!["B".into(), "-4.2".into(), "High".into(), "Declining".into()],
+            ]),
+            None,
+            None,
+            Some("new".into()),
+        )
+        .expect("write");
+
+        add_table(
+            &path,
+            None,
+            TableArgs { range: "A1:D3".into(), name: Some("Stores".into()), style: None },
+        )
+        .expect("table");
+
+        let book = umya_spreadsheet::reader::xlsx::read(Path::new(&path)).expect("reopen");
+        let ws = book.sheet_by_name("Sheet1").expect("sheet");
+        let header = ws.get_style((1, 1)).get_background_color().map(|c| c.argb_str()).unwrap_or_default();
+        assert!(header.ends_with("1F5A85"), "A1 fill = {header}");
+        let first_row = ws.get_style((1, 2)).get_background_color().map(|c| c.argb_str()).unwrap_or_default();
+        assert!(first_row.ends_with("BFE8F7"), "A2 fill = {first_row}");
+        let positive = ws.get_style((2, 2)).get_background_color().map(|c| c.argb_str()).unwrap_or_default();
+        assert!(positive.ends_with("C6F6D5"), "B2 fill = {positive}");
+        let negative = ws.get_style((2, 3)).get_background_color().map(|c| c.argb_str()).unwrap_or_default();
+        assert!(negative.ends_with("FEB2B2"), "B3 fill = {negative}");
+        let high_risk = ws.get_style((3, 3)).get_background_color().map(|c| c.argb_str()).unwrap_or_default();
+        assert!(high_risk.ends_with("FEB2B2"), "C3 fill = {high_risk}");
+        let declining = ws.get_style((4, 3)).get_background_color().map(|c| c.argb_str()).unwrap_or_default();
+        assert!(declining.ends_with("FEB2B2"), "D3 fill = {declining}");
         let _ = std::fs::remove_file(&path);
     }
 }

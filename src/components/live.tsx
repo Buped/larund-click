@@ -14,15 +14,15 @@ function Crosshair({ x, y, label, active }: { x: number; y: number; label: strin
     <div style={{ position: "absolute", left: x, top: y, transform: "translate(-50%, -50%)", pointerEvents: "none" }}>
       <div className={active ? "xhair" : ""} style={{
         width: 28, height: 28, borderRadius: "50%",
-        border: `1.5px solid ${active ? "rgba(74,158,255,0.9)" : "rgba(74,158,255,0.3)"}`,
+        border: `1.5px solid ${active ? "rgba(var(--accent-rgb),0.9)" : "rgba(var(--accent-rgb),0.3)"}`,
         display: "grid", placeItems: "center",
-        background: active ? "rgba(74,158,255,0.12)" : "transparent",
+        background: active ? "rgba(var(--accent-rgb),0.12)" : "transparent",
         transition: "all .3s",
       }}>
-        <div style={{ width: 5, height: 5, borderRadius: "50%", background: active ? "var(--accent)" : "rgba(74,158,255,0.4)", transition: "all .3s" }} />
+        <div style={{ width: 5, height: 5, borderRadius: "50%", background: active ? "var(--accent)" : "rgba(var(--accent-rgb),0.4)", transition: "all .3s" }} />
       </div>
       {active && (
-        <div className="fade-up" style={{ position: "absolute", left: "calc(100% + 10px)", top: "50%", transform: "translateY(-50%)", whiteSpace: "nowrap", fontSize: 11, color: "var(--accent)", background: "rgba(74,158,255,0.1)", border: "1px solid rgba(74,158,255,0.3)", borderRadius: 6, padding: "3px 8px" }}>{label}</div>
+        <div className="fade-up" style={{ position: "absolute", left: "calc(100% + 10px)", top: "50%", transform: "translateY(-50%)", whiteSpace: "nowrap", fontSize: 11, color: "var(--accent)", background: "rgba(var(--accent-rgb),0.1)", border: "1px solid rgba(var(--accent-rgb),0.3)", borderRadius: 6, padding: "3px 8px" }}>{label}</div>
       )}
     </div>
   );

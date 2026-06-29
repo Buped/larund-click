@@ -1,5 +1,5 @@
 import type { ConnectionCallResult } from '../../types';
-import { creditAmountsFromUsd, deductCredits as deductUserCredits, formatVisibleCredits } from '../../../credit-engine';
+import { creditAmountsFromUsd, deductCredits as deductUserCredits, formatVisibleCredits, hasUnlimitedCredits } from '../../../credit-engine';
 
 export type XOperationCode =
   | 'owned_read'
@@ -243,6 +243,7 @@ async function logUsage(charge: XUsageCharge, ucDeducted: number, message?: stri
 
 async function hasEnoughCredits(userId: string | undefined, ucCost: number): Promise<{ ok: true } | { ok: false; balance: number }> {
   if (!userId || ucCost <= 0) return { ok: true };
+  if (await hasUnlimitedCredits(userId)) return { ok: true };
   const client = await supabaseClient() as {
     from?: (table: string) => {
       select: (cols: string) => { eq: (col: string, value: string) => { single: () => Promise<{ data?: { uc_balance?: number }; error?: unknown }> } };

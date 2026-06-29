@@ -14,6 +14,7 @@ import {
 } from './store';
 import type { AutomationRun, AutomationRunStatus, VerificationCheck } from './types';
 import { riskPolicyForAutomationSafety, verifyAutomationEvidence } from './verification';
+import { completeAutomationSetup, markAutomationSetupStatus } from './setup';
 import {
   appendAutomationAgentStepMessage,
   appendAutomationApprovalMessage,
@@ -110,6 +111,7 @@ export function isAutomationQueueProcessorInstalled(): boolean {
 export async function agentQueueProcessor(item: TaskQueueItem): Promise<TaskQueueProcessorResult> {
   const automationRunId = stringMeta(item, 'automationRunId');
   const automationId = stringMeta(item, 'automationId');
+  const automationPhase = stringMeta(item, 'automationPhase') === 'setup' ? 'setup' : 'run';
   const sessionId = automationRunId ? `automation:${automationRunId}` : `queue:${item.id}`;
   const signal: AgentAbortSignal = { aborted: false };
   const state: RunningState = {
@@ -143,10 +145,16 @@ export async function agentQueueProcessor(item: TaskQueueItem): Promise<TaskQueu
     }
   }
 
-  const policy = normalized ? riskPolicyForAutomationSafety(normalized.safetyPolicy) : undefined;
-  const maxToolCalls = normalized?.safetyPolicy.maxToolCalls;
-  const maxRuntimeMs = normalized?.safetyPolicy.maxRuntimeMinutes
-    ? normalized.safetyPolicy.maxRuntimeMinutes * 60_000
+  const safetyPolicy = automationPhase === 'setup' && item.metadata?.safetyPolicy
+    ? item.metadata.safetyPolicy as NonNullable<typeof normalized>['safetyPolicy']
+    : normalized?.safetyPolicy;
+  const verificationChecklist = automationPhase === 'setup' && Array.isArray(item.metadata?.verificationChecklist)
+    ? item.metadata.verificationChecklist as VerificationCheck[]
+    : normalized?.verificationChecklist;
+  const policy = safetyPolicy ? riskPolicyForAutomationSafety(safetyPolicy) : undefined;
+  const maxToolCalls = safetyPolicy?.maxToolCalls;
+  const maxRuntimeMs = safetyPolicy?.maxRuntimeMinutes
+    ? safetyPolicy.maxRuntimeMinutes * 60_000
     : undefined;
   let toolCalls = 0;
   let summary: string | undefined;
@@ -190,6 +198,7 @@ export async function agentQueueProcessor(item: TaskQueueItem): Promise<TaskQueu
           state.status = 'waiting_user';
           await updateQueueItem(item.id, { status: 'waiting_user', progress: 'Waiting for user input', taskRunId: state.taskRunId });
           if (automationRunId) await updateAutomationRun(automationRunId, { status: 'waiting_user', taskRunId: state.taskRunId });
+          if (automationId && automationPhase === 'setup') await markAutomationSetupStatus(automationId, 'waiting_user', { taskRunId: state.taskRunId });
           if (state.chatSessionId) {
             await appendAutomationAskUserMessage({ sessionId: state.chatSessionId, messageId: state.chatMessageId, question, steps: state.steps }).catch(() => undefined);
           }
@@ -205,6 +214,7 @@ export async function agentQueueProcessor(item: TaskQueueItem): Promise<TaskQueu
           state.status = 'waiting_approval';
           await updateQueueItem(item.id, { status: 'waiting_approval', progress: `Approval needed: ${req.action}`, taskRunId: state.taskRunId });
           if (automationRunId) await updateAutomationRun(automationRunId, { status: 'waiting_approval', taskRunId: state.taskRunId });
+          if (automationId && automationPhase === 'setup') await markAutomationSetupStatus(automationId, 'waiting_approval', { taskRunId: state.taskRunId });
           if (state.chatSessionId) {
             await appendAutomationApprovalMessage({ sessionId: state.chatSessionId, messageId: state.chatMessageId, approval: req, steps: state.steps }).catch(() => undefined);
           }
@@ -245,7 +255,7 @@ export async function agentQueueProcessor(item: TaskQueueItem): Promise<TaskQueu
     }
     if (error) throw new Error(error);
 
-    const verification = await enforceAutomationVerification(item, state, normalized?.verificationChecklist);
+    const verification = await enforceAutomationVerification(item, state, verificationChecklist);
     if (!verification.ok) {
       const answer = await requestManualVerification(item, state, verification.reason);
       if (!/^\s*(y|yes|approve|ok|done|confirmed)/i.test(answer)) {
@@ -256,12 +266,21 @@ export async function agentQueueProcessor(item: TaskQueueItem): Promise<TaskQueu
     }
 
     if (automationRunId) await updateAutomationRun(automationRunId, { status: 'completed', taskRunId: state.taskRunId });
-    if (automationId) await recordAutomationRunResult(automationId, 'completed', { taskRunId: state.taskRunId, queueItemId: item.id });
+    if (automationId && automationPhase === 'setup') {
+      const evidence = state.taskRunId ? await listEvidence(state.taskRunId) : [];
+      await completeAutomationSetup(automationId, evidence, state.taskRunId);
+    } else if (automationId) {
+      await recordAutomationRunResult(automationId, 'completed', { taskRunId: state.taskRunId, queueItemId: item.id });
+    }
     if (state.chatSessionId) {
       await appendAutomationCompletedMessage({ sessionId: state.chatSessionId, messageId: state.chatMessageId, summary: summary ?? 'Completed.', steps: state.steps }).catch(() => undefined);
     }
     return { taskRunId: state.taskRunId, summary: summary ?? 'Completed' };
   } catch (err) {
+    if (automationId && automationPhase === 'setup') {
+      const message = err instanceof Error ? err.message : String(err);
+      await markAutomationSetupStatus(automationId, 'failed', { taskRunId: state.taskRunId, error: message }).catch(() => undefined);
+    }
     if (state.chatSessionId) {
       const message = err instanceof Error ? err.message : String(err);
       await appendAutomationFailedMessage({ sessionId: state.chatSessionId, messageId: state.chatMessageId, error: message, steps: state.steps }).catch(() => undefined);
@@ -362,11 +381,14 @@ async function requestManualVerification(item: TaskQueueItem, state: RunningStat
 }
 
 async function handleStatus(item: TaskQueueItem, state: RunningState, status: AgentStatus): Promise<void> {
+  const automationId = stringMeta(item, 'automationId');
+  const automationPhase = stringMeta(item, 'automationPhase') === 'setup' ? 'setup' : 'run';
   if (status === 'waiting_user') return;
   if (status === 'error') {
     state.status = 'failed';
     await updateQueueItem(item.id, { status: 'failed', progress: 'Failed', taskRunId: state.taskRunId });
     if (state.automationRunId) await updateAutomationRun(state.automationRunId, { status: 'failed', taskRunId: state.taskRunId });
+    if (automationId && automationPhase === 'setup') await markAutomationSetupStatus(automationId, 'failed', { taskRunId: state.taskRunId });
     return;
   }
   if (status === 'complete') return;
@@ -383,11 +405,15 @@ async function markRunning(item: TaskQueueItem, state: RunningState, progress: s
   await syncTaskRunId(item, state);
   await updateQueueItem(item.id, { status: 'running', progress, taskRunId: state.taskRunId });
   if (state.automationRunId) await updateAutomationRun(state.automationRunId, { status: 'running', taskRunId: state.taskRunId });
+  const automationId = stringMeta(item, 'automationId');
+  if (automationId && stringMeta(item, 'automationPhase') === 'setup') await markAutomationSetupStatus(automationId, 'running', { taskRunId: state.taskRunId });
 }
 
 async function markCancelledById(automationRunId: string, state: RunningState): Promise<void> {
   await updateAutomationRun(automationRunId, { status: 'cancelled', taskRunId: state.taskRunId });
   await updateQueueItem(state.queueItemId, { status: 'cancelled', completedAt: new Date().toISOString(), progress: 'Cancelled', taskRunId: state.taskRunId });
+  const run = await getAutomationRun(automationRunId);
+  if (run?.triggerPayload?.automationPhase === 'setup') await markAutomationSetupStatus(run.automationId, 'cancelled', { taskRunId: state.taskRunId });
   if (state.taskRunId) await setTaskStatus(state.taskRunId, 'cancelled');
 }
 
@@ -397,6 +423,8 @@ async function markCancelled(item: TaskQueueItem, state: RunningState, reason: s
   await syncTaskRunId(item, state);
   await updateQueueItem(item.id, { status: 'cancelled', completedAt: new Date().toISOString(), progress: reason, taskRunId: state.taskRunId });
   if (state.automationRunId) await updateAutomationRun(state.automationRunId, { status: 'cancelled', taskRunId: state.taskRunId });
+  const automationId = stringMeta(item, 'automationId');
+  if (automationId && stringMeta(item, 'automationPhase') === 'setup') await markAutomationSetupStatus(automationId, 'cancelled', { taskRunId: state.taskRunId });
   if (state.taskRunId) await setTaskStatus(state.taskRunId, 'cancelled');
 }
 

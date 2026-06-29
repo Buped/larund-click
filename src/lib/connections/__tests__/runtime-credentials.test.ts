@@ -42,6 +42,46 @@ describe('runtime credential resolution', () => {
     expect(other.ok).toBe(false);
   });
 
+  it('resolves Google credentials for workspace-scoped and user-global accounts', async () => {
+    await createConnectedAccount({
+      ctx: { userId: 'alice', workspaceId: 'project-1' },
+      providerId: 'google-workspace',
+      accountLabel: 'workspace google',
+      authType: 'oauth2',
+      tokens: { access_token: 'workspace_google_token' },
+    });
+    const scoped = await resolveRuntimeCredentials('google-workspace', { userId: 'alice', workspaceId: 'project-1' });
+    expect(scoped.ok).toBe(true);
+    expect(scoped.secrets.GOOGLE_WORKSPACE_ACCESS_TOKEN).toBe('workspace_google_token');
+
+    __resetConnectedAccountsForTests();
+    await createConnectedAccount({
+      ctx: { userId: 'alice' },
+      providerId: 'google-workspace',
+      accountLabel: 'global google',
+      authType: 'oauth2',
+      tokens: { access_token: 'global_google_token' },
+    });
+    const global = await resolveRuntimeCredentials('google-workspace', { userId: 'alice', workspaceId: 'project-1' });
+    expect(global.ok).toBe(true);
+    expect(global.secrets.GOOGLE_WORKSPACE_ACCESS_TOKEN).toBe('global_google_token');
+  });
+
+  it('normalizes Google provider aliases before resolving credentials', async () => {
+    await createConnectedAccount({
+      ctx: { userId: 'alice', workspaceId: 'project-1' },
+      providerId: 'google-workspace',
+      accountLabel: 'google',
+      authType: 'oauth2',
+      tokens: { access_token: 'google-token' },
+    });
+
+    const r = await resolveRuntimeCredentials('gmail', { userId: 'alice', workspaceId: 'project-1' });
+
+    expect(r.ok).toBe(true);
+    expect(r.secrets.GOOGLE_WORKSPACE_ACCESS_TOKEN).toBe('google-token');
+  });
+
   it('can use a legacy local account for an authenticated user during migration', async () => {
     await createConnectedAccount({ ctx: { userId: 'local' }, providerId: 'github', accountLabel: 'legacy', authType: 'oauth2', tokens: { access_token: 'ghp_legacy_token' } });
 

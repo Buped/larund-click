@@ -204,7 +204,7 @@ function SetupModal({ providerId, provider, name, userId, isAdmin, projectId, on
   const [showDevSetup, setShowDevSetup] = useState(!devReady);
   const [connecting, setConnecting] = useState(false);
   const [status, setStatus] = useState('');
-  const accounts = listConnectedAccountsForProvider(providerId, { userId });
+  const accounts = listConnectedAccountsForProvider(providerId, { userId, workspaceId: projectId ?? undefined });
 
   async function saveAppCreds() {
     const entries = Object.entries(appValues).filter(([, v]) => v.trim());
@@ -261,7 +261,7 @@ function SetupModal({ providerId, provider, name, userId, isAdmin, projectId, on
     const hub = getProvider(providerId);
     const testTool = hub?.tools.find((t) => t.name.endsWith('.test_connection'));
     if (!testTool) { setStatus('No provider-specific test is implemented yet.'); return; }
-    const result = await createConnectionRegistry(userId).call(providerId, testTool.name, {});
+    const result = await createConnectionRegistry(userId, projectId ?? undefined).call(providerId, testTool.name, {});
     // Prefer the tool's own output: per-sub-service probes (e.g. Google Workspace)
     // report a green/red breakdown there even when the overall result is a failure.
     setStatus(result.output || (result.success ? `Connection test passed for ${account.accountLabel}.` : `Test failed: ${result.error ?? 'unknown error'}`));
@@ -608,7 +608,7 @@ export function ConnectionsPage({ userId, isAdmin, projectId }: { userId: string
           <button key={c} onClick={() => setFilter(c)} style={{ ...ghostBtn, ...(filter === c ? { background: 'var(--accent)', color: 'var(--on-accent)', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }}>{c}</button>
         ))}
         <div style={{ flex: 1 }} />
-        <button onClick={() => setShowUpcoming((v) => !v)} style={{ ...ghostBtn, ...(showUpcoming ? { color: 'var(--accent)', borderColor: 'rgba(74,158,255,.4)' } : {}) }}>
+        <button onClick={() => setShowUpcoming((v) => !v)} style={{ ...ghostBtn, ...(showUpcoming ? { color: 'var(--accent)', borderColor: 'rgba(var(--accent-rgb),.4)' } : {}) }}>
           {showUpcoming ? 'Hide upcoming' : 'Show upcoming'}
         </button>
       </div>

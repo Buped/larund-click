@@ -14,6 +14,7 @@ export type TaskIntent =
   | 'coding'
   | 'connection_workflow'
   | 'email'
+  | 'web_lookup'
   | 'spreadsheet_local'
   | 'spreadsheet_cloud'
   | 'document_local'
@@ -97,6 +98,11 @@ function isEmailCompose(t: string): boolean {
   const hasRecipient = RECIPIENT_RE.test(t);
   const compose = EMAIL_VERB_RE.test(t);
   return (mentionsEmail && compose) || (hasRecipient && (mentionsEmail || compose));
+}
+
+function isOrdinaryWebLookup(t: string): boolean {
+  return /\b(keress|keresd|find|look up|lookup|search|weboldal|website|honlap|internet|forr[aĂˇ]s|source)\b/i.test(t) &&
+    !/\b(open|nyisd|login|sign ?in|regisztr|form|Ĺ±rlap|submit|post|upload|checkout)\b/i.test(t);
 }
 
 const FILE_OPS_RE =
@@ -207,6 +213,18 @@ export function preflight(task: string): TaskPreflight {
   }
 
   // 3) Explicit URL or webapp keyword → browser.
+  if (isOrdinaryWebLookup(t)) {
+    return {
+      intent: 'web_lookup',
+      targetSurface: 'connection',
+      mutates: false,
+      expectedOutcome:
+        'Programmatic web search returned source URLs/snippets for the full requested scope. Browser search-result pages do NOT satisfy this.',
+      recommendedTools: ['web.batch_search', 'web.search', 'web.extract_page', 'web.extract_contact_info', 'web.verify_source'],
+      forbiddenTools: ['browser.open google.com/search', 'browser.open bing.com/search'],
+    };
+  }
+
   if (url || BROWSER_HINTS.test(t)) {
     return {
       intent: 'browser_webapp',

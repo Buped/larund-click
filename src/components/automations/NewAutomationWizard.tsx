@@ -9,12 +9,14 @@ import { Icon } from '../icons';
 import { MentionEditor, MentionChip } from '../mentions/MentionEditor';
 import type { ReferencedContext } from '../../lib/mentions/types';
 import { listCatalogProviders } from '../../lib/connections/catalog';
+import { isUsableConnectionRuntime, normalizeConnectionProviderId } from '../../lib/connections/provider-aliases';
 import { createAutomation, updateAutomation } from '../../lib/automations/store';
 import { runAutomation } from '../../lib/automations/runner';
+import { isAutomationSetupReady, prepareAutomation, setupRequired } from '../../lib/automations/setup';
 import { generateAutomationSteps } from '../../lib/automations/planner';
 import { checkAutomationDependencies, type DependencyReport } from '../../lib/automations/dependencies';
-import { defaultSafetyPolicy } from '../../lib/automations/migrate';
-import type { Automation, AutomationChatMode, AutomationStep, AutomationTrigger, AutomationSafetyPolicy, VerificationCheck } from '../../lib/automations/types';
+import { defaultSafetyPolicy, normalizeSetupPlan } from '../../lib/automations/migrate';
+import type { Automation, AutomationChatMode, AutomationSetupPlan, AutomationStep, AutomationTrigger, AutomationSafetyPolicy, VerificationCheck } from '../../lib/automations/types';
 import { createAutomationLinkedChat, getLinkedChatTitle } from '../../lib/automations/chat-bridge';
 import { ChatSessionPicker } from './ChatSessionPicker';
 import { pickLocalFile, pickLocalFolder, pickUrlReference } from '../../lib/references/local-picker';
@@ -24,7 +26,7 @@ import { MODELS } from '../../constants/models';
 import { card, btn, ghostBtn, dangerBtn, input, labelStyle, Badge } from '../pages/ui';
 import { RunMonitor } from './RunMonitor';
 
-const STEPS = ['Goal', 'Trigger', 'Context', 'Steps', 'Verify', 'Safety', 'Test'] as const;
+const STEPS = ['Goal', 'Trigger', 'Context', 'Setup', 'Steps', 'Verify', 'Safety', 'Test'] as const;
 
 type TriggerKind = 'manual' | 'interval' | 'daily' | 'weekly' | 'monthly' | 'cron' | 'folder' | 'webhook';
 type FolderEvent = NonNullable<Extract<AutomationTrigger, { kind: 'folder_watch' }>['event']>;
@@ -57,6 +59,7 @@ export interface WizardInitial {
   trigger?: AutomationTrigger;
   verification?: VerificationCheck[];
   steps?: AutomationStep[];
+  setupPlan?: AutomationSetupPlan;
   safety?: AutomationSafetyPolicy;
   chatMode?: AutomationChatMode;
   linkedChatSessionId?: string;
@@ -117,6 +120,7 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
   const [folderIncludeSubfolders, setFolderIncludeSubfolders] = useState(initTrigger?.kind === 'folder_watch' ? Boolean(initTrigger.includeSubfolders) : false);
 
   const [steps, setSteps] = useState<AutomationStep[]>(initial?.steps ?? []);
+  const [setupPlan, setSetupPlan] = useState<AutomationSetupPlan>(normalizeSetupPlan(initial?.setupPlan));
   const [planning, setPlanning] = useState(false);
   const [verification, setVerification] = useState<VerificationCheck[]>(initial?.verification ?? [{ id: 'v-readback', title: 'Output was read back', kind: 'file_read_back', required: true }]);
   const [safety, setSafety] = useState<AutomationSafetyPolicy>(initial?.safety ?? defaultSafetyPolicy('semi'));
@@ -128,8 +132,11 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
   const [folderTestMsg, setFolderTestMsg] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const connectedIds = useMemo(() => new Set(listCatalogProviders().filter((p) => p.runtime === 'connected').map((p) => p.id)), []);
-  const isConnected = (id: string) => connectedIds.has(id);
+  const connectedIds = useMemo(
+    () => new Set(listCatalogProviders({ userId, workspaceId }).filter((p) => isUsableConnectionRuntime(p.runtime)).map((p) => p.id)),
+    [userId, workspaceId],
+  );
+  const isConnected = (id: string) => connectedIds.has(normalizeConnectionProviderId(id));
 
   function mergeReferences(existing: ReferencedContext[], incoming: ReferencedContext[]): ReferencedContext[] {
     const seen = new Set(existing.map((r) => `${r.kind}:${r.refId}`));
@@ -245,10 +252,10 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
       id: savedId ?? 'draft', userId, workspaceId, name: name || 'Untitled automation',
       description,
       enabled: false, trigger: buildTrigger(),
-      taskTemplate: { prompt, requiredConnectionIds: references.filter((r) => r.kind === 'connection').map((r) => r.refId), skillIds: references.filter((r) => r.kind === 'skill').map((r) => r.refId) },
+      taskTemplate: { prompt, requiredConnectionIds: references.filter((r) => r.kind === 'connection').map((r) => normalizeConnectionProviderId(r.refId)), skillIds: references.filter((r) => r.kind === 'skill').map((r) => r.refId) },
       autonomyMode: safety.autonomyMode === 'manual' ? 'manual' : 'semi',
       approvalPolicy: { externalSendRequiresApproval: safety.externalSend === 'ask', destructiveRequiresApproval: safety.destructive === 'ask_strong' },
-      status: 'disabled', prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety,
+      status: 'disabled', prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety, setupPlan,
       chatMode, linkedChatSessionId, chatVisibility: 'private_local',
       createdAt: now, updatedAt: now,
     };
@@ -265,15 +272,26 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
     try {
       const modelId = MODELS.find((m) => m.id === 'core')?.openrouter_id ?? 'anthropic/claude-haiku-4-5';
       const res = await generateAutomationSteps({ prompt, referencedContext: references }, modelId, userId, isConnected);
-      setSteps(res.steps);
+      const split = splitSetupAndRunSteps(res.steps);
+      if (split.setup.length) setSetupPlan((current) => ({ ...current, status: current.status === 'not_required' ? 'pending' : current.status, steps: split.setup, verificationChecklist: current.verificationChecklist.length ? current.verificationChecklist : verification }));
+      setSteps(split.run);
     } finally { setPlanning(false); }
   }
 
   function addManualStep() {
     setSteps((s) => [...s, { id: `step-${Date.now()}`, title: 'New step', instruction: '', referencedContext: [], required: true, order: s.length }]);
   }
+  function addSetupStep() {
+    setSetupPlan((current) => ({
+      ...current,
+      status: current.status === 'not_required' ? 'pending' : current.status,
+      steps: [...current.steps, { id: `setup-${Date.now()}`, title: 'New setup step', instruction: '', referencedContext: [], required: true, order: current.steps.length }],
+    }));
+  }
   function updateStep(id: string, patch: Partial<AutomationStep>) { setSteps((s) => s.map((x) => x.id === id ? { ...x, ...patch } : x)); }
+  function updateSetupStep(id: string, patch: Partial<AutomationStep>) { setSetupPlan((current) => ({ ...current, steps: current.steps.map((x) => x.id === id ? { ...x, ...patch } : x) })); }
   function removeStep(id: string) { setSteps((s) => s.filter((x) => x.id !== id).map((x, i) => ({ ...x, order: i }))); }
+  function removeSetupStep(id: string) { setSetupPlan((current) => ({ ...current, status: current.steps.length <= 1 && current.bindingSpecs.length === 0 ? 'not_required' : current.status, steps: current.steps.filter((x) => x.id !== id).map((x, i) => ({ ...x, order: i })) })); }
   function moveStep(id: string, dir: -1 | 1) {
     setSteps((s) => {
       const i = s.findIndex((x) => x.id === id); const j = i + dir;
@@ -291,10 +309,10 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
 
   async function persist(enabled: boolean): Promise<string> {
     if (savedId) {
-      await updateAutomation(savedId, { name: name || 'Untitled automation', description, enabled, status: enabled ? 'active' : 'disabled', trigger: buildTrigger(), prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety, taskTemplate: draftAutomation().taskTemplate, chatMode, linkedChatSessionId, chatVisibility: 'private_local' });
+      await updateAutomation(savedId, { name: name || 'Untitled automation', description, enabled, status: enabled ? 'active' : 'disabled', trigger: buildTrigger(), prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety, setupPlan, taskTemplate: draftAutomation().taskTemplate, chatMode, linkedChatSessionId, chatVisibility: 'private_local' });
       return savedId;
     }
-    const created = await createAutomation({ userId, workspaceId, name: name || 'Untitled automation', description, enabled, trigger: buildTrigger(), taskTemplate: draftAutomation().taskTemplate, prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety, chatMode, linkedChatSessionId, chatVisibility: 'private_local' });
+    const created = await createAutomation({ userId, workspaceId, name: name || 'Untitled automation', description, enabled, trigger: buildTrigger(), taskTemplate: draftAutomation().taskTemplate, prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety, setupPlan, chatMode, linkedChatSessionId, chatVisibility: 'private_local' });
     setSavedId(created.id);
     if (created.linkedChatSessionId && !linkedChatSessionId) setLinkedChatSessionId(created.linkedChatSessionId);
     return created.id;
@@ -304,6 +322,14 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
     setBusy(true); setRunMsg('');
     try {
       const id = await persist(false);
+      if (setupRequired(setupPlan) && !isAutomationSetupReady(draftAutomation())) {
+        const setup = await prepareAutomation(id, { reason: 'test_setup' });
+        if (setup.automationRunId) {
+          setMonitorRun({ runId: setup.automationRunId, automationName: `${name || 'Untitled automation'} setup` });
+          setRunMsg('Setup run started. After it completes, run the recurring test.');
+          return;
+        }
+      }
       const r = await runAutomation(id, { reason: 'test_run' });
       setMonitorRun({ runId: r.automationRunId, automationName: name || 'Untitled automation' });
       setRunMsg(`Test run started — created automation run ${r.automationRunId.slice(0, 16)}… and a TaskRun with evidence. Open the Tasks page to watch it.`);
@@ -325,6 +351,14 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
       if (!report.ok) {
         setStep(2);
         setRunMsg('Fix the dependency blockers before enabling this automation.');
+        return;
+      }
+      if (setupRequired(setupPlan) && !isAutomationSetupReady(draftAutomation())) {
+        const id = await persist(false);
+        const setup = await prepareAutomation(id, { reason: 'enable_setup' });
+        if (setup.automationRunId) setMonitorRun({ runId: setup.automationRunId, automationName: `${name || 'Untitled automation'} setup` });
+        setStep(STEPS.length - 1);
+        setRunMsg('Setup must finish successfully before enabling this automation.');
         return;
       }
       await persist(true);
@@ -430,7 +464,7 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
             <div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
                 {TRIGGER_CARDS.map((t) => (
-                  <button key={t.kind} disabled={t.disabled} onClick={() => setTkind(t.kind)} style={{ textAlign: 'left', padding: 12, borderRadius: 10, cursor: t.disabled ? 'default' : 'pointer', fontFamily: 'inherit', background: tkind === t.kind ? 'rgba(74,158,255,.1)' : 'rgba(var(--ov-color),.03)', border: `1px solid ${tkind === t.kind ? 'var(--accent)' : 'var(--border)'}`, opacity: t.disabled ? 0.5 : 1 }}>
+                  <button key={t.kind} disabled={t.disabled} onClick={() => setTkind(t.kind)} style={{ textAlign: 'left', padding: 12, borderRadius: 10, cursor: t.disabled ? 'default' : 'pointer', fontFamily: 'inherit', background: tkind === t.kind ? 'rgba(var(--accent-rgb),.1)' : 'rgba(var(--ov-color),.03)', border: `1px solid ${tkind === t.kind ? 'var(--accent)' : 'var(--border)'}`, opacity: t.disabled ? 0.5 : 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{t.label}</div>
                     <div style={{ fontSize: 11.5, color: 'var(--text-hint)', marginTop: 3 }}>{t.desc}</div>
                   </button>
@@ -500,6 +534,41 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
 
           {step === 3 && (
             <div>
+              <div style={{ fontSize: 12.5, color: 'var(--text-hint)', marginBottom: 12 }}>One-time setup runs before recurring automation work. Use it for folders, Google Sheets, Google Docs, templates, and other infrastructure that should not be recreated every run.</div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button style={ghostBtn} onClick={addSetupStep}>Add setup step</button>
+                {setupPlan.status !== 'not_required' && <Badge text={`setup: ${setupPlan.status}`} color={setupPlan.status === 'ready' ? 'var(--success)' : setupPlan.status === 'failed' ? 'var(--danger)' : 'var(--warning)'} />}
+              </div>
+              {setupPlan.steps.length === 0 && <div style={{ ...card, fontSize: 12.5, color: 'var(--text-hint)' }}>No one-time setup required.</div>}
+              {setupPlan.steps.map((s, i) => (
+                <div key={s.id} style={card}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-hint)', width: 18 }}>{i + 1}</span>
+                    <input value={s.title} onChange={(e) => updateSetupStep(s.id, { title: e.target.value })} style={{ ...input, fontWeight: 600 }} />
+                    <button style={dangerBtn} onClick={() => removeSetupStep(s.id)}><Icon name="trash" size={12} stroke={1.6} /></button>
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    <MentionEditor
+                      value={s.instruction}
+                      references={s.referencedContext}
+                      onChange={(text, refs) => setSetupPlan((current) => ({ ...current, steps: current.steps.map((item) => item.id === s.id ? { ...item, instruction: text, referencedContext: mergeReferences(refs, item.referencedContext) } : item) }))}
+                      userId={userId}
+                      workspaceId={workspaceId}
+                      minHeight={58}
+                      placeholder="One-time setup instruction..."
+                    />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+                    <label style={{ fontSize: 11.5, color: 'var(--text-hint)', display: 'flex', alignItems: 'center', gap: 5 }}><input type="checkbox" checked={s.required} onChange={(e) => updateSetupStep(s.id, { required: e.target.checked })} /> required</label>
+                    {s.verificationHint && <Badge text={`verify: ${s.verificationHint}`} color="var(--success)" />}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {step === 4 && (
+            <div>
               <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                 <button style={btn} onClick={planSteps} disabled={planning}>{planning ? 'Planning…' : '✨ Let AI break this into steps'}</button>
                 <button style={ghostBtn} onClick={addManualStep}>Add step manually</button>
@@ -536,7 +605,7 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
             </div>
           )}
 
-          {step === 4 && (
+          {step === 5 && (
             <div>
               <div style={{ fontSize: 12.5, color: 'var(--text-hint)', marginBottom: 12 }}>What proves this automation succeeded? Larund won't complete a run until required checks pass.</div>
               {VERIFY_PRESETS.map((preset) => {
@@ -551,7 +620,7 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
             </div>
           )}
 
-          {step === 5 && (
+          {step === 6 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <SafetyRow label="Autonomy mode" value={safety.autonomyMode} options={[['manual', 'Ask before every action'], ['safe_reads', 'Safe reads automatically'], ['semi', 'Semi-autonomous']]} onChange={(v) => setSafety({ ...safety, autonomyMode: v as AutomationSafetyPolicy['autonomyMode'] })} />
               <SafetyRow label="External write" value={safety.externalWrite} options={[['ask', 'Ask'], ['allow', 'Allow for this automation'], ['block', 'Block']]} onChange={(v) => setSafety({ ...safety, externalWrite: v as AutomationSafetyPolicy['externalWrite'] })} />
@@ -566,7 +635,7 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
             </div>
           )}
 
-          {step === 6 && (
+          {step === 7 && (
             <div>
               <div style={{ fontSize: 12.5, color: 'var(--text-hint)', marginBottom: 12 }}>Run once now to verify it works, then enable it.</div>
               <div style={{ ...card, marginBottom: 12, fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -625,7 +694,7 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
 
 function ChatModeOption({ selected, onSelect, title, desc }: { selected: boolean; onSelect: () => void; title: string; desc: string }) {
   return (
-    <button type="button" onClick={onSelect} style={{ textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', gap: 9, alignItems: 'flex-start', padding: '9px 11px', borderRadius: 9, background: selected ? 'rgba(74,158,255,.1)' : 'rgba(var(--ov-color),.03)', border: `1px solid ${selected ? 'var(--accent)' : 'var(--border)'}` }}>
+    <button type="button" onClick={onSelect} style={{ textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', gap: 9, alignItems: 'flex-start', padding: '9px 11px', borderRadius: 9, background: selected ? 'rgba(var(--accent-rgb),.1)' : 'rgba(var(--ov-color),.03)', border: `1px solid ${selected ? 'var(--accent)' : 'var(--border)'}` }}>
       <span style={{ width: 15, height: 15, borderRadius: '50%', marginTop: 1, border: `2px solid ${selected ? 'var(--accent)' : 'var(--text-hint)'}`, display: 'grid', placeItems: 'center', flexShrink: 0 }}>{selected && <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)' }} />}</span>
       <span style={{ flex: 1 }}>
         <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>{title}</span>
@@ -646,6 +715,13 @@ function SafetyRow({ label, value, options, onChange }: { label: string; value: 
       </div>
     </div>
   );
+}
+
+function splitSetupAndRunSteps(steps: AutomationStep[]): { setup: AutomationStep[]; run: AutomationStep[] } {
+  const setupPattern = /google\.sheets\.create|google\.docs\.create|google\.drive\.create_folder|create google sheet infrastructure|create google doc infrastructure|create drive folder infrastructure|prepare local output infrastructure|validate google sheet|validate google doc|validate drive folder/i;
+  const setup = steps.filter((step) => setupPattern.test(`${step.title}\n${step.instruction}`)).map((step, index) => ({ ...step, order: index }));
+  const run = steps.filter((step) => !setupPattern.test(`${step.title}\n${step.instruction}`)).map((step, index) => ({ ...step, order: index }));
+  return { setup, run: run.length ? run : steps.map((step, index) => ({ ...step, order: index })) };
 }
 
 function ReferenceToolbar({ onPick, compact = false }: {

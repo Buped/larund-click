@@ -6,6 +6,7 @@ import { listApps, appStatus } from '../apps/store';
 import { getBrowserProfile, DEFAULT_BROWSER_PROFILE } from '../browser/profiles';
 import { listSkillPackages } from '../skills/packages/store';
 import { listCatalogProviders } from '../connections/catalog';
+import { isUsableConnectionRuntime } from '../connections/provider-aliases';
 import { listMcpServers, listMcpTools } from '../mcp/store';
 import { listMemory } from '../memory/store';
 import { listWorkflowTemplates } from '../workflows/templates/store';
@@ -51,7 +52,7 @@ export async function listMentionResources(opts: {
   }
 
   if (want('connection')) {
-    for (const p of listCatalogProviders()) {
+    for (const p of listCatalogProviders({ userId: opts.userId, workspaceId: opts.workspaceId })) {
       const detail = p.runtime === 'connected' ? 'Connected'
         : p.runtime === 'dev_shortcut_active' ? 'Dev shortcut active'
         : p.runtime === 'ready_to_connect' ? 'Ready to connect'
@@ -60,7 +61,7 @@ export async function listMentionResources(opts: {
         : p.runtime === 'needs_reconnect' ? 'Needs reconnect'
         : p.runtime === 'mcp_available' ? 'MCP available'
         : 'Coming soon';
-      out.push({ kind: 'connection', refId: p.id, label: p.name, detail, available: p.runtime === 'connected' || p.runtime === 'dev_shortcut_active', metadata: { runtime: p.runtime } });
+      out.push({ kind: 'connection', refId: p.id, label: p.name, detail, available: isUsableConnectionRuntime(p.runtime), metadata: { runtime: p.runtime } });
     }
   }
 

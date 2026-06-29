@@ -63,13 +63,14 @@ export function policyForAutonomyMode(mode: AutonomyMode): RiskPolicy {
 /** Static category per action name. */
 export const ACTION_CATEGORY: Record<string, ToolCategory> = {
   'cli.run': 'runtime', 'process.start': 'runtime', 'process.status': 'runtime', 'process.kill': 'runtime',
-  'code.execute': 'runtime', 'code.install_package': 'runtime',
+  'code.execute': 'runtime', 'code.install_package': 'runtime', 'visualization.render': 'runtime',
   'file.read': 'files', 'file.write': 'files', 'file.edit': 'files', 'file.list': 'files',
   'file.mkdir': 'files', 'file.copy': 'files', 'file.move': 'files', 'file.delete': 'files',
   'file.search': 'files', 'file.tree': 'files', 'file.exists': 'files', 'file.metadata': 'files',
   'document.read': 'documents', 'document.read_many': 'documents', 'document.summarize': 'documents',
   'folder.scan': 'documents', 'folder.read_relevant': 'documents',
   'sheet.read': 'data', 'sheet.write': 'data', 'sheet.append': 'data', 'sheet.export_csv': 'data', 'sheet.to_json': 'data',
+  'sheet.update_cells': 'data',
   'sheet.profile': 'data', 'sheet.query': 'data',
   'sheet.format_range': 'data', 'sheet.add_chart': 'data', 'sheet.add_table': 'data',
   'doc.read': 'documents', 'doc.write_txt': 'documents', 'doc.write_docx': 'documents',
@@ -88,6 +89,8 @@ export const ACTION_CATEGORY: Record<string, ToolCategory> = {
   'browser.assert_text': 'browser', 'browser.assert_url': 'browser', 'browser.wait': 'browser',
   'browser.extract_table': 'browser', 'browser.download': 'browser', 'browser.upload': 'browser',
   'browser.login': 'browser',
+  'web.search': 'web', 'web.batch_search': 'web', 'web.open_result': 'web',
+  'web.extract_page': 'web', 'web.extract_contact_info': 'web', 'web.verify_source': 'web',
   'email.compose': 'connections',
   'connection.call': 'connections', 'skill.run': 'skills',
   'workflow.start': 'workflows', 'workflow.status': 'workflows', 'workflow.cancel': 'workflows',
@@ -147,6 +150,8 @@ export function assessRisk(action: ControlAction): ToolRisk {
     case 'code.execute':
     case 'code.install_package':
       return 'process_exec';
+    case 'visualization.render':
+      return 'read_only';
     case 'process.status':
       return 'read_only';
     case 'process.kill':
@@ -157,12 +162,14 @@ export function assessRisk(action: ControlAction): ToolRisk {
     case 'document.read': case 'document.read_many': case 'document.summarize':
     case 'folder.scan': case 'folder.read_relevant': case 'sheet.to_json':
     case 'sheet.profile': case 'sheet.query':
+    case 'web.search': case 'web.batch_search': case 'web.open_result':
+    case 'web.extract_page': case 'web.extract_contact_info': case 'web.verify_source':
     case 'doc.read': case 'artifact.plan': case 'artifact.preview': case 'artifact.verify':
     case 'artifact.list': case 'artifact.pdf_extract_text': case 'artifact.pdf_metadata':
     case 'artifact.pdf_page_count':
       return 'read_only';
     case 'file.write': case 'file.edit': case 'file.mkdir': case 'file.copy':
-    case 'sheet.write': case 'sheet.append': case 'sheet.export_csv':
+    case 'sheet.write': case 'sheet.update_cells': case 'sheet.append': case 'sheet.export_csv':
     case 'sheet.format_range': case 'sheet.add_chart': case 'sheet.add_table':
     case 'doc.write_txt': case 'doc.write_docx': case 'clipboard.set':
     case 'artifact.render_pdf': case 'artifact.render_docx': case 'artifact.render_pptx':

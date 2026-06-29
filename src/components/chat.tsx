@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon, ClickMark } from './icons';
-import { RichMessage } from './rich-message';
+import { RichMessage, VisualizationBlock } from './rich-message';
 import { Sidebar } from './sidebar';
 import { MODELS } from '../constants/models';
 import { getMessages, addMessage, createSession, updateMessage, touchSession, getSettings, setAutoSessionTitle } from '../lib/database';
@@ -17,18 +17,26 @@ import {
   type WebSearchPreference,
 } from '../lib/search-citations';
 import { buildChatSystemPrompt } from '../lib/assistant/persona';
+import { parseLarundEnvelope, parseThinking, serializeThinking, type VisibleThinking } from '../lib/assistant/thinking';
+import { collectAgentVisualizations, type ChatVisualization } from '../lib/assistant/visualizations';
 import { generateChatTitle } from '../lib/assistant/title';
 import { runMemoryExtraction } from '../lib/memory/pipeline';
 import { runAgentLoop, AgentStatus, AgentStep, AgentAbortSignal } from '../lib/agent-loop';
 import { v4 as uuidv4 } from 'uuid';
 import type { UserCredits } from '../lib/supabase';
 import { ReferenceChip } from './chat/ReferenceChip';
+import { ComposerAttachmentTray } from './chat/ComposerAttachmentTray';
 import { ReferencePicker } from './chat/ReferencePicker';
 import { RichMentionEditor, type RichMentionEditorHandle } from './mentions/RichMentionEditor';
 import { MentionChip } from './mentions/MentionChip';
 import type { DocumentReference } from '../lib/references/types';
 import { deserializeReferences, serializeReferences } from '../lib/references/serialize';
-import { referenceFromPath } from '../lib/references/local-picker';
+import {
+  mergeDocumentReferences,
+  referenceKey,
+  referencesFromClipboardEvent,
+  referencesFromDroppedDataTransfer,
+} from '../lib/references/composer-attachments';
 import { ingestReferences } from '../lib/references/ingest';
 import type { ReferencedContext } from '../lib/mentions/types';
 import { resolveReferencedContext } from '../lib/mentions/resolve';
@@ -48,12 +56,51 @@ import {
   type ChatArtifactAttachment,
 } from '../lib/artifacts/ui';
 import type { CodeRunDetails, CodeRunFile } from '../lib/code-exec/types';
+import {
+  buildAnswerModelMetadata,
+  citationsToWebCitations,
+  isAnswerModelMetadata,
+  isWebCitation,
+  isWebSearchRun,
+  isWebSource,
+  parseJsonArray,
+  parseJsonObject,
+  searchRunFromChat,
+  sourcesFromSearchCitations,
+  verifyWebAnswerQuality,
+  webMetadataFromAgentSteps,
+  type AnswerModelMetadata,
+  type WebCitation,
+  type WebSearchRun,
+  type WebSource,
+} from '../lib/web-search/metadata';
+import { explicitWebRequested, routeWebSearch, type WebSearchRouteDecision } from '../lib/web-search/web-search-router';
+import { evaluateSearchEvidence, type SearchEvidence } from '../lib/web-search/quality';
 
 /** Read and clear the one-shot workflow template armed on the Workflows page. */
 function consumeActiveWorkflowTemplate(): string | undefined {
   const id = localStorage.getItem('active_workflow_template_id');
   if (id) localStorage.removeItem('active_workflow_template_id');
   return id ?? undefined;
+}
+
+function mergeTaskReferences(inlineRefs: ReferencedContext[], attachmentRefs: DocumentReference[]): ReferencedContext[] {
+  const seen = new Set<string>();
+  const out: ReferencedContext[] = [];
+  const push = (ref: ReferencedContext) => {
+    const key = taskReferenceKey(ref);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(ref);
+  };
+  inlineRefs.forEach(push);
+  attachmentRefs.map(documentReferenceToMention).forEach(push);
+  return out;
+}
+
+function taskReferenceKey(ref: ReferencedContext): string {
+  const doc = mentionToDocumentReference(ref);
+  return doc ? referenceKey(doc) : `${ref.kind}:${ref.refId}`.toLowerCase();
 }
 
 // ─── Model picker ─────────────────────────────────────────────────────────────
@@ -162,18 +209,14 @@ function InlineModelPicker({ model, setModel }: { model: string; setModel: (m: s
           if (nextOpen) updatePopoverPosition();
           setOpen(nextOpen);
         }}
-        className="model-btn"
-        style={{
-          display: 'flex', alignItems: 'center', gap: 5,
-          height: 28, padding: '0 9px',
-          border: 'none', borderRadius: 7, fontSize: 12, cursor: 'pointer',
-        }}
+        className="composer-pill composer-pill--active"
+        style={{ fontSize: 12.5 }}
       >
-        <Icon name={cur.icon} size={12} stroke={1.5} style={{ color: 'var(--accent)' }} />
-        <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>{cur.name}</span>
+        <Icon name={cur.icon} size={13} stroke={1.6} style={{ color: 'var(--accent)' }} />
+        <span style={{ fontWeight: 600 }}>{cur.name}</span>
         <Icon
-          name="chevronDown" size={10} stroke={1.5}
-          style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s', color: 'var(--text-hint)' }}
+          name="chevronDown" size={11} stroke={1.6}
+          style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
         />
       </button>
 
@@ -233,32 +276,74 @@ function InlineModelPicker({ model, setModel }: { model: string; setModel: (m: s
 
 // ─── Message components ───────────────────────────────────────────────────────
 
-function UserMsg({ children }: { children: React.ReactNode }) {
+function chatInitials(email?: string | null): string {
+  if (!email) return 'U';
+  const local = email.split('@')[0];
+  const parts = local.split(/[._\-]/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return local.slice(0, 2).toUpperCase();
+}
+
+/** Circular AI avatar with the Larund lightning mark — matches the design's
+ *  gradient-disc agent avatar. */
+function AiAvatar({ running }: { running?: boolean }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-      <div style={{ maxWidth: '78%', minWidth: 0 }}>
-        <div className="msg-user-bubble">{children}</div>
-      </div>
+    <div className="msg-avatar msg-avatar--ai">
+      <svg width={15} height={15} viewBox="0 0 24 24" fill="none" style={{ filter: running ? 'drop-shadow(0 0 5px rgba(var(--accent-rgb),0.6))' : 'none' }}>
+        <path d="M13 2L4.5 13.5H11L9.5 22L19.5 9.5H12.5L13 2Z" fill="var(--accent)" />
+      </svg>
     </div>
   );
 }
 
-function AgentMsg({ children, rich, streaming, userId, citations = [] }: {
+function UserMsg({ children, initials = 'U' }: { children: React.ReactNode; initials?: string }) {
+  return (
+    <div className="msg-user-row">
+      <div style={{ maxWidth: '78%', minWidth: 0 }}>
+        <div className="msg-user-bubble">{children}</div>
+      </div>
+      <div className="msg-avatar msg-avatar--user">{initials}</div>
+    </div>
+  );
+}
+
+function ThinkingDisclosure({ thinking, running }: { thinking?: VisibleThinking; running?: boolean }) {
+  const [open, setOpen] = useState(false);
+  if (!thinking?.content.trim()) return null;
+  return (
+    <div className={`thinking-disclosure${open ? ' thinking-disclosure--open' : ''}`}>
+      <button type="button" className="thinking-disclosure__trigger" onClick={() => setOpen((value) => !value)}>
+        <Icon name="chevronDown" size={12} stroke={1.8} className="thinking-disclosure__chevron" />
+        <span>THINKING</span>
+        {running && <span className="dot dot-blue dot-pulse" style={{ width: 5, height: 5 }} />}
+      </button>
+      {open && (
+        <div className="thinking-disclosure__body">
+          <RichMessage content={thinking.content} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AgentMsg({ children, rich, thinking, streaming, userId, citations = [], sources = [], modelMetadata }: {
   children?: React.ReactNode;
   rich?: string;
+  thinking?: VisibleThinking;
   streaming?: boolean;
   userId?: string;
   citations?: SearchCitation[];
+  sources?: WebSource[];
+  modelMetadata?: AnswerModelMetadata;
 }) {
   return (
     <div className="msg-ai-row">
-      <div style={{ flexShrink: 0, marginTop: 1 }}>
-        <ClickMark size={24} radius={8} />
-      </div>
+      <AiAvatar />
       <div className="msg-ai-body">
         {rich != null ? (
           <>
-            <RichMessage content={rich} userId={userId} citations={citations} />
+            <ThinkingDisclosure thinking={thinking} running={streaming} />
+            <RichMessage content={rich} userId={userId} citations={citations} sources={sources} modelMetadata={modelMetadata} />
             {streaming && <span className="streaming-cursor" />}
           </>
         ) : children}
@@ -286,7 +371,8 @@ function NewChatPanel({ onStarter }: { onStarter: (p: string) => void }) {
           <ClickMark size={48} radius={15} glow />
           <div style={{ textAlign: 'center' }}>
             <div style={{
-              fontSize: 23, fontWeight: 700, color: 'var(--text-primary)',
+              fontFamily: 'var(--font-display)',
+              fontSize: 26, fontWeight: 600, color: 'var(--text-primary)',
               letterSpacing: '-.03em', marginBottom: 8, lineHeight: 1.2,
             }}>
               How can I help you?
@@ -321,6 +407,7 @@ const TOOL_ICONS: Record<string, string> = {
   'process.kill':      'command',
   'code.execute':      'cpu',
   'code.install_package': 'upload',
+  'visualization.render': 'image',
   'file.read':         'fileText',
   'file.write':        'upload',
   'file.edit':         'upload',
@@ -338,6 +425,7 @@ const TOOL_ICONS: Record<string, string> = {
   'folder.read_relevant': 'folder',
   'sheet.read':        'fileText',
   'sheet.write':       'upload',
+  'sheet.update_cells': 'upload',
   'sheet.append':      'upload',
   'sheet.export_csv':  'upload',
   'sheet.to_json':     'fileText',
@@ -377,6 +465,12 @@ const TOOL_ICONS: Record<string, string> = {
   'browser.download':  'fileText',
   'browser.upload':    'upload',
   'browser.login':     'lock',
+  'web.search':        'search',
+  'web.batch_search':  'search',
+  'web.open_result':   'externalLink',
+  'web.extract_page':  'fileText',
+  'web.extract_contact_info': 'fileText',
+  'web.verify_source': 'check',
   'connection.call':   'externalLink',
   'skill.run':         'sparkle',
   'workflow.start':    'monitor',
@@ -392,6 +486,7 @@ const TOOL_LABELS: Record<string, string> = {
   'process.start': 'Starting process',
   'code.execute': 'Running Python',
   'code.install_package': 'Installing Python package',
+  'visualization.render': 'Rendering visualization',
   'file.read': 'Reading file',
   'file.write': 'Writing file',
   'file.edit': 'Editing file',
@@ -404,6 +499,7 @@ const TOOL_LABELS: Record<string, string> = {
   'folder.read_relevant': 'Reading folder',
   'sheet.read': 'Reading sheet',
   'sheet.write': 'Writing sheet',
+  'sheet.update_cells': 'Updating cells',
   'sheet.append': 'Appending to sheet',
   'doc.write_docx': 'Writing document',
   'artifact.plan': 'Planning artifact',
@@ -434,6 +530,12 @@ const TOOL_LABELS: Record<string, string> = {
   'browser.download': 'Downloading',
   'browser.upload': 'Uploading',
   'browser.login': 'Signing in',
+  'web.search': 'Searching web',
+  'web.batch_search': 'Searching web',
+  'web.open_result': 'Opening result',
+  'web.extract_page': 'Reading source',
+  'web.extract_contact_info': 'Extracting contact info',
+  'web.verify_source': 'Verifying source',
   'connection.call': 'Using connection',
   'skill.run': 'Running skill',
   'workflow.start': 'Starting workflow',
@@ -482,7 +584,7 @@ function ArtifactResultCard({ manifest }: { manifest: ArtifactCardManifest }) {
         <span style={{
           width: 30, height: 30, borderRadius: 7, flex: 'none',
           display: 'grid', placeItems: 'center',
-          background: 'rgba(74,158,255,0.12)', color: 'var(--accent)',
+          background: 'rgba(var(--accent-rgb),0.12)', color: 'var(--accent)',
         }}>
           <Icon name="fileText" size={15} stroke={1.8} />
         </span>
@@ -697,6 +799,38 @@ function CodeExecutionCard({ run, running = false }: { run: CodeRunDetails; runn
   );
 }
 
+function AgentVisualizationCards({ visualizations }: { visualizations: ChatVisualization[] }) {
+  if (visualizations.length === 0) return null;
+  return (
+    <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
+      {visualizations.map((visualization) => (
+        <VisualizationBlock
+          key={visualization.id}
+          html={visualization.html}
+          title={visualization.title}
+          height={visualization.height}
+        />
+      ))}
+    </div>
+  );
+}
+
+// Category color for a tool's icon tile — mirrors the design's colored action
+// tiles (blue folder, red document, accent output, green check, etc.).
+function toolTile(icon: string): { fg: string; bg: string; border: string } {
+  switch (icon) {
+    case 'folder':       return { fg: '#9BA8FF', bg: 'rgba(155,168,255,0.12)', border: 'rgba(155,168,255,0.22)' };
+    case 'fileText':     return { fg: '#FF7A7A', bg: 'rgba(255,107,107,0.12)', border: 'rgba(255,107,107,0.22)' };
+    case 'upload':       return { fg: 'var(--accent)', bg: 'rgba(var(--accent-rgb),0.13)', border: 'rgba(var(--accent-rgb),0.25)' };
+    case 'check':        return { fg: 'var(--success)', bg: 'rgba(62,207,142,0.12)', border: 'rgba(62,207,142,0.22)' };
+    case 'search':       return { fg: '#C9A2FF', bg: 'rgba(201,162,255,0.12)', border: 'rgba(201,162,255,0.22)' };
+    case 'externalLink': return { fg: '#6EA8FE', bg: 'rgba(110,168,254,0.13)', border: 'rgba(110,168,254,0.24)' };
+    case 'sparkle':      return { fg: 'var(--accent)', bg: 'rgba(var(--accent-rgb),0.13)', border: 'rgba(var(--accent-rgb),0.25)' };
+    case 'lock':         return { fg: '#F5B544', bg: 'rgba(245,181,68,0.12)', border: 'rgba(245,181,68,0.22)' };
+    default:             return { fg: 'var(--text-muted)', bg: 'rgba(var(--ov-color),0.06)', border: 'rgba(var(--ov-color),0.10)' };
+  }
+}
+
 function AgentStepItem({ step }: { step: AgentStep }) {
   const [open, setOpen] = useState(false);
 
@@ -711,7 +845,7 @@ function AgentStepItem({ step }: { step: AgentStep }) {
         <span style={{
           width: 18, height: 18, borderRadius: 4, flex: 'none',
           display: 'grid', placeItems: 'center',
-          background: 'rgba(74,158,255,0.12)',
+          background: 'rgba(var(--accent-rgb),0.12)',
           color: tone,
         }}>
           <Icon name={step.type === 'verification' ? 'check' : step.type === 'checklist' ? 'fileText' : 'sparkle'} size={9} stroke={1.8} />
@@ -729,6 +863,7 @@ function AgentStepItem({ step }: { step: AgentStep }) {
 
     const toolName = step.tool || '';
     const iconName = TOOL_ICONS[toolName] || 'circle';
+    const tile = toolTile(iconName);
     let argPreview = '';
     try {
       const p = JSON.parse(step.input || '{}');
@@ -739,36 +874,19 @@ function AgentStepItem({ step }: { step: AgentStep }) {
       <div className="agent-step-item">
         <button
           onClick={() => step.input && setOpen(v => !v)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            width: '100%', background: 'none', border: 'none',
-            padding: '3px 0', cursor: step.input ? 'pointer' : 'default',
-            textAlign: 'left',
-          }}
+          className="tool-card"
+          style={{ cursor: step.input ? 'pointer' : 'default', textAlign: 'left' }}
         >
-          <span style={{
-            width: 18, height: 18, borderRadius: 4, flex: 'none',
-            display: 'grid', placeItems: 'center',
-            background: 'rgba(var(--ov-color),0.07)',
-            color: 'var(--text-muted)',
-          }}>
-            <Icon name={iconName} size={9} stroke={1.8} />
+          <span className="tool-card-icon" style={{ background: tile.bg, borderColor: tile.border, color: tile.fg }}>
+            <Icon name={iconName} size={14} stroke={1.8} />
           </span>
-          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', flex: 'none' }}>
-            {TOOL_LABELS[toolName] || toolName}
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span className="tool-card-title" style={{ display: 'block' }}>{TOOL_LABELS[toolName] || toolName}</span>
+            {argPreview && <span className="tool-card-sub" style={{ display: 'block' }}>{argPreview.slice(0, 80)}</span>}
           </span>
-          {argPreview && (
-            <span style={{
-              fontSize: 11.5, color: 'var(--text-hint)',
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              flex: 1, maxWidth: 260,
-            }}>
-              {argPreview.slice(0, 70)}
-            </span>
-          )}
           {step.input && (
             <Icon
-              name="chevronDown" size={9} stroke={1.5}
+              name="chevronDown" size={11} stroke={1.6}
               style={{
                 transform: open ? 'none' : 'rotate(-90deg)',
                 transition: 'transform .15s',
@@ -779,12 +897,12 @@ function AgentStepItem({ step }: { step: AgentStep }) {
         </button>
         {open && step.input && (
           <pre style={{
-            margin: '3px 0 4px 24px', fontSize: 10.5,
+            margin: '0 0 7px 39px', fontSize: 10.5,
             color: 'var(--text-hint)', fontFamily: 'var(--font-mono)',
             whiteSpace: 'pre-wrap', wordBreak: 'break-all',
             maxHeight: 110, overflow: 'auto',
-            background: 'rgba(0,0,0,.3)', borderRadius: 5,
-            padding: '5px 8px',
+            background: 'rgba(0,0,0,.3)', borderRadius: 7,
+            padding: '6px 9px',
           }}>
             {step.input}
           </pre>
@@ -882,13 +1000,16 @@ interface AgentMsgContentProps {
   userId?: string;
   emailDraft?: EmailDraft;
   onEmailDraftChange?: (draft: EmailDraft) => void;
+  sources?: WebSource[];
+  modelMetadata?: AnswerModelMetadata;
+  thinking?: VisibleThinking;
 }
 
 function AgentMsgContent({
   steps, status,
   askQuestion, askAnswer, onAskAnswerChange, onAskSubmit,
   onAskQuickAnswer, onStop, finalText, isError, artifacts = [], onPreviewArtifact, onArtifactsChanged, selectedArtifactId, userId,
-  emailDraft, onEmailDraftChange,
+  emailDraft, onEmailDraftChange, sources = [], modelMetadata, thinking,
 }: AgentMsgContentProps) {
   // Collapsed by default: the action timeline is evidence, not the headline. The
   // human-readable narration carries the story; details expand on demand.
@@ -898,6 +1019,7 @@ function AgentMsgContent({
   // Everything else (tool calls/results/checks) lives in the collapsible timeline.
   const narrationSteps = steps.filter(s => s.type === 'narration');
   const timelineSteps = steps.filter(s => s.type !== 'narration');
+  const visualizations = collectAgentVisualizations(steps);
   const callCount = timelineSteps.filter(s => s.type === 'tool_call').length;
   const isApprovalPrompt = Boolean(askQuestion && /Approval needed|Approve action/i.test(askQuestion));
 
@@ -909,6 +1031,7 @@ function AgentMsgContent({
 
   return (
     <div style={{ width: '100%' }}>
+      <ThinkingDisclosure thinking={thinking} running={isRunning} />
 
       {/* ── Narration: Larund explaining its work, as readable text ── */}
       {narrationSteps.length > 0 && (
@@ -988,7 +1111,7 @@ function AgentMsgContent({
         <div style={{
           borderLeft: '1.5px solid var(--border-md)',
           paddingLeft: 10,
-          marginBottom: finalText || askQuestion ? 12 : 0,
+          marginBottom: finalText || visualizations.length > 0 || askQuestion ? 12 : 0,
           display: 'flex', flexDirection: 'column',
         }}>
           {timelineSteps.map(step => <AgentStepItem key={step.id} step={step} />)}
@@ -1008,8 +1131,8 @@ function AgentMsgContent({
           marginTop: 4, marginBottom: 10,
           padding: '11px 13px',
           borderRadius: 10,
-          border: '1px solid rgba(74,158,255,.22)',
-          background: 'rgba(74,158,255,.05)',
+          border: '1px solid rgba(var(--accent-rgb),.22)',
+          background: 'rgba(var(--accent-rgb),.05)',
         }}>
           <div style={{
             fontSize: 13, color: 'var(--text-primary)',
@@ -1039,7 +1162,7 @@ function AgentMsgContent({
                     color: 'var(--text-primary)',
                     fontSize: 13, fontFamily: 'inherit', outline: 'none',
                   }}
-                  onFocus={e => { (e.currentTarget as HTMLElement).style.borderColor = 'rgba(74,158,255,.4)'; }}
+                  onFocus={e => { (e.currentTarget as HTMLElement).style.borderColor = 'rgba(var(--accent-rgb),.4)'; }}
                   onBlur={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-md)'; }}
                 />
                 <button
@@ -1065,10 +1188,12 @@ function AgentMsgContent({
         }}>
           {isError
             ? <span style={{ color: 'var(--danger)', fontSize: 13.5, lineHeight: 1.65 }}>{finalText}</span>
-            : <RichMessage content={finalText} userId={userId} />
+            : <RichMessage content={finalText} userId={userId} sources={sources} modelMetadata={modelMetadata} />
           }
         </div>
       )}
+
+      <AgentVisualizationCards visualizations={visualizations} />
 
       {artifacts.length > 0 && (
         <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
@@ -1122,6 +1247,12 @@ type Message = {
   artifacts_json?: string | null;
   search_citations_json?: string | null;
   search_mode?: SearchMode | null;
+  web_search_runs_json?: string | null;
+  web_sources_json?: string | null;
+  web_citations_json?: string | null;
+  model_metadata_json?: string | null;
+  search_evidence_json?: string | null;
+  thinking_json?: string | null;
   _loading?: boolean;
   _usage?: string;
   _error?: boolean;
@@ -1136,6 +1267,12 @@ type Message = {
   _emailDraft?: EmailDraft;
   _searchCitations?: SearchCitation[];
   _searchMode?: SearchMode;
+  _webSearchRuns?: WebSearchRun[];
+  _webSources?: WebSource[];
+  _webCitations?: WebCitation[];
+  _modelMetadata?: AnswerModelMetadata;
+  _searchEvidence?: SearchEvidence;
+  _thinking?: VisibleThinking;
   // Subtle routing label shown after send ("Answering" / "Needs confirmation").
   _intentLabel?: string;
 };
@@ -1181,6 +1318,15 @@ function parseChatArtifacts(raw?: string | null): ChatArtifactAttachment[] {
   }
 }
 
+function thinkingFromAgentSteps(steps: AgentStep[]): VisibleThinking | undefined {
+  const parts = steps
+    .filter((step) => ['thinking', 'plan', 'checklist', 'verification'].includes(step.type))
+    .map((step) => step.output?.trim())
+    .filter((value): value is string => Boolean(value));
+  if (parts.length === 0) return undefined;
+  return { content: parts.join('\n\n') };
+}
+
 /** The latest step carrying an email draft (email.compose OR a Gmail connection
  * call), used to (re)hydrate the composer card. */
 function emailDraftFromStep(step: AgentStep): EmailDraft | undefined {
@@ -1205,6 +1351,9 @@ function codeArtifactsFromStep(step: AgentStep): ChatArtifactAttachment[] {
 function hydrateMessage(row: any): Message {
   const isAgent = row.message_type === 'agent'
     || Boolean(row.agent_status || row.agent_steps_json || row.agent_ask_question);
+  const agentSteps = parseAgentSteps(row.agent_steps_json);
+  const searchCitations = parseSearchCitations(row.search_citations_json);
+  const webSources = parseJsonArray(row.web_sources_json, isWebSource);
   const references = deserializeReferences(row.references_json || undefined)
     .map((ref) => 'refId' in ref ? ref : documentReferenceToMention(ref));
 
@@ -1212,15 +1361,70 @@ function hydrateMessage(row: any): Message {
     ...row,
     _agent: isAgent,
     _agentStatus: row.agent_status ?? undefined,
-    _agentSteps: parseAgentSteps(row.agent_steps_json),
-    _emailDraft: emailDraftFromSteps(parseAgentSteps(row.agent_steps_json)),
+    _agentSteps: agentSteps,
+    _emailDraft: emailDraftFromSteps(agentSteps),
     _agentAskQuestion: row.agent_ask_question ?? null,
     _error: Boolean(row._error) || (isAgent && row.agent_status === 'error'),
     _references: references,
     _artifacts: parseChatArtifacts(row.artifacts_json),
-    _searchCitations: parseSearchCitations(row.search_citations_json),
+    _searchCitations: searchCitations,
     _searchMode: (row.search_mode as SearchMode | null) ?? 'none',
+    _webSearchRuns: parseJsonArray(row.web_search_runs_json, isWebSearchRun),
+    _webSources: webSources.length ? webSources : sourcesFromSearchCitations(searchCitations),
+    _webCitations: parseJsonArray(row.web_citations_json, isWebCitation),
+    _modelMetadata: parseJsonObject(row.model_metadata_json, isAnswerModelMetadata),
+    _searchEvidence: parseJsonObject(row.search_evidence_json, isSearchEvidence),
+    _thinking: parseThinking(row.thinking_json),
   };
+}
+
+function modelTierFor(tag?: string): AnswerModelMetadata['tier'] {
+  const value = (tag ?? '').toLowerCase();
+  if (value.includes('fast')) return 'fast';
+  if (value.includes('balanced')) return 'balanced';
+  if (value.includes('power')) return 'power';
+  return 'unknown';
+}
+
+function isSearchEvidence(item: unknown): item is SearchEvidence {
+  return Boolean(item && typeof item === 'object' && typeof (item as SearchEvidence).mode === 'string');
+}
+
+function buildChatSearchEvidence(input: {
+  route: WebSearchRouteDecision;
+  modelId: string;
+  query: string;
+  sources: WebSource[];
+  citations: WebCitation[];
+}): SearchEvidence {
+  return evaluateSearchEvidence({
+    mode: input.route.strategy === 'provider_native_search' ? 'provider_native'
+      : input.route.strategy === 'server_side_search_adapter' ? 'server_side'
+        : 'browser_fallback',
+    provider: String(input.route.provider),
+    modelId: input.modelId,
+    queries: [input.query],
+    sources: input.sources.map((source) => ({
+      title: source.title,
+      url: source.url,
+      domain: source.domain,
+      snippet: source.snippet,
+      cited: input.citations.some((citation) => citation.sourceId === source.id) || source.kind === 'citation',
+    })),
+    citations: input.citations.map((citation) => {
+      const source = input.sources.find((item) => item.id === citation.sourceId);
+      return {
+        sourceUrl: source?.url ?? citation.sourceId,
+        title: source?.title ?? citation.sourceId,
+        startIndex: citation.startIndex,
+        endIndex: citation.endIndex,
+      };
+    }),
+    usedBrowserOpen: false,
+    usedSearchEnginePage: false,
+    quality: 'failed',
+    warnings: input.route.strategy === 'provider_native_search' ? [] : [input.route.reason],
+  });
 }
 
 // ─── Main ChatScreen ──────────────────────────────────────────────────────────
@@ -1241,34 +1445,53 @@ export function ChatScreen({
 }) {
   const [activeChat,        setActiveChat       ] = useState<string | null>(null);
   const [messages,          setMessages         ] = useState<Message[]>([]);
+  const [messagesLoading,   setMessagesLoading  ] = useState(false);
+  const [messagesError,     setMessagesError    ] = useState<string | null>(null);
+  const [loadedSessionId,   setLoadedSessionId  ] = useState<string | null>(null);
   const [input,             setInput            ] = useState('');
   const [sending,           setSending          ] = useState(false);
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
-  const [attachments,       setAttachments      ] = useState<{ name: string; src: string }[]>([]);
   const [copiedId,          setCopiedId         ] = useState<string | null>(null);
   const [routing,           setRouting          ] = useState(false);
   const [agentAskAnswer,    setAgentAskAnswer   ] = useState('');
   const [runningTask,       setRunningTask      ] = useState<RunningTask | null>(null);
   const [references,        setReferences       ] = useState<ReferencedContext[]>([]);
+  const [composerAttachments, setComposerAttachments] = useState<DocumentReference[]>([]);
+  const [composerDropActive, setComposerDropActive] = useState(false);
   const [referencePickerOpen, setReferencePickerOpen] = useState(false);
   const [previewState,      setPreviewState     ] = useState<ArtifactPreviewState>({ isOpen: false, mode: 'preview' });
   const [webSearchPreference, setWebSearchPreference] = useState<WebSearchPreference>('auto');
   const [deepResearch, setDeepResearch] = useState(false);
 
   const editorRef     = useRef<RichMentionEditorHandle>(null);
-  const fileRef       = useRef<HTMLInputElement>(null);
   const bottomRef     = useRef<HTMLDivElement>(null);
   const scrollRef     = useRef<HTMLDivElement>(null);
   const referencePickerTriggerRef = useRef<HTMLButtonElement>(null);
   const skipNextFetch = useRef(false);
+  const loadRequestSeq = useRef(0);
+  const activeChatRef = useRef<string | null>(null);
   const abortRef      = useRef<AgentAbortSignal>({ aborted: false });
   const chatAbortRef  = useRef<AbortController | null>(null);
   const askResolveRef = useRef<((answer: string) => void) | null>(null);
 
   useEffect(() => {
-    if (!activeChat) { setMessages([]); return; }
-    if (skipNextFetch.current) { skipNextFetch.current = false; return; }
-    getMessages(activeChat).then(rows => setMessages(rows.map(hydrateMessage)));
+    activeChatRef.current = activeChat;
+    if (!activeChat) {
+      loadRequestSeq.current++;
+      setMessages([]);
+      setMessagesLoading(false);
+      setMessagesError(null);
+      setLoadedSessionId(null);
+      return;
+    }
+    if (skipNextFetch.current) {
+      skipNextFetch.current = false;
+      setMessagesLoading(false);
+      setMessagesError(null);
+      setLoadedSessionId(activeChat);
+      return;
+    }
+    void loadMessagesForSession(activeChat);
   }, [activeChat]);
 
   useEffect(() => {
@@ -1279,8 +1502,12 @@ export function ChatScreen({
   }, [messages, previewState.isOpen]);
 
   useEffect(() => {
+    loadRequestSeq.current++;
     setActiveChat(null);
     setMessages([]);
+    setMessagesLoading(false);
+    setMessagesError(null);
+    setLoadedSessionId(null);
     setSidebarRefreshKey(k => k + 1);
   }, [projectId]);
 
@@ -1305,6 +1532,49 @@ export function ChatScreen({
   const chatTitle = messages.find(m => m.role === 'user')?.content.slice(0, 80) ?? '';
   const allArtifacts = messages.flatMap((m) => m._artifacts ?? []);
 
+  async function readSessionMessages(sessionId: string): Promise<Message[]> {
+    const rows = await getMessages(sessionId);
+    return rows.map((row) => {
+      try {
+        return hydrateMessage(row);
+      } catch (err) {
+        console.warn('Failed to hydrate message metadata:', err, row);
+        return {
+          id: String(row.id ?? uuidv4()),
+          session_id: String(row.session_id ?? sessionId),
+          role: String(row.role ?? 'assistant'),
+          content: String(row.content ?? ''),
+          created_at: String(row.created_at ?? new Date().toISOString()),
+          _error: row.role === 'assistant' && !row.content,
+        };
+      }
+    });
+  }
+
+  async function loadMessagesForSession(sessionId: string): Promise<Message[]> {
+    const requestId = ++loadRequestSeq.current;
+    setMessagesLoading(true);
+    setMessagesError(null);
+    try {
+      const nextMessages = await readSessionMessages(sessionId);
+      if (requestId === loadRequestSeq.current && activeChatRef.current === sessionId) {
+        setMessages(nextMessages);
+        setLoadedSessionId(sessionId);
+        setMessagesLoading(false);
+      }
+      return nextMessages;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (requestId === loadRequestSeq.current && activeChatRef.current === sessionId) {
+        setMessages([]);
+        setLoadedSessionId(null);
+        setMessagesError(msg || 'Could not load this chat.');
+        setMessagesLoading(false);
+      }
+      throw err;
+    }
+  }
+
   // The rich composer (contentEditable) is the source of truth: it reports its
   // derived plain text + ordered references here on every edit.
   function handleEditorChange(text: string, refs: ReferencedContext[]) {
@@ -1313,25 +1583,44 @@ export function ChatScreen({
   }
 
   function handleReferencesPicked(picked: DocumentReference[]) {
-    // Insert each pick inline at the caret; the editor's onChange syncs state.
-    for (const ref of picked) editorRef.current?.insertReference(documentReferenceToMention(ref));
+    addComposerAttachments(picked);
     setReferencePickerOpen(false);
+    editorRef.current?.focus();
   }
 
-  function handleReferenceDrop(e: React.DragEvent<HTMLDivElement>) {
+  function addComposerAttachments(picked: DocumentReference[]) {
+    if (picked.length === 0) return;
+    setComposerAttachments((prev) => mergeDocumentReferences(prev, picked));
+  }
+
+  function removeComposerAttachment(id: string) {
+    setComposerAttachments((prev) => prev.filter((ref) => ref.id !== id));
+  }
+
+  async function handleReferenceDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
-    const refs: DocumentReference[] = [];
-    for (const file of Array.from(e.dataTransfer.files || [])) {
-      const path = (file as File & { path?: string }).path;
-      if (path) refs.push(referenceFromPath(path, 'file'));
+    setComposerDropActive(false);
+    try {
+      const refs = await referencesFromDroppedDataTransfer(e.dataTransfer, { scopeId: activeChat ?? 'draft' });
+      addComposerAttachments(refs);
+      if (refs.length > 0) editorRef.current?.focus();
+    } catch (err) {
+      console.warn('Failed to attach dropped file(s):', err);
     }
-    const text = e.dataTransfer.getData('text/plain')?.trim();
-    if (text) {
-      for (const line of text.split(/\r?\n/).map((v) => v.trim()).filter(Boolean)) {
-        if (/^[a-zA-Z]:[\\/]/.test(line) || line.startsWith('/') || line.startsWith('\\\\')) refs.push(referenceFromPath(line, 'file'));
-      }
+  }
+
+  async function handleComposerPaste(e: React.ClipboardEvent<HTMLDivElement>) {
+    const hasClipboardFiles = Array.from(e.clipboardData?.items || []).some((item) => item.kind === 'file')
+      || (e.clipboardData?.files?.length ?? 0) > 0;
+    if (!hasClipboardFiles) return;
+    e.preventDefault();
+    try {
+      const refs = await referencesFromClipboardEvent(e.clipboardData, { scopeId: activeChat ?? 'draft' });
+      addComposerAttachments(refs);
+      if (refs.length > 0) editorRef.current?.focus();
+    } catch (err) {
+      console.warn('Failed to attach pasted file(s):', err);
     }
-    for (const ref of refs) editorRef.current?.insertReference(documentReferenceToMention(ref));
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
@@ -1339,16 +1628,6 @@ export function ChatScreen({
       e.preventDefault();
       handleSend();
     }
-  }
-
-  function handleFiles(e: React.ChangeEvent<HTMLInputElement>) {
-    Array.from(e.target.files || []).forEach(file => {
-      const reader = new FileReader();
-      reader.onload = ev =>
-        setAttachments(a => [...a, { name: file.name, src: ev.target!.result as string }]);
-      reader.readAsDataURL(file);
-    });
-    e.target.value = '';
   }
 
   function handleStarter(prompt: string) {
@@ -1395,7 +1674,7 @@ export function ChatScreen({
 
   function refreshCurrentMessages() {
     if (!activeChat) return;
-    getMessages(activeChat).then(rows => setMessages(rows.map(hydrateMessage))).catch((err) =>
+    loadMessagesForSession(activeChat).catch((err) =>
       console.warn('Failed to refresh messages:', err),
     );
   }
@@ -1469,6 +1748,11 @@ export function ChatScreen({
       askQuestion: string | null;
       steps: AgentStep[];
       artifacts: ChatArtifactAttachment[];
+      webSearchRuns: WebSearchRun[];
+      webSources: WebSource[];
+      webCitations: WebCitation[];
+      modelMetadata?: AnswerModelMetadata;
+      searchEvidence?: SearchEvidence;
     };
 
     let agentState: AgentPersistState = {
@@ -1477,6 +1761,9 @@ export function ChatScreen({
       askQuestion: null,
       steps: [],
       artifacts: [],
+      webSearchRuns: [],
+      webSources: [],
+      webCitations: [],
     };
 
     // Helper: patch any field on the agent message
@@ -1491,6 +1778,11 @@ export function ChatScreen({
         askQuestion: nextState.askQuestion,
         steps: [...nextState.steps],
         artifacts: [...nextState.artifacts],
+        webSearchRuns: [...nextState.webSearchRuns],
+        webSources: [...nextState.webSources],
+        webCitations: [...nextState.webCitations],
+        modelMetadata: nextState.modelMetadata,
+        searchEvidence: nextState.searchEvidence,
       };
       const payload = {
         content: snapshot.content,
@@ -1499,6 +1791,11 @@ export function ChatScreen({
         agent_ask_question: snapshot.askQuestion,
         agent_steps_json: JSON.stringify(snapshot.steps.map(stripScreenshotFromStep)),
         artifacts_json: JSON.stringify(snapshot.artifacts),
+        web_search_runs_json: JSON.stringify(snapshot.webSearchRuns),
+        web_sources_json: JSON.stringify(snapshot.webSources),
+        web_citations_json: JSON.stringify(snapshot.webCitations),
+        model_metadata_json: snapshot.modelMetadata ? JSON.stringify(snapshot.modelMetadata) : null,
+        search_evidence_json: snapshot.searchEvidence ? JSON.stringify(snapshot.searchEvidence) : null,
       };
 
       persistQueue = persistQueue
@@ -1574,6 +1871,7 @@ export function ChatScreen({
 
     const settings = await getSettings().catch(() => null);
     const autonomyMode = ((settings?.autonomy_mode as PolicyAutonomyMode | undefined) ?? 'semi');
+    const agentStartedAt = Date.now();
 
     await runAgentLoop(
       task,
@@ -1610,9 +1908,71 @@ export function ChatScreen({
         }),
 
         onComplete: (summary) => {
+          const webMetadata = webMetadataFromAgentSteps(agentState.steps);
+          const agentSearchEvidence = evaluateSearchEvidence({
+            mode: webMetadata.sources.length ? 'server_side' : 'browser_fallback',
+            provider: webMetadata.runs[0]?.provider ?? 'none',
+            modelId: openrouterId,
+            queries: webMetadata.runs.map((run) => run.query),
+            sources: webMetadata.sources.map((source) => ({
+              title: source.title,
+              url: source.url,
+              domain: source.domain,
+              snippet: source.snippet,
+              cited: true,
+            })),
+            citations: [],
+            usedBrowserOpen: agentState.steps.some((step) => step.type === 'tool_result' && step.tool === 'browser.open'),
+            usedSearchEnginePage: false,
+            quality: 'failed',
+            warnings: [],
+          });
+          const baseQuality = verifyWebAnswerQuality(summary, webMetadata.sources, {
+            webSearchMode: webMetadata.sources.length ? 'fast' : 'none',
+          });
+          const quality = agentSearchEvidence.quality === 'failed'
+            ? {
+              ...baseQuality,
+              ok: false,
+              reasons: [...baseQuality.reasons, ...agentSearchEvidence.warnings],
+            }
+            : baseQuality;
+          const selectedModel = MODELS.find(m => m.openrouter_id === openrouterId);
+          const modelMetadata = buildAnswerModelMetadata({
+            provider: 'openrouter',
+            modelId: openrouterId,
+            displayName: selectedModel?.name ?? openrouterId,
+            tier: modelTierFor(selectedModel?.tag),
+          latencyMs: Date.now() - agentStartedAt,
+          toolsUsed: webMetadata.toolsUsed,
+          webSearchMode: webMetadata.sources.length ? 'fast' : 'none',
+          searchStrategy: webMetadata.sources.length ? 'server_side_search_adapter' : undefined,
+          searchProvider: webMetadata.runs[0]?.provider,
+          webSearchRunsCount: webMetadata.runs.length,
+          webSourcesCount: webMetadata.sources.length,
+          quality,
+          });
           syncAgentState(
-            { content: summary, status: 'complete', askQuestion: null },
-            { content: summary, _agentStatus: 'complete', _agentAskQuestion: null },
+            {
+              content: summary,
+              status: 'complete',
+              askQuestion: null,
+              webSearchRuns: webMetadata.runs,
+              webSources: webMetadata.sources,
+              webCitations: [],
+              modelMetadata,
+              searchEvidence: agentSearchEvidence,
+            },
+            {
+              content: summary,
+              _agentStatus: 'complete',
+              _agentAskQuestion: null,
+              _webSearchRuns: webMetadata.runs,
+              _webSources: webMetadata.sources,
+              _webCitations: [],
+              _modelMetadata: modelMetadata,
+              _searchEvidence: agentSearchEvidence,
+            },
           );
           setSending(false);
           setRunningTask(prev => prev?.assistantMessageId === asstMsgId ? null : prev);
@@ -1672,12 +2032,14 @@ export function ChatScreen({
 
   async function handleSend() {
     const text = input.trim();
-    const taskReferences = [...references];
+    const taskReferences = mergeTaskReferences(references, composerAttachments);
     if ((!text && taskReferences.length === 0) || sending || runningTask || !userId) return;
     // Clean message for display/storage: only what the user wrote. Attached
     // references are shown as chips; the model gets their contents via ingest.
     const messageText = text || 'Use the referenced input(s).';
+    const modelDef = MODELS.find(m => m.id === model) ?? MODELS[1];
     const wantsDeepResearch = deepResearch || isDeepResearchRequest(messageText);
+    const userExplicitlyRequestedWeb = explicitWebRequested(messageText);
     const wantsFastWeb = webSearchPreference === 'always'
       || (webSearchPreference === 'auto' && shouldUseWebSearch(messageText));
     const searchMode: SearchMode = wantsDeepResearch
@@ -1685,10 +2047,23 @@ export function ChatScreen({
       : webSearchPreference === 'never'
         ? 'none'
         : wantsFastWeb ? 'fast' : 'none';
+    const webModeForRoute: 'off' | 'auto' | 'required' = searchMode === 'none'
+      ? 'off'
+      : (webSearchPreference === 'always' || userExplicitlyRequestedWeb || wantsDeepResearch) ? 'required' : 'auto';
+    const webRouteDecision = routeWebSearch({
+      userPrompt: messageText,
+      selectedModel: {
+        provider: 'openrouter',
+        modelId: modelDef.openrouter_id,
+        displayName: modelDef.name,
+      },
+      webMode: webModeForRoute,
+      searchDepth: searchMode === 'deep' ? 'extended' : 'standard',
+    });
 
     if (searchMode === 'deep') {
       const estimatedCredits = 1;
-      if (credits && credits.visible_balance < estimatedCredits) {
+      if (credits && !credits.unlimited && credits.visible_balance < estimatedCredits) {
         alert('Nincs elég kredited a mélykutatáshoz. Válts nagyobb csomagra vagy tölts fel kreditet.');
         return;
       }
@@ -1696,43 +2071,54 @@ export function ChatScreen({
       if (!ok) return;
     }
     // First exchange in this session → generate a semantic title afterwards.
-    const isFirstExchange = messages.length === 0;
-
     let currentTaskId: string | null = null;
     let currentSessionId: string | null = null;
     setSending(true);
     setInput('');
     editorRef.current?.clear();
-    setAttachments([]);
     setReferences([]);
+    setComposerAttachments([]);
     try {
 
     // ── Create / get session ──
     let sessionId = activeChat;
+    let priorMessagesForHistory: Message[] = [];
     if (!sessionId) {
       sessionId = uuidv4();
       await createSession(sessionId, (text || taskReferences[0]?.label || 'Referenced task').slice(0, 40), projectId);
       skipNextFetch.current = true;
       setActiveChat(sessionId);
+      setLoadedSessionId(sessionId);
       setSidebarRefreshKey(k => k + 1);
+    } else {
+      priorMessagesForHistory = loadedSessionId === sessionId
+        ? messages
+        : await readSessionMessages(sessionId);
+      if (loadedSessionId !== sessionId) {
+        setMessages(priorMessagesForHistory);
+        setLoadedSessionId(sessionId);
+        setMessagesError(null);
+        setMessagesLoading(false);
+      }
     }
     currentSessionId = sessionId;
+    const isFirstExchange = priorMessagesForHistory
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .length === 0;
 
     // ── User message ──
     const userMsgId = uuidv4();
-    setMessages(prev => [...prev, {
+    const userMessage: Message = {
       id: userMsgId, session_id: sessionId!,
       role: 'user', content: messageText, created_at: new Date().toISOString(),
       references_json: serializeReferences(taskReferences),
       _references: taskReferences,
-    }]);
-    addMessage(userMsgId, sessionId, 'user', messageText, {
+    };
+    setMessages(prev => loadedSessionId === sessionId ? [...prev, userMessage] : [...priorMessagesForHistory, userMessage]);
+    await addMessage(userMsgId, sessionId, 'user', messageText, {
       references_json: serializeReferences(taskReferences),
-    }).catch(err =>
-      console.warn('Failed to save user message:', err),
-    );
-
-    const modelDef = MODELS.find(m => m.id === model) ?? MODELS[1];
+      created_at: userMessage.created_at,
+    });
 
     // ── Intent routing ──
     // Larund decides automatically whether to answer (chat), act (agent), or ask
@@ -1758,7 +2144,7 @@ export function ChatScreen({
       // Prior conversation for the agent loop: user messages and any agent/AI
       // final summaries, oldest first. Gives the operator real context so a
       // correction continues the previous task instead of restarting it.
-      const agentHistory = messages
+      const agentHistory = priorMessagesForHistory
         .filter(m => !m._loading && !m.streaming && m.content)
         .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 
@@ -1783,17 +2169,68 @@ export function ChatScreen({
 
     // ── Normal chat / clarify path ──
     const asstMsgId = uuidv4();
+    const assistantCreatedAt = new Date().toISOString();
     currentTaskId = asstMsgId;
     setMessages(prev => [...prev, {
       id: asstMsgId, session_id: sessionId!, role: 'assistant',
-      content: '', created_at: new Date().toISOString(), streaming: true,
+      content: '', created_at: assistantCreatedAt, streaming: true,
       _intentLabel: searchMode === 'deep' ? 'Deep research' : searchMode === 'fast' ? 'Searching web' : clarify ? 'Needs confirmation' : 'Answering',
       _searchMode: searchMode,
       _searchCitations: [],
     }]);
     setRunningTask({ kind: 'chat', assistantMessageId: asstMsgId, sessionId: sessionId! });
+    await addMessage(asstMsgId, sessionId!, 'assistant', '', {
+      created_at: assistantCreatedAt,
+      search_mode: searchMode,
+    });
 
-    const history: ChatMessage[] = messages
+    if (webModeForRoute === 'required' && webRouteDecision.strategy === 'blocked_missing_search_capability') {
+      const blocked = 'A webes kereső jelenleg nincs megfelelően bekötve ehhez a modellhez/providerhez. Nem használok Chrome fallbacket sima kereséshez. Engedélyezz egy kereső providert: OpenAI web_search / Gemini google_search / Brave Search / Tavily / Exa / OpenRouter web search.';
+      const blockedMetadata = buildAnswerModelMetadata({
+        provider: 'openrouter',
+        modelId: modelDef.openrouter_id,
+        displayName: modelDef.name,
+        tier: modelTierFor(modelDef.tag),
+        toolsUsed: [],
+        webSearchMode: searchMode,
+        searchStrategy: webRouteDecision.strategy,
+        searchProvider: webRouteDecision.provider,
+        searchWarnings: [webRouteDecision.reason],
+        webSearchRunsCount: 0,
+        webSourcesCount: 0,
+        quality: {
+          ok: false,
+          reasons: [webRouteDecision.reason],
+          sourceCount: 0,
+          citationCount: 0,
+          hasEnoughDetail: false,
+          hasDatesOrFreshness: false,
+        },
+      });
+      const blockedEvidence = buildChatSearchEvidence({
+        route: webRouteDecision,
+        modelId: modelDef.openrouter_id,
+        query: messageText,
+        sources: [],
+        citations: [],
+      });
+      setMessages(prev => prev.map(m =>
+        m.id === asstMsgId ? { ...m, content: blocked, streaming: false, _error: true, _modelMetadata: blockedMetadata, _searchEvidence: blockedEvidence } : m,
+      ));
+      await addMessage(asstMsgId, sessionId!, 'assistant', blocked, {
+        search_mode: searchMode,
+        web_search_runs_json: JSON.stringify([]),
+        web_sources_json: JSON.stringify([]),
+        web_citations_json: JSON.stringify([]),
+        model_metadata_json: JSON.stringify(blockedMetadata),
+        search_evidence_json: JSON.stringify(blockedEvidence),
+      }).catch(err => console.warn('Failed to save blocked assistant message:', err));
+      setSending(false);
+      setRunningTask(prev => prev?.assistantMessageId === asstMsgId ? null : prev);
+      return;
+    }
+
+    const history: ChatMessage[] = priorMessagesForHistory
       .filter(m => !m._loading && !m.streaming && !m._agent && m.content)
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 
@@ -1802,7 +2239,10 @@ export function ChatScreen({
     const chatSettings = await getSettings().catch(() => null);
     history.unshift({
       role: 'system',
-      content: buildChatSystemPrompt({ customInstructions: chatSettings?.custom_instructions || undefined }),
+      content: buildChatSystemPrompt({
+        customInstructions: chatSettings?.custom_instructions || undefined,
+        webSearch: webModeForRoute,
+      }),
     });
 
     // When the request is ambiguous, ask one concise clarifying question instead
@@ -1820,7 +2260,15 @@ export function ChatScreen({
     if (searchMode !== 'none') {
       history.unshift({
         role: 'system',
-        content: 'Use live web search for current facts. Paraphrase sources instead of copying long passages. Ground factual claims in the web results and preserve source citations when the API provides them. If search fails, say that live search was unavailable before answering from general knowledge.',
+        content: [
+          `Runtime web route: ${webRouteDecision.strategy}. Search provider: ${webRouteDecision.provider}. ${webRouteDecision.reason}`,
+          'Use live web search for current facts and answer with enough substance for a source-backed research response.',
+          'Start with the direct answer, then add concise sections or bullets for evidence, context, dates/freshness, and caveats.',
+          'Use inline citations when the API provides them. Every important factual claim, especially current or contested claims, should be grounded in a source.',
+          'Prefer primary/reference sources when available. If sources disagree or are weak, say so plainly.',
+          'Do not answer with only "I searched" or a short generic paragraph; synthesize what the sources show.',
+          'Paraphrase sources instead of copying long passages. If search fails, say live search was unavailable before answering from general knowledge.',
+        ].join('\n'),
       });
     }
 
@@ -1849,6 +2297,7 @@ export function ChatScreen({
     let fullContent = '';
     const controller = new AbortController();
     chatAbortRef.current = controller;
+    const completionStartedAt = Date.now();
 
     await callOpenRouter(
       history,
@@ -1856,8 +2305,9 @@ export function ChatScreen({
       userId,
       (chunk) => {
         fullContent += chunk;
+        const parsed = parseLarundEnvelope(fullContent);
         setMessages(prev => prev.map(m =>
-          m.id === asstMsgId ? { ...m, content: fullContent } : m,
+          m.id === asstMsgId ? { ...m, content: parsed.answer, _thinking: parsed.thinking } : m,
         ));
       },
       async (usage) => {
@@ -1868,13 +2318,66 @@ export function ChatScreen({
         const usageStr = `${usage.model === 'perplexity/sonar-pro-search' ? 'Deep research' : modelDef.name}${searchLabel} · ${totalTok.toLocaleString()} tok · $${usage.costUsd.toFixed(5)}`;
         const citations = usage.citations ?? [];
         rememberSearchCitations(userId, citations);
-        const citedContent = injectCitationMarkers(fullContent, citations);
+        const parsed = parseLarundEnvelope(fullContent);
+        const citedContent = injectCitationMarkers(parsed.answer, citations);
+        const webSources = sourcesFromSearchCitations(citations);
+        const webCitations = citationsToWebCitations(citations, webSources);
+        const searchEvidence = buildChatSearchEvidence({
+          route: webRouteDecision,
+          modelId: usage.model,
+          query: messageText,
+          sources: webSources,
+          citations: webCitations,
+        });
+        const run = searchRunFromChat(asstMsgId, messageText, usage.searchMode ?? searchMode, webSources.length);
+        const webSearchRuns = run ? [run] : [];
+        const quality = verifyWebAnswerQuality(citedContent, webSources, { webSearchMode: usage.searchMode ?? searchMode });
+        const modelMetadata = buildAnswerModelMetadata({
+          provider: 'openrouter',
+          modelId: usage.model,
+          displayName: usage.model === 'perplexity/sonar-pro-search' ? 'Deep research' : modelDef.name,
+          tier: usage.model === 'perplexity/sonar-pro-search' ? 'deep_research' : modelTierFor(modelDef.tag),
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          costUsd: usage.costUsd,
+          searchCostUsd: usage.searchCostUsd,
+          latencyMs: Date.now() - completionStartedAt,
+          toolsUsed: (usage.searchMode ?? searchMode) !== 'none'
+            ? [usage.model === 'perplexity/sonar-pro-search' ? 'perplexity_search_model' : 'openrouter:web_search']
+            : [],
+          webSearchMode: usage.searchMode ?? searchMode,
+          searchStrategy: webRouteDecision.strategy,
+          searchProvider: usage.model === 'perplexity/sonar-pro-search' ? 'perplexity' : webRouteDecision.provider,
+          searchWarnings: webRouteDecision.strategy === 'provider_native_search' ? [] : [webRouteDecision.reason],
+          webSearchRunsCount: webSearchRuns.length,
+          webSourcesCount: webSources.length,
+          quality,
+        });
         setMessages(prev => prev.map(m =>
-          m.id === asstMsgId ? { ...m, content: citedContent, streaming: false, _usage: usageStr, _searchCitations: citations, _searchMode: usage.searchMode ?? searchMode } : m,
+          m.id === asstMsgId ? {
+            ...m,
+            content: citedContent,
+            streaming: false,
+            _usage: usageStr,
+            _searchCitations: citations,
+            _searchMode: usage.searchMode ?? searchMode,
+            _webSearchRuns: webSearchRuns,
+            _webSources: webSources,
+            _webCitations: webCitations,
+            _modelMetadata: modelMetadata,
+            _searchEvidence: searchEvidence,
+            _thinking: parsed.thinking,
+          } : m,
         ));
         await addMessage(asstMsgId, sessionId!, 'assistant', citedContent, {
           search_citations_json: JSON.stringify(citations),
           search_mode: usage.searchMode ?? searchMode,
+          web_search_runs_json: JSON.stringify(webSearchRuns),
+          web_sources_json: JSON.stringify(webSources),
+          web_citations_json: JSON.stringify(webCitations),
+          model_metadata_json: JSON.stringify(modelMetadata),
+          search_evidence_json: JSON.stringify(searchEvidence),
+          thinking_json: serializeThinking(parsed.thinking),
         }).catch(err =>
           console.warn('Failed to save assistant message:', err),
         );
@@ -1894,6 +2397,11 @@ export function ChatScreen({
             ? { ...m, content: error, streaming: false, _error: true }
             : m,
         ));
+        void addMessage(asstMsgId, sessionId!, 'assistant', error, {
+          search_mode: searchMode,
+        }).catch(err =>
+          console.warn('Failed to save assistant error:', err),
+        );
         setSending(false);
         setRunningTask(prev => prev?.assistantMessageId === asstMsgId ? null : prev);
       },
@@ -1908,11 +2416,14 @@ export function ChatScreen({
       },
     );
     if (controller.signal.aborted) {
-      const stoppedContent = fullContent.trim() ? fullContent : 'Stopped.';
+      const parsed = parseLarundEnvelope(fullContent);
+      const stoppedContent = parsed.answer.trim() ? parsed.answer : fullContent.trim() ? fullContent : 'Stopped.';
       setMessages(prev => prev.map(m =>
-        m.id === asstMsgId ? { ...m, content: stoppedContent, streaming: false } : m,
+        m.id === asstMsgId ? { ...m, content: stoppedContent, streaming: false, _thinking: parsed.thinking } : m,
       ));
-      await addMessage(asstMsgId, sessionId!, 'assistant', stoppedContent).catch(err =>
+      await addMessage(asstMsgId, sessionId!, 'assistant', stoppedContent, {
+        thinking_json: serializeThinking(parsed.thinking),
+      }).catch(err =>
         console.warn('Failed to save stopped assistant message:', err),
       );
     }
@@ -1925,6 +2436,24 @@ export function ChatScreen({
         await addMessage(currentTaskId, currentSessionId!, 'assistant', message).catch(saveErr =>
           console.warn('Failed to save assistant error:', saveErr),
         );
+      } else if (currentSessionId) {
+        setMessages(prev => [...prev, {
+          id: uuidv4(),
+          session_id: currentSessionId!,
+          role: 'assistant',
+          content: message,
+          created_at: new Date().toISOString(),
+          _error: true,
+        }]);
+      } else {
+        setMessages(prev => [...prev, {
+          id: uuidv4(),
+          session_id: activeChat ?? 'unsaved',
+          role: 'assistant',
+          content: message,
+          created_at: new Date().toISOString(),
+          _error: true,
+        }]);
       }
     } finally {
       chatAbortRef.current = null;
@@ -1966,11 +2495,32 @@ export function ChatScreen({
             <div className="chat-col" style={{ padding: '28px 0 24px' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
 
+                {messagesLoading && messages.length === 0 && (
+                  <AgentMsg>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>Loading conversation...</span>
+                  </AgentMsg>
+                )}
+
+                {messagesError && (
+                  <AgentMsg>
+                    <div style={{ display: 'grid', gap: 10 }}>
+                      <span style={{ color: 'var(--danger)', fontSize: 13.5 }}>Could not load this conversation.</span>
+                      <button
+                        className="btn btn-secondary"
+                        onClick={() => activeChat && void loadMessagesForSession(activeChat)}
+                        style={{ width: 'fit-content', height: 30, fontSize: 12.5 }}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  </AgentMsg>
+                )}
+
                 {messages.map(msg => {
                   // ── User bubble ──
                   if (msg.role === 'user') {
                     return (
-                      <UserMsg key={msg.id}>
+                      <UserMsg key={msg.id} initials={chatInitials(userEmail)}>
                         <div>{msg.content}</div>
                         {(msg._references?.length ?? 0) > 0 && (
                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8, justifyContent: 'flex-end' }}>
@@ -1990,9 +2540,7 @@ export function ChatScreen({
                     return (
                       <div key={msg.id} className="msg-group">
                         <div className="msg-ai-row">
-                          <div style={{ flexShrink: 0, marginTop: 1 }}>
-                            <ClickMark size={24} radius={8} glow={isRunning} />
-                          </div>
+                          <AiAvatar running={isRunning} />
                           <div className="msg-ai-body">
                             <AgentMsgContent
                               steps={msg._agentSteps ?? []}
@@ -2012,6 +2560,9 @@ export function ChatScreen({
                               userId={userId ?? undefined}
                               emailDraft={msg._emailDraft}
                               onEmailDraftChange={(d) => handleEmailDraftChange(msg.id, d)}
+                              sources={msg._webSources ?? []}
+                              modelMetadata={msg._modelMetadata}
+                              thinking={msg._thinking ?? thinkingFromAgentSteps(msg._agentSteps ?? [])}
                             />
                           </div>
                         </div>
@@ -2023,16 +2574,19 @@ export function ChatScreen({
                   return (
                     <div key={msg.id} className="msg-group">
                       {msg._intentLabel && !msg._error && (
-                        <div style={{ paddingLeft: 36, marginBottom: 4, fontSize: 10.5, color: 'var(--text-hint)', display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <div style={{ paddingLeft: 44, marginBottom: 4, fontSize: 10.5, color: 'var(--text-hint)', display: 'flex', alignItems: 'center', gap: 5 }}>
                           <span className="dot" style={{ width: 4, height: 4, background: msg._intentLabel === 'Needs confirmation' ? 'var(--warning)' : 'var(--accent)' }} />
                           {msg._intentLabel}
                         </div>
                       )}
                       <AgentMsg
                         rich={msg._error ? undefined : msg.content}
+                        thinking={msg._thinking}
                         streaming={msg.streaming}
                         userId={userId ?? undefined}
                         citations={msg._searchCitations ?? []}
+                        sources={msg._webSources ?? []}
+                        modelMetadata={msg._modelMetadata}
                       >
                         {msg._error && (
                           <span style={{ color: 'var(--danger)', fontSize: 13.5 }}>{msg.content}</span>
@@ -2042,7 +2596,7 @@ export function ChatScreen({
                       {!msg.streaming && (
                         <div style={{
                           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                          paddingLeft: 36, marginTop: 10, gap: 8,
+                          paddingLeft: 44, marginTop: 10, gap: 8,
                         }}>
                           {!msg._error && (
                             <div className="msg-actions">
@@ -2059,7 +2613,7 @@ export function ChatScreen({
                               </button>
                             </div>
                           )}
-                          {msg._usage && (
+                          {msg._usage && !msg._modelMetadata && (
                             <span className="msg-usage-pill" style={{ marginLeft: 'auto' }}>
                               <span style={{ color: 'var(--accent)', fontSize: 10 }}>◎</span>
                               {msg._usage}
@@ -2081,35 +2635,22 @@ export function ChatScreen({
         <div className="chat-footer">
           <div className="chat-col">
             <div
-              className={`chat-input-box${sending || routing || runningTask ? ' composer-running' : ''}`}
-              onDragOver={(e) => e.preventDefault()}
+              className={`chat-input-box${sending || routing || runningTask ? ' composer-running' : ''}${composerDropActive ? ' chat-input-box--drop-active' : ''}`}
+              onDragEnter={(e) => {
+                e.preventDefault();
+                setComposerDropActive(true);
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (!composerDropActive) setComposerDropActive(true);
+              }}
+              onDragLeave={(e) => {
+                if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+                setComposerDropActive(false);
+              }}
               onDrop={handleReferenceDrop}
             >
-
-              {/* Attachment previews */}
-              {attachments.length > 0 && (
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-                  {attachments.map((att, i) => (
-                    <div key={i} style={{
-                      width: 68, height: 68, borderRadius: 10, overflow: 'hidden',
-                      position: 'relative', flex: 'none', border: '1px solid var(--border-md)',
-                    }}>
-                      <img src={att.src} alt={att.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      <button
-                        onClick={() => setAttachments(a => a.filter((_, j) => j !== i))}
-                        style={{
-                          position: 'absolute', top: 3, right: 3,
-                          width: 18, height: 18, borderRadius: '50%',
-                          background: 'rgba(0,0,0,.75)', border: 'none',
-                          cursor: 'pointer', display: 'grid', placeItems: 'center', color: '#fff',
-                        }}
-                      >
-                        <Icon name="x" size={9} stroke={2.5} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <ComposerAttachmentTray references={composerAttachments} onRemove={removeComposerAttachment} />
 
               {/* Rich composer: text with inline reference pills (mention-style) */}
               <RichMentionEditor
@@ -2120,6 +2661,7 @@ export function ChatScreen({
                 userId={userId ?? ''}
                 workspaceId={projectId ?? undefined}
                 onKeyDown={onKeyDown}
+                onPaste={handleComposerPaste}
                 placeholder="Ask Larund anything, or describe a task…"
                 minHeight={36}
               />
@@ -2136,25 +2678,21 @@ export function ChatScreen({
                 <InlineModelPicker model={model} setModel={setModel} />
 
                 <button
-                  className={`toolbar-btn${webSearchPreference !== 'auto' ? ' toolbar-btn--active' : ''}`}
+                  className={`composer-pill${webSearchPreference !== 'auto' ? ' composer-pill--active' : ''}`}
                   onClick={() => setWebSearchPreference((value) => value === 'auto' ? 'always' : value === 'always' ? 'never' : 'auto')}
                   title="Web search mode: Auto / Always / Never"
-                  style={{ width: 'auto', padding: '0 8px', gap: 5, display: 'inline-flex' }}
                 >
-                  <Icon name="globe" size={14} stroke={1.5} />
-                  <span style={{ fontSize: 11.5, fontWeight: 650 }}>
-                    {webSearchPreference === 'auto' ? 'Auto' : webSearchPreference === 'always' ? 'Web' : 'No web'}
-                  </span>
+                  <Icon name="globe" size={14} stroke={1.6} />
+                  <span>{webSearchPreference === 'auto' ? 'Auto' : webSearchPreference === 'always' ? 'Web' : 'No web'}</span>
                 </button>
 
                 <button
-                  className={`toolbar-btn${deepResearch ? ' toolbar-btn--active' : ''}`}
+                  className={`composer-pill${deepResearch ? ' composer-pill--active' : ''}`}
                   onClick={() => setDeepResearch((value) => !value)}
                   title="Deep research with Perplexity Sonar Pro Search"
-                  style={{ width: 'auto', padding: '0 8px', gap: 5, display: 'inline-flex' }}
                 >
-                  <Icon name="search" size={14} stroke={1.5} />
-                  <span style={{ fontSize: 11.5, fontWeight: 650 }}>Deep</span>
+                  <Icon name="search" size={14} stroke={1.6} />
+                  <span>Deep</span>
                 </button>
 
                 <button
@@ -2165,10 +2703,6 @@ export function ChatScreen({
                 >
                   <Icon name="paperclip" size={15} stroke={1.5} />
                 </button>
-                <input
-                  ref={fileRef} type="file" accept="image/*" multiple
-                  onChange={handleFiles} style={{ display: 'none' }}
-                />
 
                 <div style={{ flex: 1 }} />
 
@@ -2179,7 +2713,7 @@ export function ChatScreen({
                 <button
                   className={`send-btn${runningTask ? ' send-btn--stop send-stop-swap' : ''}`}
                   onClick={runningTask ? handleStop : handleSend}
-                  disabled={!runningTask && (sending || (!input.trim() && references.length === 0) || !userId)}
+                  disabled={!runningTask && (sending || (!!activeChat && messagesLoading) || (!input.trim() && references.length === 0 && composerAttachments.length === 0) || !userId)}
                   title={runningTask ? 'Stop' : 'Send (Enter)'}
                 >
                   {runningTask
@@ -2195,7 +2729,7 @@ export function ChatScreen({
               {routing ? (
                 <>
                   <span className="dot dot-blue dot-pulse" style={{ width: 5, height: 5 }} />
-                  <span style={{ color: 'rgba(74,158,255,.75)', fontWeight: 500 }}>Larund is deciding how to help…</span>
+                  <span style={{ color: 'rgba(var(--accent-rgb),.75)', fontWeight: 500 }}>Larund is deciding how to help…</span>
                 </>
               ) : (
                 'Larund answers questions and runs tasks automatically · Enter to send'

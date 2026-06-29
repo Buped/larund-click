@@ -14,6 +14,36 @@ export type ToolRisk =
   | 'credential_access'
   | 'process_exec';
 
+export type FileMutationTargetPolicy =
+  | 'preserve_original_format'
+  | 'roundtrip_with_backup'
+  | 'ask_before_format_change'
+  | 'create_new_only_if_user_requested';
+
+export interface WebSearchInput {
+  query: string;
+  locale?: string;
+  country?: string;
+  maxResults?: number;
+  depth?: 'quick' | 'standard';
+  bannedDomains?: string[];
+  preferredDomains?: string[];
+}
+
+export interface WebBatchSearchInput {
+  queries: string[];
+  concurrency?: number;
+  maxResultsPerQuery?: number;
+  locale?: string;
+  country?: string;
+}
+
+export interface SheetUpdateCell {
+  row: number;
+  column: string | number;
+  value: string | number | boolean | null;
+}
+
 export type ControlAction =
   // ── Runtime: CLI / process ────────────────────────────────────────────
   | { action: 'cli.run'; cmd: string; working_dir?: string; risk?: ToolRisk }
@@ -29,6 +59,7 @@ export type ControlAction =
   | { action: 'code.execute'; code: string; input_refs?: string[]; timeout_secs?: number; allow_network?: boolean; label?: string }
   // Approval-gated install of ONE package outside the base allowlist.
   | { action: 'code.install_package'; package: string; reason?: string }
+  | { action: 'visualization.render'; title?: string; html: string; height?: number }
 
   // ── Files / folders ───────────────────────────────────────────────────
   | { action: 'file.read'; path: string }
@@ -55,6 +86,7 @@ export type ControlAction =
   // ── Data: spreadsheets ────────────────────────────────────────────────
   | { action: 'sheet.read'; path: string; sheet?: string; max_rows?: number }
   | { action: 'sheet.write'; path: string; sheet?: string; rows?: string[][]; start_cell?: string; mode?: 'overwrite' | 'append' }
+  | { action: 'sheet.update_cells'; path: string; sheet?: string; cells: SheetUpdateCell[]; preserveExisting?: true; backup?: true; policy?: FileMutationTargetPolicy }
   | { action: 'sheet.append'; path: string; sheet?: string; rows: string[][] }
   | { action: 'sheet.export_csv'; path: string; target_path: string; sheet?: string }
   | { action: 'sheet.to_json'; path: string; sheet?: string; max_rows?: number }
@@ -157,6 +189,15 @@ export type ControlAction =
   // in this action, the model context, or logs. Identify the login by app_id (a
   // saved App), credential_id, domain, or url; optionally pick a browser profile.
   | { action: 'browser.login'; url?: string; domain?: string; app_id?: string; credential_id?: string; browser_profile_id?: string; username_field?: string; password_field?: string; submit_text?: string }
+
+  // First-class web search. General lookup uses this before browser automation;
+  // browser.open is reserved for selected result pages or interactive sites.
+  | ({ action: 'web.search' } & WebSearchInput)
+  | ({ action: 'web.batch_search' } & WebBatchSearchInput)
+  | { action: 'web.open_result'; url: string }
+  | { action: 'web.extract_page'; url: string; maxChars?: number }
+  | { action: 'web.extract_contact_info'; url: string; html?: string; text?: string }
+  | { action: 'web.verify_source'; url: string; claim?: string; expectedDomain?: string }
 
   // ── Email composer ────────────────────────────────────────────────────
   // Surface an editable email draft as a chat card. When Gmail is connected this

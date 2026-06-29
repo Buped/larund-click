@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractNarration, isMeaningfulNarration } from '../narration';
+import { extractNarration, isMeaningfulNarration, sanitizeUserVisibleNarration } from '../narration';
 
 describe('extractNarration', () => {
   it('returns the prose before a trailing JSON action', () => {
@@ -30,5 +30,10 @@ describe('extractNarration', () => {
   it('isMeaningfulNarration rejects tiny strings', () => {
     expect(isMeaningfulNarration('ok')).toBe(false);
     expect(isMeaningfulNarration('Creating the folder now.')).toBe(true);
+  });
+
+  it('removes internal execution-policy chatter from visible narration', () => {
+    const out = sanitizeUserVisibleNarration('No-mouse operator. Working via CLI and files. No mouse/cursor/visual control. Reading the source now.');
+    expect(out).toBe('Working via CLI and files. Reading the source now.');
   });
 });

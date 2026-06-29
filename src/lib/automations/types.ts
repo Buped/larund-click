@@ -85,6 +85,53 @@ export interface AutomationApprovalPolicy {
   destructiveRequiresApproval?: boolean;
 }
 
+export type AutomationSetupStatus =
+  | 'not_required'
+  | 'pending'
+  | 'running'
+  | 'ready'
+  | 'failed'
+  | 'waiting_approval'
+  | 'waiting_user'
+  | 'cancelled';
+
+export type AutomationSetupBindingKind =
+  | 'google_sheet'
+  | 'google_doc'
+  | 'drive_folder'
+  | 'local_folder'
+  | 'local_file'
+  | 'url'
+  | 'other';
+
+export interface AutomationSetupBindingSpec {
+  key: string;
+  label: string;
+  kind: AutomationSetupBindingKind;
+  required?: boolean;
+  description?: string;
+}
+
+export interface AutomationSetupBinding extends AutomationSetupBindingSpec {
+  url?: string;
+  refId?: string;
+  path?: string;
+  metadata?: Record<string, unknown>;
+  verifiedAt?: string;
+}
+
+export interface AutomationSetupPlan {
+  status: AutomationSetupStatus;
+  steps: AutomationStep[];
+  verificationChecklist: VerificationCheck[];
+  bindingSpecs: AutomationSetupBindingSpec[];
+  bindings: AutomationSetupBinding[];
+  lastRunId?: string;
+  taskRunId?: string;
+  error?: string;
+  completedAt?: string;
+}
+
 /** How an automation writes its run narrative into a chat session. */
 export type AutomationChatMode = 'none' | 'append_to_existing' | 'create_new';
 export type AutomationChatVisibility = 'private_local' | 'workspace';
@@ -111,6 +158,7 @@ export interface Automation {
   steps?: AutomationStep[];
   verificationChecklist?: VerificationCheck[];
   safetyPolicy?: AutomationSafetyPolicy;
+  setupPlan?: AutomationSetupPlan;
   lastRunAt?: string;
   nextRunAt?: string;
   createdAt: string;
@@ -152,5 +200,6 @@ export interface CreateAutomationInput {
   steps?: AutomationStep[];
   verificationChecklist?: VerificationCheck[];
   safetyPolicy?: AutomationSafetyPolicy;
+  setupPlan?: AutomationSetupPlan;
   metadata?: Record<string, unknown>;
 }

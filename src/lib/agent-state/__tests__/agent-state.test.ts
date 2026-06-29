@@ -34,6 +34,13 @@ describe('preflight classification', () => {
     expect(pf.targetSurface).toBe('local_files');
   });
 
+  it('classifies ordinary company website lookup as web_lookup, not browser search', () => {
+    const pf = preflight('Keress weboldalt ehhez a 10 ceghez.');
+    expect(pf.intent).toBe('web_lookup');
+    expect(pf.recommendedTools).toContain('web.batch_search');
+    expect(pf.forbiddenTools.join(' ')).toMatch(/google\.com\/search/);
+  });
+
   it('classifies a YouTube open as a non-mutating browser task', () => {
     const pf = preflight('Nyisd meg a YouTube-ot.');
     expect(pf.intent).toBe('browser_webapp');

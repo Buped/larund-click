@@ -39,6 +39,9 @@ export async function getDb(): Promise<Database> {
 }
 
 async function initSchema(db: Database): Promise<void> {
+  await tryPragma(db, 'PRAGMA foreign_keys = ON');
+  await tryPragma(db, 'PRAGMA journal_mode = WAL');
+
   await db.execute(`
     CREATE TABLE IF NOT EXISTS settings (
       id INTEGER PRIMARY KEY DEFAULT 1,
@@ -101,10 +104,26 @@ async function initSchema(db: Database): Promise<void> {
   await ensureColumn(db, 'messages', 'artifacts_json', 'TEXT DEFAULT NULL');
   await ensureColumn(db, 'messages', 'search_citations_json', 'TEXT DEFAULT NULL');
   await ensureColumn(db, 'messages', 'search_mode', "TEXT DEFAULT 'none'");
+  await ensureColumn(db, 'messages', 'web_search_runs_json', 'TEXT DEFAULT NULL');
+  await ensureColumn(db, 'messages', 'web_sources_json', 'TEXT DEFAULT NULL');
+  await ensureColumn(db, 'messages', 'web_citations_json', 'TEXT DEFAULT NULL');
+  await ensureColumn(db, 'messages', 'model_metadata_json', 'TEXT DEFAULT NULL');
+  await ensureColumn(db, 'messages', 'search_evidence_json', 'TEXT DEFAULT NULL');
+  await ensureColumn(db, 'messages', 'thinking_json', 'TEXT DEFAULT NULL');
 
   await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_messages_session
     ON messages(session_id)
+  `);
+
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_messages_session_created
+    ON messages(session_id, created_at)
+  `);
+
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_sessions_project_updated
+    ON sessions(project_id, is_archived, updated_at)
   `);
 
   await db.execute(`
@@ -195,6 +214,14 @@ async function initSchema(db: Database): Promise<void> {
   await db.execute(`INSERT OR IGNORE INTO memory_profile (id) VALUES (1)`);
 }
 
+async function tryPragma(db: Database, statement: string): Promise<void> {
+  try {
+    await db.execute(statement);
+  } catch (err) {
+    console.warn(`SQLite pragma failed (${statement}):`, err);
+  }
+}
+
 async function ensureColumn(db: Database, table: string, column: string, ddl: string): Promise<void> {
   try {
     await db.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
@@ -267,7 +294,11 @@ export async function getSessionById(id: string) {
 export async function createSession(id: string, title: string, projectId?: string | null) {
   const db = await getDb();
   await db.execute(
-    'INSERT INTO sessions (id, title, project_id) VALUES (?, ?, ?)',
+    `INSERT INTO sessions (id, title, project_id)
+     VALUES (?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       project_id = COALESCE(sessions.project_id, excluded.project_id),
+       updated_at = sessions.updated_at`,
     [id, title, projectId ?? null]
   );
 }
@@ -319,10 +350,35 @@ export async function archiveSession(id: string) {
 export async function getMessages(sessionId: string) {
   const db = await getDb();
   return db.select<any[]>(
-    'SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC',
+    `SELECT rowid AS _rowid, *
+     FROM messages
+     WHERE session_id = ?
+     ORDER BY COALESCE(julianday(created_at), 0) ASC, rowid ASC`,
     [sessionId]
   );
 }
+
+const MESSAGE_COLUMNS = new Set([
+  'id',
+  'session_id',
+  'role',
+  'content',
+  'created_at',
+  'message_type',
+  'agent_status',
+  'agent_steps_json',
+  'agent_ask_question',
+  'references_json',
+  'artifacts_json',
+  'search_citations_json',
+  'search_mode',
+  'web_search_runs_json',
+  'web_sources_json',
+  'web_citations_json',
+  'model_metadata_json',
+  'search_evidence_json',
+  'thinking_json',
+]);
 
 export async function addMessage(
   id: string,
@@ -332,18 +388,25 @@ export async function addMessage(
   extra?: Record<string, any>
 ) {
   const db = await getDb();
-  const columns = ['id', 'session_id', 'role', 'content'];
-  const values: any[] = [id, sessionId, role, content];
+  const baseCreatedAt = typeof extra?.created_at === 'string' ? extra.created_at : new Date().toISOString();
+  const columns = ['id', 'session_id', 'role', 'content', 'created_at'];
+  const values: any[] = [id, sessionId, role, content, baseCreatedAt];
 
   for (const [key, value] of Object.entries(extra || {})) {
-    if (value === undefined) continue;
+    if (value === undefined || key === 'created_at') continue;
+    if (!MESSAGE_COLUMNS.has(key)) throw new Error(`invalid_message_column:${key}`);
     columns.push(key);
     values.push(value);
   }
 
   const placeholders = columns.map(() => '?').join(', ');
+  const updates = columns
+    .filter((column) => column !== 'id' && column !== 'session_id' && column !== 'created_at')
+    .map((column) => `${column} = excluded.${column}`)
+    .join(', ');
   await db.execute(
-    `INSERT INTO messages (${columns.join(', ')}) VALUES (${placeholders})`,
+    `INSERT INTO messages (${columns.join(', ')}) VALUES (${placeholders})
+     ON CONFLICT(id) DO UPDATE SET ${updates}`,
     values
   );
   await touchSession(sessionId);
@@ -351,7 +414,13 @@ export async function addMessage(
 
 export async function updateMessage(id: string, patch: Record<string, any>) {
   const db = await getDb();
-  const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
+  const entries = Object.entries(patch).filter(([key, value]) => {
+    if (value === undefined) return false;
+    if (!MESSAGE_COLUMNS.has(key) || key === 'id' || key === 'session_id') {
+      throw new Error(`invalid_message_column:${key}`);
+    }
+    return true;
+  });
   if (entries.length === 0) return;
   const sets = entries.map(([key]) => `${key} = ?`).join(', ');
   const values = entries.map(([, value]) => value);

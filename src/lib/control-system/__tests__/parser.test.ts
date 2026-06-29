@@ -8,6 +8,8 @@ describe('no-mouse parser', () => {
     expect(parseControlAction('{"action":"file.mkdir","path":"~/Acme","recursive":true}')).toEqual({ action: 'file.mkdir', path: '~/Acme', recursive: true });
     expect(parseControlAction('{"action":"connection.call","connection":"github","tool":"read_file","args":{}}'))
       .toEqual({ action: 'connection.call', connection: 'github', tool: 'read_file', args: {} });
+    expect(parseControlAction('{"action":"visualization.render","title":"Trend","html":"<svg></svg>","height":420}'))
+      .toEqual({ action: 'visualization.render', title: 'Trend', html: '<svg></svg>', height: 420 });
   });
 
   it('accepts browser.login (saved-credential sign-in)', () => {
@@ -34,10 +36,27 @@ describe('no-mouse parser', () => {
     expect(isLegacyVisualActionName('file.move')).toBe(false);
   });
 
-  it('prompt declares the no-mouse contract and no legacy tools', () => {
+  it('prompt declares structured visualization and no legacy tools', () => {
     expect(CONTROL_SYSTEM_PROMPT).not.toContain('mouse_click');
     expect(CONTROL_SYSTEM_PROMPT).not.toContain('soc.visual');
     expect(CONTROL_SYSTEM_PROMPT).not.toContain('desktop_click_point');
-    expect(CONTROL_SYSTEM_PROMPT.toLowerCase()).toContain('never use a mouse');
+    expect(CONTROL_SYSTEM_PROMPT).toContain('visualization.render');
+    expect(CONTROL_SYSTEM_PROMPT).toContain('CHAT-NATIVE VISUALIZATION');
+    expect(CONTROL_SYSTEM_PROMPT).toMatch(/not thinking/i);
+    expect(CONTROL_SYSTEM_PROMPT).toMatch(/two-point line/i);
+  });
+
+  it('prompt requires professional Excel report output for XLSX requests', () => {
+    expect(CONTROL_SYSTEM_PROMPT).toContain('EXCEL REPORT STANDARD');
+    expect(CONTROL_SYSTEM_PROMPT).toMatch(/default\s+to\s+\.xlsx/i);
+    expect(CONTROL_SYSTEM_PROMPT).toContain('meg minden ilyesmi');
+    expect(CONTROL_SYSTEM_PROMPT).toMatch(/minimum 50/i);
+    expect(CONTROL_SYSTEM_PROMPT).toContain('native Excel Table');
+    expect(CONTROL_SYSTEM_PROMPT).toMatch(/summary\s+sheet/i);
+    expect(CONTROL_SYSTEM_PROMPT).toContain('visible static');
+    expect(CONTROL_SYSTEM_PROMPT).toContain('LibreOffice');
+    expect(CONTROL_SYSTEM_PROMPT).toContain('sheet.add_table');
+    expect(CONTROL_SYSTEM_PROMPT).toContain('sheet.add_chart');
+    expect(CONTROL_SYSTEM_PROMPT).toMatch(/sheet\.read or sheet\.to_json/i);
   });
 });

@@ -86,7 +86,8 @@ export const RichMentionEditor = forwardRef<RichMentionEditorHandle, {
   placeholder?: string;
   minHeight?: number;
   onKeyDown?: React.KeyboardEventHandler<HTMLDivElement>;
-}>(function RichMentionEditor({ value, references, onChange, userId, workspaceId, kinds, placeholder, minHeight = 90, onKeyDown }, ref) {
+  onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
+}>(function RichMentionEditor({ value, references, onChange, userId, workspaceId, kinds, placeholder, minHeight = 90, onKeyDown, onPaste }, ref) {
   const editorRef = useRef<HTMLDivElement>(null);
   const savedRange = useRef<Range | null>(null);
   const [open, setOpen] = useState(false);
@@ -231,6 +232,7 @@ export const RichMentionEditor = forwardRef<RichMentionEditorHandle, {
         style={{ minHeight }}
         onInput={emit}
         onKeyDown={handleKeyDown}
+        onPaste={onPaste}
         onKeyUp={saveSelection}
         onMouseUp={saveSelection}
         onBlur={saveSelection}

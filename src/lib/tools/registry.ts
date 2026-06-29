@@ -19,6 +19,7 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
   { name: 'process.kill', category: 'runtime', baseRisk: 'destructive', description: 'Kill a started process.' },
   { name: 'code.execute', category: 'runtime', baseRisk: 'process_exec', description: 'Run agent-authored Python in an isolated Larund venv + throwaway run dir (input files copied in, output files/charts harvested out). For statistics, correlation, anomaly detection, custom transforms and chart generation that sheet.query cannot do. No filesystem-escape or network unless explicitly allowed (network always needs approval).' },
   { name: 'code.install_package', category: 'runtime', baseRisk: 'process_exec', description: 'Approval-gated pip install of ONE package outside the base allowlist into the Larund venv.' },
+  { name: 'visualization.render', category: 'runtime', baseRisk: 'read_only', description: 'Render a static HTML/CSS/SVG visualization directly inside the chat. Use for charts, diagrams and visual explanations after data is known; scripts, forms, event handlers and external resources are stripped.' },
 
   { name: 'file.read', category: 'files', baseRisk: 'read_only', description: 'Read a file.' },
   { name: 'file.write', category: 'files', baseRisk: 'local_write', description: 'Write/overwrite a file.' },
@@ -41,6 +42,7 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
 
   { name: 'sheet.read', category: 'data', baseRisk: 'read_only', description: 'Read a spreadsheet/CSV.' },
   { name: 'sheet.write', category: 'data', baseRisk: 'local_write', description: 'Write a spreadsheet/CSV.' },
+  { name: 'sheet.update_cells', category: 'data', baseRisk: 'local_write', description: 'Update explicit spreadsheet cells in place, preserving existing rows/columns and creating a backup for source-preserving formats when needed.' },
   { name: 'sheet.append', category: 'data', baseRisk: 'local_write', description: 'Append rows to a spreadsheet/CSV.' },
   { name: 'sheet.export_csv', category: 'data', baseRisk: 'local_write', description: 'Export a local sheet to CSV.' },
   { name: 'sheet.to_json', category: 'data', baseRisk: 'read_only', description: 'Read a local sheet as JSON.' },
@@ -96,6 +98,13 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
   { name: 'browser.download', category: 'browser', baseRisk: 'external_write', description: 'Download a file.' },
   { name: 'browser.upload', category: 'browser', baseRisk: 'external_write', description: 'Upload a file to an input.' },
   { name: 'browser.login', category: 'browser', baseRisk: 'credential_access', description: 'Sign in to a site using a SAVED login (pass {domain} or {url}). The password is filled from the vault automatically — never type or read passwords yourself.' },
+
+  { name: 'web.search', category: 'web', baseRisk: 'external_read', description: 'Programmatic web search returning normalized URLs/snippets. Use for ordinary internet lookup instead of browser.open search pages.' },
+  { name: 'web.batch_search', category: 'web', baseRisk: 'external_read', description: 'Run many web searches with a concurrency limit and normalized results for bulk enrichment.' },
+  { name: 'web.open_result', category: 'web', baseRisk: 'external_read', description: 'Open one selected search result URL in the browser when interactive reading is needed.' },
+  { name: 'web.extract_page', category: 'web', baseRisk: 'external_read', description: 'Fetch and extract readable text from a selected URL without opening the browser when possible.' },
+  { name: 'web.extract_contact_info', category: 'web', baseRisk: 'external_read', description: 'Extract emails, phone numbers and useful contact links from fetched page text/html.' },
+  { name: 'web.verify_source', category: 'web', baseRisk: 'external_read', description: 'Check whether a URL/domain supports a claim before writing factual data into a table.' },
 
   { name: 'email.compose', category: 'connections', baseRisk: 'external_write', description: 'Surface an editable email draft as a chat card; creates a real Gmail draft when Gmail is connected.' },
   { name: 'connection.call', category: 'connections', baseRisk: 'external_read', description: 'Call a connection tool.' },

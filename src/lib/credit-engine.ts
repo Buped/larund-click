@@ -71,9 +71,22 @@ export function packageByTier(tier?: string | null): CreditPackageConfig {
   return CREDIT_PACKAGES[0];
 }
 
+export async function hasUnlimitedCredits(userId?: string | null): Promise<boolean> {
+  if (!userId) return false;
+  try {
+    const { isUserAdminForCredits } = await import('./supabase');
+    return isUserAdminForCredits(userId);
+  } catch {
+    return false;
+  }
+}
+
 export async function deductCredits(input: DeductCreditsInput): Promise<DeductCreditsResult> {
   const amounts = creditAmountsFromUsd(input.usdCost);
   if (!input.userId || amounts.usdCost <= 0 || amounts.ucAmount <= 0) {
+    return { ...amounts, deducted: false };
+  }
+  if (await hasUnlimitedCredits(input.userId)) {
     return { ...amounts, deducted: false };
   }
 

@@ -24,7 +24,7 @@ function paletteFor(kind: DocumentReferenceKind): { icon: string; fg: string; bg
     case 'url':
       return { icon: 'link', fg: '#b48cff', bg: 'rgba(180,140,255,.15)', border: 'rgba(180,140,255,.45)' };
     default:
-      return { icon: 'fileText', fg: '#4a9eff', bg: 'rgba(74,158,255,.15)', border: 'rgba(74,158,255,.45)' };
+      return { icon: 'fileText', fg: 'var(--accent)', bg: 'rgba(var(--accent-rgb),.15)', border: 'rgba(var(--accent-rgb),.45)' };
   }
 }
 

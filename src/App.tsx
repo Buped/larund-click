@@ -10,6 +10,7 @@ import { McpPage }         from './components/pages/McpPage';
 import { SkillsPage }      from './components/pages/SkillsPage';
 import { MemoryPage }      from './components/pages/MemoryPage';
 import { ArtifactsPage }   from './components/pages/ArtifactsPage';
+import { AdminAssistant }  from './components/admin/AdminAssistant';
 import { LoginScreen }     from './pages/Login';
 import { OnboardingScreen } from './pages/Onboarding';
 import { restoreSession, signOut } from './lib/auth';
@@ -108,6 +109,7 @@ export default function App() {
   const [activeProject, setActiveProject] = useState<Project | null>(null);
   const [activeProjectId, setActiveProjectIdState] = useState<string | null>(null);
   const [loadingProjects, setLoadingProjects] = useState(false);
+  const [automationRefreshKey, setAutomationRefreshKey] = useState(0);
 
   useEffect(() => {
     if (user && !user.isAdmin && route === 'automations') {
@@ -278,7 +280,7 @@ export default function App() {
       <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {route === 'chat'        && <ChatScreen model={model} setModel={setModel} userEmail={user?.email ?? null} userId={user?.id ?? null} projectId={activeProjectId} credits={credits} onCreditsRefresh={refreshCredits} openSessionId={openChatSessionId} onSessionOpened={() => setOpenChatSessionId(null)} />}
         {route === 'tasks'       && <TasksPage userId={uid} />}
-        {route === 'automations' && <AutomationsPage userId={uid} projectId={activeProjectId} isAdmin={user?.isAdmin ?? false} onOpenChat={openChatSession} />}
+        {route === 'automations' && <AutomationsPage userId={uid} projectId={activeProjectId} isAdmin={user?.isAdmin ?? false} refreshKey={automationRefreshKey} onOpenChat={openChatSession} />}
         {route === 'artifacts'   && <ArtifactsPage />}
         {route === 'skills'      && <SkillsPage userId={uid} projectId={activeProjectId} />}
         {route === 'memory'      && <MemoryPage userId={uid} projectId={activeProjectId} />}
@@ -294,6 +296,15 @@ export default function App() {
           onSignOut={handleSignOut}
           activeProject={activeProject}
           onProjectsChanged={() => refreshProjectsFor(user?.id)}
+        />
+      )}
+      {user?.isAdmin && (
+        <AdminAssistant
+          userId={uid}
+          projectId={activeProjectId}
+          isAdmin={user.isAdmin}
+          onCreated={() => setAutomationRefreshKey((value) => value + 1)}
+          onOpenAutomations={() => { setShowSettings(false); setRoute('automations'); }}
         />
       )}
     </div>

@@ -2,7 +2,7 @@ import { emit } from '@tauri-apps/api/event';
 import { callOpenRouterWithTools, type MessageContent } from '../openrouter';
 import { CONTROL_SYSTEM_PROMPT } from './prompt';
 import { parseControlAction, isLegacyVisualActionName } from './parser';
-import { extractNarration, isMeaningfulNarration } from '../assistant/narration';
+import { extractNarration, isMeaningfulNarration, sanitizeUserVisibleNarration } from '../assistant/narration';
 import type { ControlAction } from './types';
 import { runControlAction } from '../tools/run';
 import { MemoryAuditLogger } from '../tools/audit';
@@ -154,6 +154,64 @@ function rememberExpectedSheetData(taskState: import('../agent-state/types').Act
   }
 }
 
+function isSpreadsheetEnrichmentRequest(task: string): boolean {
+  return /\b(fill|populate|update|edit|write into|write|enrich|process|keresd|t[oĂ¶]lts|Ă­rj|ird|Ă­rd|elemezd|adat)\b/i.test(task) &&
+    /\b(table|sheet|spreadsheet|excel|csv|ods|t[aĂˇ]bl[aĂˇ]zat|sor|c[eĂ©]g|company)\b/i.test(task);
+}
+
+function inferCompanyRequiredColumns(task: string, header: string[]): string[] {
+  const lower = task.toLowerCase();
+  const wanted = new Set<string>();
+  for (const col of header) {
+    if (col.trim()) wanted.add(col.trim());
+  }
+  const add = (label: string) => wanted.add(label);
+  if (/weboldal|website|honlap|link/i.test(lower)) add('Weboldal linkje');
+  if (/email|e-mail|mail/i.test(lower)) add('Email cime');
+  if (/telefon|phone/i.test(lower)) add('Telefon szam');
+  if (/ipar[aĂˇ]g|industry/i.test(lower)) add('Iparag');
+  if (/forr[aĂˇ]s|source|keresd|internet|web/i.test(lower)) add('Forras URL');
+  if (/bizonyoss[aĂˇ]g|confidence|biztos/i.test(lower)) add('Bizonyossag');
+  return [...wanted];
+}
+
+function inferSpreadsheetScopeFromIngest(
+  taskState: import('../agent-state/types').ActiveTaskState,
+  ingest: Awaited<ReturnType<typeof ingestReferences>>,
+  task: string,
+): void {
+  if (!isSpreadsheetEnrichmentRequest(task) || taskState.expectedScope) return;
+  for (const item of ingest.perRef) {
+    const refPath = item.ref.path;
+    if (!refPath || !/\.(xlsx|xlsm|xls|csv|ods)$/i.test(refPath)) continue;
+    const structured = item.documentRead?.structured as { rows?: unknown[]; sheet?: string; row_count?: number; total_rows?: number } | undefined;
+    const rows = Array.isArray(structured?.rows)
+      ? structured.rows.filter((row): row is unknown[] => Array.isArray(row)).map((row) => row.map((cell) => String(cell ?? '').trim()))
+      : [];
+    if (rows.length < 2) continue;
+    const header = rows[0] ?? [];
+    const dataRows = rows.slice(1).filter((row) => row.some((cell) => cell.trim())).length;
+    if (dataRows === 0) continue;
+    taskState.expectedScope = {
+      kind: 'spreadsheet_rows',
+      sourcePath: refPath,
+      sheet: structured?.sheet,
+      headerRow: 1,
+      dataRows,
+      requiredRows: Array.from({ length: dataRows }, (_, i) => i + 2),
+      requiredColumns: inferCompanyRequiredColumns(task, header),
+      allowPartial: /\b(sample|first\s+\d+|els[oĹő]\s+\d+|allow partial|r[eĂ©]szleges)\b/i.test(task),
+    };
+    taskState.pendingChecks = [...new Set([
+      ...taskState.pendingChecks,
+      `Process all ${dataRows} spreadsheet data rows`,
+      'Write back to the original spreadsheet target',
+      'Read back row/header coverage',
+    ])];
+    break;
+  }
+}
+
 /** Max page images to forward to vision per read (economy: caps token cost). */
 const MAX_MIDLOOP_VISION_IMAGES = 8;
 
@@ -256,7 +314,7 @@ export async function runControlLoop(
     taskRunId: tracker.taskRunId,
   });
 
-  const connections = opts.connections ?? createConnectionRegistry(userId);
+  const connections = opts.connections ?? createConnectionRegistry(userId, coworker.workspace?.id ?? opts.workspaceId);
   // Scope the skill runner to the resolved workspace so enabled user/workspace
   // builder skills (Phase 2) are runnable alongside the bundled ones.
   const skills = opts.skills ?? createSkillRunner({ userId, workspaceId: coworker.workspace?.id ?? opts.workspaceId });
@@ -266,7 +324,7 @@ export async function runControlLoop(
   emitStep({
     id: nowStepId('mode'),
     type: 'plan',
-    output: 'No-mouse operator. Working via CLI, files, browser DOM, apps, connections and skills. No mouse/cursor/visual control.',
+    output: 'Structured execution is ready. I can use files, browser pages, apps, connections and skills to work through the task.',
     timestamp: new Date().toISOString(),
   });
   await updateOverlay({ active: true, status: 'planning', task, steps });
@@ -383,6 +441,7 @@ export async function runControlLoop(
     if (ingest.filesRead.length) {
       taskState.filesRead = [...(taskState.filesRead ?? []), ...ingest.filesRead];
     }
+    inferSpreadsheetScopeFromIngest(taskState, ingest, task);
     setActiveTask(sessionId, taskState);
   }
 
@@ -451,7 +510,7 @@ export async function runControlLoop(
     const attempted = aiResponse.match(/"(?:action|tool)"\s*:\s*"([^"]+)"/)?.[1] ?? '';
     if (attempted && isLegacyVisualActionName(attempted)) {
       messages.push({ role: 'assistant', content: aiResponse });
-      messages.push({ role: 'user', content: `Rejected "${attempted}": this is a no-mouse operator. There is no mouse/cursor/visual control. Use CLI, files, browser DOM, connections, skills — or ask_user for a manual handoff.` });
+      messages.push({ role: 'user', content: `Rejected "${attempted}": that retired desktop-control action is unavailable. Use structured tools such as CLI, files, browser DOM, connections, skills, visualization.render, or ask_user for a manual handoff.` });
       emitStep({ id: nowStepId('legacy-blocked'), type: 'error', tool: attempted, error: 'mouse_cursor_visual_not_supported', timestamp: new Date().toISOString() });
       continue;
     }
@@ -467,7 +526,7 @@ export async function runControlLoop(
     // Surface the model's reasoning prose as a human-readable narration line so
     // the chat reads like a coworker, not a tool log. The tool call itself stays
     // in the (collapsed-by-default) timeline.
-    const narration = extractNarration(aiResponse);
+    const narration = sanitizeUserVisibleNarration(extractNarration(aiResponse));
     if (isMeaningfulNarration(narration)) {
       emitStep({ id: nowStepId('narration'), type: 'narration', output: narration, timestamp: new Date().toISOString() });
     }
@@ -596,7 +655,7 @@ export async function runControlLoop(
       role: 'user',
       content: result.success
         ? `Action result: ${result.output}${blockerNote}\nComplete with task.complete only when the result is verified by a read-back and proves the requested outcome.`
-        : `Action error: ${result.error ?? result.output}\nPick a different structured tool. Mouse/cursor/visual control is unavailable. If only a GUI mouse path exists, ask_user for a manual step or an API/export alternative.`,
+        : `Action error: ${result.error ?? result.output}\nPick a different structured tool. If only a manual GUI path exists, ask_user for a manual step or an API/export alternative.`,
     });
 
     // Scanned documents read mid-task (e.g. an image-only PDF via document.read) carry

@@ -24,6 +24,7 @@ import {
 } from './connectedAccounts';
 import { oauthEndpoints, refreshOAuthTokens } from './oauth/flow';
 import { loadUserProviderSecrets, credentialFieldsForAccount } from './userCredentials';
+import { normalizeConnectionProviderId } from './provider-aliases';
 
 export type CredentialSource = 'connected_account' | 'app_only' | 'dev_shortcut' | 'mcp' | 'none';
 
@@ -85,6 +86,7 @@ export async function resolveRuntimeCredentials(
   ctx: ConnectionContext = DEFAULT_CONTEXT,
   options: { connectedAccountId?: string; appOnlyRead?: boolean } = {},
 ): Promise<ResolvedCredentials> {
+  providerId = normalizeConnectionProviderId(providerId);
   const schema = envSchemaForProvider(providerId);
   const appCreds = appCredentials(providerId);
 

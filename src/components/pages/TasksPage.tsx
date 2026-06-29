@@ -111,7 +111,7 @@ export function TasksPage({ userId }: { userId: string }) {
       )}
 
       {activeQueue.length > 0 && (
-        <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 8, borderColor: 'rgba(74,158,255,.25)' }}>
+        <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 8, borderColor: 'rgba(var(--accent-rgb),.25)' }}>
           <span className="dot dot-blue dot-pulse" />
           <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{activeQueue.length} task{activeQueue.length === 1 ? '' : 's'} queued or running in the background.</span>
         </div>

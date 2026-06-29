@@ -14,6 +14,9 @@ import { newEmailDraftId, gmailDraftUrl, toSourceChips } from '../email/compose'
 import type { SectionSummarizer } from '../document-reader';
 import { callOpenRouterJson } from '../openrouter';
 import { MODELS } from '../../constants/models';
+import { extractContactInfo, extractPage, webBatchSearch, webSearch } from '../web-search/provider';
+import { isSearchEngineUrl } from '../web-search/quality';
+import { sanitizeVisualizationHtml } from '../assistant/rich-format';
 
 const PULSE_MODEL = MODELS[0].openrouter_id; // cheap/fast tier for map-reduce summarization
 
@@ -45,6 +48,24 @@ function browserProfileArg(id?: string | null): Record<string, unknown> | null {
 }
 
 const ERR = (error: string): ControlToolResult => ({ success: false, output: '', error });
+
+function columnToLetters(column: string | number): string {
+  if (typeof column === 'string') {
+    const trimmed = column.trim();
+    if (/^[A-Za-z]+$/.test(trimmed)) return trimmed.toUpperCase();
+    const n = Number(trimmed);
+    if (Number.isFinite(n) && n > 0) return columnToLetters(n);
+    return trimmed.toUpperCase();
+  }
+  let n = Math.floor(column);
+  let out = '';
+  while (n > 0) {
+    n -= 1;
+    out = String.fromCharCode(65 + (n % 26)) + out;
+    n = Math.floor(n / 26);
+  }
+  return out || 'A';
+}
 
 function refFromAction(
   ctx: ToolContext,
@@ -163,6 +184,18 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
       return executeCode(action, ctx);
     case 'code.install_package':
       return installPackageAction(action);
+    case 'visualization.render': {
+      const html = typeof action.html === 'string' ? action.html.trim() : '';
+      if (!html) return ERR('visualization.render requires html');
+      const safeHtml = sanitizeVisualizationHtml(html);
+      const height = Number.isFinite(action.height) ? Math.max(220, Math.min(820, Math.round(action.height ?? 420))) : undefined;
+      const title = String(action.title ?? 'Visualization').trim() || 'Visualization';
+      return {
+        success: true,
+        output: `Visualization rendered: ${title}`,
+        details: { visualization: { title, html: safeHtml, height } },
+      };
+    }
 
     // ── files ────────────────────────────────────────────────────────────
     case 'file.read': {
@@ -293,6 +326,18 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
       const r = await tryInvoke<string>('sheet_write', {
         path: action.path, sheet: action.sheet ?? null, rows: action.rows ?? null,
         cells: null, startCell: action.start_cell ?? null, mode: action.mode ?? null,
+      });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'sheet.update_cells': {
+      if (!action.cells.length) return ERR('sheet.update_cells requires at least one cell');
+      const cells = action.cells.map((cell) => ({
+        ref: `${columnToLetters(cell.column)}${cell.row}`,
+        value: cell.value === null ? '' : String(cell.value),
+      }));
+      const r = await tryInvoke<string>('sheet_write', {
+        path: action.path, sheet: action.sheet ?? null, rows: null,
+        cells, startCell: null, mode: 'edit',
       });
       return r.ok ? { success: true, output: r.value } : ERR(r.error);
     }
@@ -528,6 +573,9 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
 
     // ── browser ────────────────────────────────────────────────────────────
     case 'browser.open': {
+      if (isSearchEngineUrl(action.url)) {
+        return ERR('blocked_search_engine_browser_fallback: normal internet search must use web.search/web.batch_search, not browser.open on search result pages.');
+      }
       const r = await tryInvoke<string>('browser_open', { url: action.url, browserProfile: browserProfileArg(action.browser_profile_id) });
       return r.ok ? { success: true, output: r.value } : ERR(r.error);
     }
@@ -676,6 +724,61 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
     }
 
     // ── connections / skills / workflows ───────────────────────────────────
+    case 'web.search': {
+      try {
+        const result = await webSearch(action);
+        return { success: true, output: JSON.stringify(result, null, 2), details: { webSearch: result } };
+      } catch (error) {
+        return ERR(error instanceof Error ? error.message : String(error));
+      }
+    }
+    case 'web.batch_search': {
+      try {
+        const results = await webBatchSearch(action);
+        return { success: true, output: JSON.stringify({ queries: action.queries.length, results }, null, 2), details: { webBatchSearch: results } };
+      } catch (error) {
+        return ERR(error instanceof Error ? error.message : String(error));
+      }
+    }
+    case 'web.open_result': {
+      const r = await tryInvoke<string>('browser_open', { url: action.url, browserProfile: null });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
+    case 'web.extract_page': {
+      try {
+        const page = await extractPage(action.url, action.maxChars);
+        return { success: true, output: JSON.stringify(page, null, 2), details: { extractedPage: page } };
+      } catch (error) {
+        return ERR(error instanceof Error ? error.message : String(error));
+      }
+    }
+    case 'web.extract_contact_info': {
+      try {
+        const text = action.text ?? action.html ?? (await extractPage(action.url)).text;
+        const contactInfo = extractContactInfo(action.url, text);
+        return { success: true, output: JSON.stringify(contactInfo, null, 2), details: { contactInfo } };
+      } catch (error) {
+        return ERR(error instanceof Error ? error.message : String(error));
+      }
+    }
+    case 'web.verify_source': {
+      try {
+        const page = await extractPage(action.url, 8000);
+        const host = new URL(action.url).hostname.replace(/^www\./, '').toLowerCase();
+        const expected = action.expectedDomain?.replace(/^www\./, '').toLowerCase();
+        const domainOk = expected ? host === expected || host.endsWith(`.${expected}`) : true;
+        const claimOk = action.claim ? page.text.toLowerCase().includes(action.claim.toLowerCase()) : true;
+        const verified = domainOk && claimOk;
+        return {
+          success: true,
+          output: JSON.stringify({ url: action.url, verified, domainOk, claimOk, title: page.title }, null, 2),
+          details: { sourceVerification: { verified, domainOk, claimOk } },
+        };
+      } catch (error) {
+        return ERR(error instanceof Error ? error.message : String(error));
+      }
+    }
+
     case 'connection.call': {
       if (!ctx.connections) return ERR('connections_unavailable');
       const r = await ctx.connections.call(action.connection, action.tool, action.args ?? {});

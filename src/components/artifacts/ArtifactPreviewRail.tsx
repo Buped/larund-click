@@ -42,9 +42,9 @@ export function ArtifactPreviewRail({
               key={artifact.id}
               onClick={() => onStateChange({ ...state, selectedArtifactId: artifact.id })}
               style={{
-                border: artifact.id === selected?.id ? '1px solid rgba(74,158,255,.55)' : '1px solid var(--border-md)',
+                border: artifact.id === selected?.id ? '1px solid rgba(var(--accent-rgb),.55)' : '1px solid var(--border-md)',
                 borderRadius: 999,
-                background: artifact.id === selected?.id ? 'rgba(74,158,255,.12)' : 'rgba(var(--ov-color),.04)',
+                background: artifact.id === selected?.id ? 'rgba(var(--accent-rgb),.12)' : 'rgba(var(--ov-color),.04)',
                 color: 'var(--text-muted)',
                 fontSize: 11.5,
                 padding: '4px 9px',

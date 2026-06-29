@@ -94,7 +94,7 @@ export function ClickMark({ size = 22, radius = 6, glow = false }: ClickMarkProp
       width: size, height: size, borderRadius: radius,
       background: "var(--accent)", display: "grid", placeItems: "center",
       flex: "none",
-      boxShadow: glow ? "0 0 16px -2px rgba(74,158,255,0.7)" : "none",
+      boxShadow: glow ? "0 0 16px -2px rgba(var(--accent-rgb),0.7)" : "none",
     }}>
       <Icon name="zap" size={Math.round(size * 0.58)} fill="current" stroke={0} style={{ color: "#06152e" }} />
     </span>

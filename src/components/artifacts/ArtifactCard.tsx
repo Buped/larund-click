@@ -59,13 +59,13 @@ export function ArtifactCard({ artifact, selected, onPreview, onChanged }: Artif
   return (
     <div
       style={{
-        border: `1px solid ${selected ? 'rgba(74,158,255,.55)' : 'var(--border-md)'}`,
+        border: `1px solid ${selected ? 'rgba(var(--accent-rgb),.55)' : 'var(--border-md)'}`,
         borderRadius: 10,
         background: 'linear-gradient(180deg, rgba(var(--ov-color),0.075), rgba(var(--ov-color),0.035))',
         padding: 12,
         display: 'grid',
         gap: 10,
-        boxShadow: selected ? '0 0 0 1px rgba(74,158,255,.18), 0 16px 40px rgba(0,0,0,.25)' : 'none',
+        boxShadow: selected ? '0 0 0 1px rgba(var(--accent-rgb),.18), 0 16px 40px rgba(0,0,0,.25)' : 'none',
       }}
     >
       <div style={{ display: 'grid', gridTemplateColumns: '76px minmax(0,1fr)', gap: 12 }}>

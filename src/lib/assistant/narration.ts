@@ -58,3 +58,25 @@ function cleanProse(raw: string): string {
 export function isMeaningfulNarration(prose: string): boolean {
   return prose.length >= 12 && /\s/.test(prose);
 }
+
+const USER_VISIBLE_TECHNICAL_NOISE = [
+  /\bno[-\s]?mouse\b/i,
+  /\bmouse\s*\/\s*cursor\b/i,
+  /\bcursor\s*\/\s*visual\b/i,
+  /\bvisual control\b/i,
+  /\bscreenshot(?:s)?\b/i,
+  /\bpixel(?:s)?\b/i,
+  /\bbounding box(?:es)?\b/i,
+  /\bocr[-\s]?click/i,
+];
+
+/** Remove internal execution-policy chatter before a narration line reaches chat. */
+export function sanitizeUserVisibleNarration(prose: string): string {
+  if (!prose) return '';
+  const chunks = prose
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+    .filter((chunk) => !USER_VISIBLE_TECHNICAL_NOISE.some((re) => re.test(chunk)));
+  return chunks.join(' ').trim();
+}

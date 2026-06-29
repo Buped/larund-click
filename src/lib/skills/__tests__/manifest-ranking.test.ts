@@ -22,6 +22,20 @@ describe('rich skill manifest', () => {
   it('exposes rich manifests for every skill', () => {
     expect(listRichSkillManifests().length).toBe(loadAllSkills().length);
   });
+
+  it('gives local Excel report skills the full formatting toolchain', () => {
+    const manifests = listRichSkillManifests();
+    for (const name of ['local-office', 'spreadsheet-builder', 'xlsx-reporter']) {
+      const skill = manifests.find((m) => m.name === name);
+      expect(skill?.allowedTools).toEqual(expect.arrayContaining([
+        'sheet.write',
+        'sheet.read',
+        'sheet.format_range',
+        'sheet.add_table',
+        'sheet.add_chart',
+      ]));
+    }
+  });
 });
 
 describe('skill ranking', () => {

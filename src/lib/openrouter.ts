@@ -80,7 +80,7 @@ export async function callOpenRouter(
   // We read the ACTUAL balance from Supabase — no guesswork.
   // If the user truly has no credits, we reject before even calling OpenRouter.
   const preCredits = await getUserCredits(userId);
-  if (preCredits !== null && preCredits.uc_balance <= 0) {
+  if (preCredits !== null && !preCredits.unlimited && preCredits.uc_balance <= 0) {
     onError('Nincs elég kredit — tölts fel kreditet a folytatáshoz.');
     return;
   }
@@ -204,7 +204,7 @@ export async function callOpenRouter(
         lastBalanceCheckAt = now;
         try {
           const currentCredits = await getUserCredits(userId);
-          if (currentCredits !== null && currentCredits.uc_balance <= 0) {
+          if (currentCredits !== null && !currentCredits.unlimited && currentCredits.uc_balance <= 0) {
             reader.cancel();
             onError('Nincs elég kredit — tölts fel kreditet a folytatáshoz.');
             return;
@@ -238,7 +238,7 @@ export async function callOpenRouter(
   const searchCostUsd = estimateSearchCostUsd(webSearch?.mode ?? 'none', citations.length > 0);
   const costUsd = tokenCostUsd + searchCostUsd;
 
-  if (costUsd > 0) {
+  if (costUsd > 0 && !preCredits?.unlimited) {
     const result = await deductUserCredits({
       userId,
       usdCost: costUsd,
@@ -285,7 +285,7 @@ export async function callOpenRouterWithTools(
   }
 
   const preCredits = await getUserCredits(userId);
-  if (preCredits !== null && preCredits.uc_balance <= 0) {
+  if (preCredits !== null && !preCredits.unlimited && preCredits.uc_balance <= 0) {
     onError('Nincs elég kredit — tölts fel kreditet a folytatáshoz.');
     return;
   }
@@ -374,7 +374,7 @@ export async function callOpenRouterWithTools(
         lastBalanceCheckAt = now;
         try {
           const currentCredits = await getUserCredits(userId);
-          if (currentCredits !== null && currentCredits.uc_balance <= 0) {
+          if (currentCredits !== null && !currentCredits.unlimited && currentCredits.uc_balance <= 0) {
             reader.cancel();
             onError('Nincs elég kredit — tölts fel kreditet a folytatáshoz.');
             return;
@@ -392,7 +392,7 @@ export async function callOpenRouterWithTools(
   const usedOutputTok = finalOutputTokens > 0 ? finalOutputTokens : Math.ceil(accumulatedOutputChars / CHARS_PER_TOKEN);
   const costUsd = (usedInputTok * pricing.input + usedOutputTok * pricing.output) / 1_000_000;
 
-  if (deductCredits && costUsd > 0) {
+  if (deductCredits && costUsd > 0 && !preCredits?.unlimited) {
     const result = await deductUserCredits({
       userId,
       usdCost: costUsd,
@@ -421,7 +421,7 @@ export async function callOpenRouterJson(
   }
 
   const preCredits = await getUserCredits(userId);
-  if (preCredits !== null && preCredits.uc_balance <= 0) {
+  if (preCredits !== null && !preCredits.unlimited && preCredits.uc_balance <= 0) {
     throw new Error('Nincs elég kredit - tölts fel kreditet a folytatáshoz.');
   }
 
@@ -457,7 +457,7 @@ export async function callOpenRouterJson(
   const outputTokens = Number(parsed.usage?.completion_tokens) || Math.ceil(content.length / CHARS_PER_TOKEN);
   const costUsd = (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
 
-  if (deductCredits && costUsd > 0) {
+  if (deductCredits && costUsd > 0 && !preCredits?.unlimited) {
     const result = await deductUserCredits({
       userId,
       usdCost: costUsd,

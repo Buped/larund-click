@@ -6,6 +6,7 @@ import { Icon } from '../icons';
 import { MentionChip } from '../mentions/MentionEditor';
 import { getAutomation, listAutomationRuns, pauseAutomation, resumeAutomation, deleteAutomation, createAutomation } from '../../lib/automations/store';
 import { runAutomation } from '../../lib/automations/runner';
+import { isAutomationSetupReady, prepareAutomation, setupRequired } from '../../lib/automations/setup';
 import { checkAutomationDependencies, type DependencyReport } from '../../lib/automations/dependencies';
 import { normalizeAutomation, type NormalizedAutomation } from '../../lib/automations/migrate';
 import { getLinkedChatTitle } from '../../lib/automations/chat-bridge';
@@ -54,6 +55,13 @@ export function AutomationDetail({ automationId, userId, workspaceId, onBack, on
   async function runNow() {
     setBusy(true);
     try {
+      if (setupRequired(auto!.setupPlan) && !isAutomationSetupReady(auto!)) {
+        const setup = await prepareAutomation(automationId, { reason: 'manual_setup' });
+        if (setup.automationRunId) setMonitor({ runId: setup.automationRunId });
+        await load();
+        onChanged();
+        return;
+      }
       const result = await runAutomation(automationId, { reason: 'manual_run' });
       setMonitor({ runId: result.automationRunId });
       await load();
@@ -88,6 +96,7 @@ export function AutomationDetail({ automationId, userId, workspaceId, onBack, on
         prompt: auto!.prompt,
         referencedContext: auto!.referencedContext,
         steps: auto!.steps,
+        setupPlan: setupRequired(auto!.setupPlan) ? { ...auto!.setupPlan, status: 'pending', bindings: [], lastRunId: undefined, taskRunId: undefined, error: undefined, completedAt: undefined } : auto!.setupPlan,
         verificationChecklist: auto!.verificationChecklist,
         safetyPolicy: auto!.safetyPolicy,
       });
@@ -183,6 +192,25 @@ export function AutomationDetail({ automationId, userId, workspaceId, onBack, on
             <div key={s.id} style={{ padding: '8px 0', borderTop: i ? '1px solid var(--border)' : 'none' }}>
               <div style={{ fontSize: 12.5, color: 'var(--text-primary)', fontWeight: 600 }}>{i + 1}. {s.title}{!s.required && ' (optional)'}</div>
               {s.instruction && <div style={{ fontSize: 12, color: 'var(--text-hint)', marginTop: 2 }}>{s.instruction}</div>}
+            </div>
+          ))}
+        </Section>
+      )}
+
+      {setupRequired(auto.setupPlan) && (
+        <Section title="Setup">
+          <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 8 }}>
+            Status: <b>{auto.setupPlan.status}</b>{auto.setupPlan.error ? ` / ${auto.setupPlan.error}` : ''}
+          </div>
+          {auto.setupPlan.bindings.length > 0 && auto.setupPlan.bindings.map((b) => (
+            <div key={b.key} style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
+              - {b.label}: {b.url ?? b.path ?? b.refId ?? b.kind}
+            </div>
+          ))}
+          {auto.setupPlan.steps.map((s, i) => (
+            <div key={s.id} style={{ padding: '8px 0', borderTop: i ? '1px solid var(--border)' : 'none' }}>
+              <div style={{ fontSize: 12.5, color: 'var(--text-primary)', fontWeight: 600 }}>{i + 1}. {s.title}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-hint)', marginTop: 2 }}>{s.instruction}</div>
             </div>
           ))}
         </Section>

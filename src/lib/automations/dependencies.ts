@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { Automation } from './types';
 import { normalizeAutomation, referencedConnectionIds, referencedSkillIds, referencedMcpIds } from './migrate';
 import { listCatalogProviders } from '../connections/catalog';
+import { isUsableConnectionRuntime, normalizeConnectionProviderId } from '../connections/provider-aliases';
 import { listBuilderSkills } from '../skills/builder/store';
 import { listRichSkillManifests } from '../skills/runner';
 import { listMcpServers, listMcpTools } from '../mcp/store';
@@ -38,12 +39,13 @@ export async function checkAutomationDependencies(
   const warnings: DependencyIssue[] = [];
 
   // Connections — must be connected.
-  const catalog = listCatalogProviders();
+  const catalog = listCatalogProviders({ userId: ctx.userId, workspaceId: ctx.workspaceId });
   for (const id of referencedConnectionIds(a)) {
-    const p = catalog.find((x) => x.id === id);
+    const providerId = normalizeConnectionProviderId(id);
+    const p = catalog.find((x) => x.id === providerId);
     const label = p?.name ?? id;
-    if (!p || p.runtime !== 'connected') {
-      blockers.push({ kind: 'connection', refId: id, label, message: `${label} is not connected. Connect it before enabling this automation.`, action: 'connect' });
+    if (!p || !isUsableConnectionRuntime(p.runtime)) {
+      blockers.push({ kind: 'connection', refId: providerId, label, message: `${label} is not connected. Connect it before enabling this automation.`, action: 'connect' });
     }
   }
 
@@ -127,7 +129,7 @@ export async function checkAutomationDependencies(
 
 function allReferencedContext(a: ReturnType<typeof normalizeAutomation>): ReferencedContext[] {
   const seen = new Set<string>();
-  const refs = [...a.referencedContext, ...a.steps.flatMap((s) => s.referencedContext)];
+  const refs = [...a.referencedContext, ...a.steps.flatMap((s) => s.referencedContext), ...a.setupPlan.steps.flatMap((s) => s.referencedContext)];
   return refs.filter((ref) => {
     const key = `${ref.kind}:${ref.refId}`;
     if (seen.has(key)) return false;

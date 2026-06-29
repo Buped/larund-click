@@ -6,6 +6,7 @@ import { isDeveloperSetupReady, devPatShortcutsEnabled, getProviderSecret } from
 import { envSchemaForProvider } from './env/schema';
 import { getConnectedAccount, DEFAULT_CONTEXT, type ConnectionContext } from './connectedAccounts';
 import { resolveRuntimeCredentials } from './runtimeCredentials';
+import { normalizeConnectionProviderId } from './provider-aliases';
 import { githubManifest } from './providers/github/manifest';
 import { notionManifest } from './providers/notion/manifest';
 import { googleWorkspaceManifest } from './providers/google-workspace/manifest';
@@ -64,6 +65,7 @@ export type ProviderRuntimeState =
   | 'scaffold';
 
 export function providerRuntimeState(providerId: string, ctx: ConnectionContext = DEFAULT_CONTEXT): ProviderRuntimeState {
+  providerId = normalizeConnectionProviderId(providerId);
   const schema = envSchemaForProvider(providerId);
   if (schema.authMode === 'mcp_url') {
     return isDeveloperSetupReady(providerId) ? 'mcp_available' : 'developer_setup_missing';
@@ -108,16 +110,21 @@ export function listConnections(): ConnectionInfo[] {
  * Build a ConnectionRegistry. `call(connection, tool, args)` resolves the
  * provider + tool, checks configuration, then runs it with resolved secrets.
  */
-export function createConnectionRegistry(userId = ''): ConnectionRegistry {
+export function createConnectionRegistry(userId = '', workspaceId?: string): ConnectionRegistry {
+  return createConnectionRegistryForContext({ userId: userId || DEFAULT_CONTEXT.userId, workspaceId });
+}
+
+export function createConnectionRegistryForContext(ctx: ConnectionContext): ConnectionRegistry {
   const byId = new Map(ALL_MANIFESTS.map((m) => [m.id, m]));
-  const ctx: ConnectionContext = { userId: userId || DEFAULT_CONTEXT.userId };
 
   return {
     isConfigured(connection: string): boolean {
+      connection = normalizeConnectionProviderId(connection);
       const m = byId.get(connection);
       return m ? connectionStatus(m, ctx) === 'configured' : false;
     },
     async call(connection: string, tool: string, args: Record<string, unknown>): Promise<ConnectionCallResult> {
+      connection = normalizeConnectionProviderId(connection);
       const m = byId.get(connection);
       if (!m) return { success: false, output: '', error: `unknown_connection:${connection}` };
       if (m.scaffold) return { success: false, output: '', error: `connection_scaffold:${connection}` };

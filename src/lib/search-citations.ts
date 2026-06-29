@@ -1,3 +1,5 @@
+import { cleanWebText } from './text/encoding';
+
 export type SearchMode = 'none' | 'fast' | 'deep';
 export type WebSearchPreference = 'auto' | 'always' | 'never';
 export type SearchContextSize = 'low' | 'medium' | 'high';
@@ -54,14 +56,8 @@ export function normalizeSearchCitations(raw: unknown[], messageId?: string): Se
     if (!url) continue;
     const key = url.toLowerCase();
     const existing = seen.get(key);
-    const title = typeof uc.title === 'string' && uc.title.trim()
-      ? uc.title.trim()
-      : domainFromUrl(url);
-    const snippet = typeof uc.content === 'string' && uc.content.trim()
-      ? uc.content.trim()
-      : typeof uc.snippet === 'string' && uc.snippet.trim()
-        ? uc.snippet.trim()
-        : undefined;
+    const title = cleanWebText(uc.title) ?? domainFromUrl(url);
+    const snippet = cleanWebText(uc.content) ?? cleanWebText(uc.snippet);
     const start = normalizeIndex(uc.start_index);
     const end = normalizeIndex(uc.end_index);
 

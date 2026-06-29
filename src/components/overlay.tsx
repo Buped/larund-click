@@ -56,7 +56,7 @@ export function OverlayApp() {
       {state.askQuestion && (
         <div style={{
           background: 'rgba(26,26,24,0.97)',
-          border: '1px solid rgba(74,158,255,0.4)',
+          border: '1px solid rgba(var(--accent-rgb),0.4)',
           borderRadius: 14, padding: '16px 18px',
           marginBottom: 10,
           backdropFilter: 'blur(20px)',
@@ -96,7 +96,7 @@ export function OverlayApp() {
             onClick={handleAnswerSubmit}
             style={{
               marginTop: 8, width: '100%', height: 34,
-              background: '#4A9EFF', color: 'var(--on-accent)',
+              background: 'var(--accent)', color: 'var(--on-accent)',
               border: 'none', borderRadius: 8,
               fontSize: 13, fontWeight: 600, cursor: 'pointer',
               display: 'flex', alignItems: 'center',
@@ -132,7 +132,7 @@ export function OverlayApp() {
           </div>
           <span style={{
             width: 7, height: 7, borderRadius: '50%',
-            background: '#4A9EFF',
+            background: 'var(--accent)',
             animation: 'dotpulse 1.6s ease-in-out infinite',
             flex: 'none',
           }} />
@@ -171,7 +171,7 @@ export function OverlayApp() {
                 display: 'flex', alignItems: 'flex-start', gap: 7,
                 marginBottom: 9,
               }}>
-                <Icon name="sparkle" size={11} stroke={1.8} style={{ color: '#4A9EFF', flex: 'none', marginTop: 2 }} />
+                <Icon name="sparkle" size={11} stroke={1.8} style={{ color: 'var(--accent)', flex: 'none', marginTop: 2 }} />
                 <span style={{
                   fontSize: 11.5, lineHeight: 1.45, color: '#A8A5A1',
                   display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
@@ -202,7 +202,7 @@ export function OverlayApp() {
                         {isDone
                           ? <Icon name="check" size={13} stroke={2.5} style={{ color: '#3ECF8E' }} />
                           : isCurrent
-                            ? <Icon name="arrowRight" size={13} stroke={2} className="nudge" style={{ color: '#4A9EFF' }} />
+                            ? <Icon name="arrowRight" size={13} stroke={2} className="nudge" style={{ color: 'var(--accent)' }} />
                             : <span style={{
                                 width: 6, height: 6, borderRadius: '50%',
                                 background: '#5A5755', display: 'inline-block',

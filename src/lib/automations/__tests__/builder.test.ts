@@ -6,9 +6,12 @@ import { normalizeAutomation, referencedConnectionIds, referencedSkillIds, defau
 import { heuristicSteps, missingConnectionDeps } from '../planner';
 import { checkAutomationDependencies } from '../dependencies';
 import { resourceToReference, type ReferencedContext } from '../../mentions/types';
+import { createConnectedAccount, __resetConnectedAccountsForTests } from '../../connections/connectedAccounts';
 import type { Automation } from '../types';
 import { renderAutomationPrompt } from '../runner';
 import { stopAllAutomationTimers } from '../scheduler';
+import { completeAutomationSetup, prepareAutomation } from '../setup';
+import type { EvidenceEntry } from '../../tasks/types';
 
 const invokeMock = vi.hoisted(() => vi.fn());
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
@@ -16,6 +19,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 beforeEach(() => {
   stopAllAutomationTimers();
   resetRecordBackendForTests();
+  __resetConnectedAccountsForTests();
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (cmd: string) => {
     if (cmd === 'dir_list') return [];
@@ -115,6 +119,21 @@ describe('automation planner (no tool execution)', () => {
     expect(steps.some((s) => /approval/i.test(s.title))).toBe(true);
   });
 
+  it('plans Google Sheet infrastructure when no sheet target is provided', () => {
+    const steps = heuristicSteps({ prompt: 'Create a weekly report in Google Sheets', referencedContext: [connRef('google-workspace', 'Google')] });
+    const stepText = steps.map((s) => `${s.title} ${s.instruction}`).join('\n');
+    expect(stepText).toMatch(/google\.sheets\.create/i);
+    expect(stepText).toMatch(/google\.sheets\.write_values/i);
+    expect(stepText).toMatch(/google\.sheets\.read_values/i);
+  });
+
+  it('validates an existing Google Sheet target before use', () => {
+    const steps = heuristicSteps({ prompt: 'Update https://docs.google.com/spreadsheets/d/sheet-123/edit every week', referencedContext: [connRef('google-workspace', 'Google')] });
+    const stepText = steps.map((s) => `${s.title} ${s.instruction}`).join('\n');
+    expect(stepText).toMatch(/google\.sheets\.(get_metadata|read_values)/i);
+    expect(stepText).not.toMatch(/google\.sheets\.create/i);
+  });
+
   it('flags missing connection dependencies', () => {
     const missing = missingConnectionDeps([connRef('google-ads', 'Google Ads')], () => false);
     expect(missing).toContain('Google Ads');
@@ -130,6 +149,29 @@ describe('automation dependency checks', () => {
     const report = await checkAutomationDependencies(a, { userId: 'u1' });
     expect(report.ok).toBe(false);
     expect(report.blockers.some((b) => b.kind === 'connection' && b.refId === 'github')).toBe(true);
+  });
+
+  it('recognizes connected Google Workspace for Google service aliases', async () => {
+    await createConnectedAccount({
+      ctx: { userId: 'u1', workspaceId: 'ws1' },
+      providerId: 'google-workspace',
+      accountLabel: 'Google',
+      authType: 'oauth2',
+      tokens: { access_token: 'google-token' },
+    });
+    const a = await createAutomation({
+      userId: 'u1',
+      workspaceId: 'ws1',
+      name: 'Google sheet report',
+      trigger: { kind: 'manual' },
+      taskTemplate: { prompt: 'read sheets', requiredConnectionIds: ['google-sheets'] },
+      referencedContext: [connRef('gmail', 'Google')],
+    });
+
+    const report = await checkAutomationDependencies(a, { userId: 'u1', workspaceId: 'ws1' });
+
+    expect(report.blockers.some((b) => b.kind === 'connection' && b.refId === 'google-workspace')).toBe(false);
+    expect(report.ok).toBe(true);
   });
 
   it('passes when there are no external dependencies', async () => {
@@ -167,6 +209,84 @@ describe('automation dependency checks', () => {
 });
 
 describe('automation run', () => {
+  it('blocks recurring runs until required setup is ready', async () => {
+    const a = await createAutomation({
+      userId: 'u1',
+      name: 'Needs setup',
+      enabled: false,
+      trigger: { kind: 'manual' },
+      taskTemplate: { prompt: 'append rows to the provisioned sheet' },
+      prompt: 'append rows to the provisioned sheet',
+      setupPlan: {
+        status: 'pending',
+        steps: [{ id: 'setup-1', title: 'Create sheet', instruction: 'Create the Google Sheet once.', referencedContext: [], required: true, order: 0 }],
+        verificationChecklist: [{ id: 'setup-v1', title: 'Sheet was read back', kind: 'sheet_values_match', required: true }],
+        bindingSpecs: [{ key: 'target_sheet', label: 'Target sheet', kind: 'google_sheet', required: true }],
+        bindings: [],
+      },
+    });
+
+    await expect(runAutomation(a.id, { reason: 'test_run' })).rejects.toThrow(/setup is not ready/i);
+  });
+
+  it('prepareAutomation starts a setup run for pending setup', async () => {
+    const a = await createAutomation({
+      userId: 'u1',
+      name: 'Setup runner',
+      enabled: false,
+      trigger: { kind: 'manual' },
+      taskTemplate: { prompt: 'use setup output' },
+      setupPlan: {
+        status: 'pending',
+        steps: [{ id: 'setup-1', title: 'Create folder', instruction: 'Create the folder once.', referencedContext: [], required: true, order: 0 }],
+        verificationChecklist: [],
+        bindingSpecs: [],
+        bindings: [],
+      },
+    });
+
+    const result = await prepareAutomation(a.id, { reason: 'test' });
+    const updated = await getAutomation(a.id);
+
+    expect(result.automationRunId).toBeTruthy();
+    expect(updated?.setupPlan?.status).toBe('running');
+    expect(updated?.setupPlan?.lastRunId).toBe(result.automationRunId);
+  });
+
+  it('completed setup stores provisioned bindings from evidence', async () => {
+    const a = await createAutomation({
+      userId: 'u1',
+      name: 'Bind sheet',
+      trigger: { kind: 'manual' },
+      taskTemplate: { prompt: 'append to target_sheet' },
+      setupPlan: {
+        status: 'running',
+        steps: [],
+        verificationChecklist: [],
+        bindingSpecs: [{ key: 'target_sheet', label: 'Target sheet', kind: 'google_sheet', required: true }],
+        bindings: [],
+      },
+    });
+    const evidence: EvidenceEntry[] = [{
+      id: 'ev-1',
+      taskRunId: 'task-1',
+      userId: 'u1',
+      kind: 'connection_output',
+      title: 'Sheet created',
+      content: 'Google Sheet created: https://docs.google.com/spreadsheets/d/sheet-123/edit',
+      tool: 'connection.call',
+      success: true,
+      createdAt: new Date().toISOString(),
+    }];
+
+    await completeAutomationSetup(a.id, evidence, 'task-1');
+    const updated = normalizeAutomation((await getAutomation(a.id))!);
+
+    expect(updated.setupPlan.status).toBe('ready');
+    expect(updated.setupPlan.bindings[0]).toMatchObject({ key: 'target_sheet', kind: 'google_sheet' });
+    expect(updated.setupPlan.bindings[0].url).toContain('docs.google.com/spreadsheets');
+  });
+
   it('run now creates an AutomationRun (and a queued TaskRun via the queue)', async () => {
     const a = await createAutomation({ userId: 'u1', name: 'R', trigger: { kind: 'manual' }, taskTemplate: { prompt: 'create a local report and read it back' }, prompt: 'create a local report and read it back' });
     const res = await runAutomation(a.id);

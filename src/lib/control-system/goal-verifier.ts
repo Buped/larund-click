@@ -14,9 +14,9 @@ export interface Verification {
 
 const MUTATING = new Set([
   'file.write', 'file.edit', 'file.mkdir', 'file.copy', 'file.move', 'file.delete',
-  'sheet.write', 'cli.run',
+  'sheet.write', 'sheet.update_cells', 'cli.run',
 ]);
-const FILE_READS = new Set(['file.list', 'file.exists', 'file.tree', 'file.metadata', 'file.read', 'sheet.read']);
+const FILE_READS = new Set(['file.list', 'file.exists', 'file.tree', 'file.metadata', 'file.read', 'sheet.read', 'sheet.profile']);
 const DOCUMENT_READS = new Set(['document.read', 'document.read_many', 'folder.read_relevant', 'doc.read']);
 const LOCAL_DOCUMENT_WRITES = new Set(['doc.write_txt', 'doc.write_docx', 'file.write']);
 
@@ -153,13 +153,121 @@ function verifyCloudSheet(state: ActiveTaskState, recent: RecentAction[]): Verif
   return { ok: true, reason: 'Online Google Sheet contents were verified with concrete cell evidence.', nextStepHint: '' };
 }
 
-function verifyLocalSheet(recent: RecentAction[]): Verification {
-  if (!succeeded(recent, 'sheet.write') && !succeeded(recent, 'file.write')) {
+function parseSheetRead(output: string | undefined): { rows: string[][]; rowCount?: number; path?: string; sheet?: string } | null {
+  if (!output) return null;
+  try {
+    const parsed = JSON.parse(output) as { rows?: unknown[]; row_count?: number; rowCount?: number; path?: string; sheet?: string };
+    const rows = Array.isArray(parsed.rows)
+      ? parsed.rows.filter((row): row is unknown[] => Array.isArray(row)).map((row) => row.map((cell) => String(cell ?? '').trim()))
+      : [];
+    return { rows, rowCount: parsed.row_count ?? parsed.rowCount, path: parsed.path, sheet: parsed.sheet };
+  } catch {
+    return null;
+  }
+}
+
+function basename(path: string): string {
+  return path.split(/[\\/]/).pop()?.toLowerCase() ?? path.toLowerCase();
+}
+
+function actionMentionsPath(action: RecentAction, path: string): boolean {
+  const needle = path.toLowerCase();
+  const base = basename(path);
+  return `${action.argsSummary ?? ''}\n${action.output ?? ''}`.toLowerCase().includes(needle) ||
+    `${action.argsSummary ?? ''}\n${action.output ?? ''}`.toLowerCase().includes(base);
+}
+
+function verifyBulkProgress(state: ActiveTaskState): Verification | null {
+  const progress = state.bulkProgress;
+  if (!progress) return null;
+  const terminal = progress.completedCount + progress.skippedCount;
+  if (terminal < progress.inputCount) {
+    return {
+      ok: false,
+      reason: `Bulk task is incomplete: ${terminal}/${progress.inputCount} items have terminal status.`,
+      nextStepHint: 'Continue the batch queue until every item is done, not_found/ambiguous with evidence, or skipped with a reason.',
+    };
+  }
+  const unresolved = progress.items.filter((item) => ['failed', 'ambiguous'].includes(item.status) && !item.error);
+  if (!progress.allowPartial && (progress.failedCount > 0 || unresolved.length > 0)) {
+    return {
+      ok: false,
+      reason: `Bulk task has unresolved failures/ambiguities and allowPartial=false.`,
+      nextStepHint: 'Resolve failed/ambiguous items or document each as not_found/skipped with a reason before completing.',
+    };
+  }
+  return { ok: true, reason: 'Bulk progress covers the full input scope.', nextStepHint: '' };
+}
+
+function verifySpreadsheetScope(state: ActiveTaskState, recent: RecentAction[]): Verification | null {
+  const scope = state.expectedScope;
+  if (!scope || scope.kind !== 'spreadsheet_rows') return null;
+  const sourcePath = scope.sourcePath;
+  const wroteTarget = recent.some((a) => a.success && ['sheet.write', 'sheet.update_cells'].includes(a.action) && actionMentionsPath(a, sourcePath));
+  if (!wroteTarget) {
+    return {
+      ok: false,
+      reason: `The original spreadsheet target was not written: ${sourcePath}.`,
+      nextStepHint: 'Update the original spreadsheet with sheet.update_cells or a safe source-preserving round-trip; do not finish with a different sibling file.',
+    };
+  }
+  const lastRead = [...recent].reverse().find((a) => a.success && a.action === 'sheet.read' && actionMentionsPath(a, sourcePath));
+  if (!lastRead) {
+    return {
+      ok: false,
+      reason: 'The original spreadsheet was not read back after writing.',
+      nextStepHint: 'Run sheet.read on the original target file and verify row/header coverage.',
+    };
+  }
+  const read = parseSheetRead(lastRead.output);
+  if (!read || read.rows.length === 0) {
+    return {
+      ok: false,
+      reason: 'Spreadsheet read-back did not contain rows.',
+      nextStepHint: 'Read the edited target sheet again and inspect its rows.',
+    };
+  }
+  if ((read.rowCount ?? read.rows.length) < scope.dataRows + scope.headerRow) {
+    return {
+      ok: false,
+      reason: 'Spreadsheet read-back has fewer rows than the original scope.',
+      nextStepHint: 'Restore from backup if needed, then update only target cells without dropping rows.',
+    };
+  }
+  const header = read.rows[scope.headerRow - 1] ?? [];
+  const missingHeaders = scope.requiredColumns.filter((col) => !header.some((h) => normalizeText(h) === normalizeText(col)));
+  if (missingHeaders.length) {
+    return {
+      ok: false,
+      reason: `Spreadsheet read-back is missing required columns: ${missingHeaders.join(', ')}.`,
+      nextStepHint: 'Add missing source/confidence/result columns without deleting existing columns, then read back again.',
+    };
+  }
+  const bulk = verifyBulkProgress(state);
+  if (bulk && !bulk.ok) return bulk;
+  if (!bulk && scope.requiredRows.length > 0) {
+    const dataRowsPresent = scope.requiredRows.filter((row) => read.rows[row - 1]?.some((cell) => cell.trim()));
+    if (dataRowsPresent.length < scope.requiredRows.length) {
+      return {
+        ok: false,
+        reason: `Spreadsheet coverage is incomplete: ${dataRowsPresent.length}/${scope.requiredRows.length} scoped rows are present in read-back.`,
+        nextStepHint: 'Continue processing all original data rows or document unresolved rows before completing.',
+      };
+    }
+  }
+  return { ok: true, reason: 'Spreadsheet read-back covers the expected row scope and required columns.', nextStepHint: '' };
+}
+
+function verifyLocalSheet(state: ActiveTaskState, recent: RecentAction[]): Verification {
+  const scopeCheck = verifySpreadsheetScope(state, recent);
+  if (scopeCheck && !scopeCheck.ok) return scopeCheck;
+  if (!succeeded(recent, 'sheet.write') && !succeeded(recent, 'sheet.update_cells') && !succeeded(recent, 'file.write')) {
     return { ok: false, reason: 'No spreadsheet file was written.', nextStepHint: 'sheet.write the .xlsx/.csv file.' };
   }
   if (!anySucceeded(recent, new Set(['sheet.read', 'file.exists', 'file.read']))) {
     return { ok: false, reason: 'The written file was not read back / confirmed.', nextStepHint: 'sheet.read or file.exists to confirm the rows.' };
   }
+  if (scopeCheck?.ok) return scopeCheck;
   return { ok: true, reason: 'Local spreadsheet written and confirmed by read-back.', nextStepHint: '' };
 }
 
@@ -244,7 +352,7 @@ function verifyDocumentAccounting(state: ActiveTaskState, recent: RecentAction[]
       nextStepHint: 'Use document.read/read_many or folder.read_relevant on the referenced invoices first.',
     };
   }
-  return cloudTarget ? verifyCloudSheet(state, recent) : verifyLocalSheet(recent);
+  return cloudTarget ? verifyCloudSheet(state, recent) : verifyLocalSheet(state, recent);
 }
 
 /**
@@ -372,7 +480,7 @@ export function verifyCompletion(state: ActiveTaskState, recent: RecentAction[])
     case 'spreadsheet_cloud':
       return verifyCloudSheet(state, recent);
     case 'spreadsheet_local':
-      return verifyLocalSheet(recent);
+      return verifyLocalSheet(state, recent);
     case 'document_cloud':
       return verifyCloudDoc(state, recent);
     case 'document_local':

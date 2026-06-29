@@ -70,7 +70,7 @@ export function ChatSessionPicker({ projectId, onCancel, onSelect }: {
               <button
                 key={s.id}
                 onClick={() => setSelected(s.id)}
-                style={{ textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', background: isSel ? 'rgba(74,158,255,.12)' : 'rgba(var(--ov-color),.03)', border: `1px solid ${isSel ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 8, padding: '9px 11px' }}
+                style={{ textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', background: isSel ? 'rgba(var(--accent-rgb),.12)' : 'rgba(var(--ov-color),.03)', border: `1px solid ${isSel ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 8, padding: '9px 11px' }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Icon name="message" size={13} stroke={1.7} />

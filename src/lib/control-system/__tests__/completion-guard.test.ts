@@ -87,6 +87,30 @@ describe('completion guard — cloud Google Sheet', () => {
   });
 });
 
+describe('completion guard - professional local Excel reports', () => {
+  it('rejects report workbooks that only wrote a plain grid', () => {
+    const s = stateFor('Keszits egy Excel tablazatot a boltok teljesitmenyerol, minimum 50 elemmel, meg minden ilyesmivel.');
+    const r = verifyBeforeComplete(s, [ok('sheet.write', 'saved report.xlsx'), ok('sheet.read', 'rows...')]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/professional Excel report/i);
+    expect(r.nextStepHint).toMatch(/sheet\.format_range/);
+    expect(r.nextStepHint).toMatch(/sheet\.add_table/);
+    expect(r.nextStepHint).toMatch(/sheet\.add_chart/);
+  });
+
+  it('accepts report workbooks after styling table chart and read-back', () => {
+    const s = stateFor('Keszits egy Excel tablazatot a boltok teljesitmenyerol, minimum 50 elemmel, meg minden ilyesmivel.');
+    const recent = [
+      ok('sheet.write', 'saved report.xlsx'),
+      ok('sheet.format_range', 'formatted header and body'),
+      ok('sheet.add_table', 'table_added'),
+      ok('sheet.add_chart', 'chart_added'),
+      ok('sheet.read', 'rows...'),
+    ];
+    expect(verifyBeforeComplete(s, recent).ok).toBe(true);
+  });
+});
+
 describe('completion guard — Gmail email/draft', () => {
   const sendGoal = 'Küldj egy emailt a ninjapeti2000@gmail.com email címre a csatolt Drive file alapján. Írj egy rövid összefoglalót.';
   const draftGoal = 'Írd meg ezt a draftot a ninjapeti2000@gmail.com címre a csatolt Drive file alapján.';
@@ -312,5 +336,80 @@ describe('completion guard - active skills', () => {
     const r = verifyBeforeComplete(s, [ok('skill.run'), ok('doc.write_docx', 'Wrote test.docx')]);
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/read-back/i);
+  });
+});
+
+describe('completion guard - scoped local spreadsheet enrichment', () => {
+  function scopedState() {
+    const s = stateFor('@company-names.ods Keresd ki az interneten a hianyzo adatokat. Irj bele a tablazatba.');
+    s.intent = 'spreadsheet_local';
+    s.expectedScope = {
+      kind: 'spreadsheet_rows',
+      sourcePath: 'C:/tmp/company-names.ods',
+      headerRow: 1,
+      dataRows: 25,
+      requiredRows: Array.from({ length: 25 }, (_, i) => i + 2),
+      requiredColumns: ['Ceg neve', 'Weboldal linkje', 'Forras URL', 'Bizonyossag'],
+      allowPartial: false,
+    };
+    return s;
+  }
+
+  it('rejects a sibling xlsx instead of the original ods target', () => {
+    const r = verifyBeforeComplete(scopedState(), [
+      { action: 'sheet.write', success: true, argsSummary: '{"path":"C:/tmp/company-names.xlsx"}', output: 'saved company-names.xlsx' },
+      { action: 'sheet.read', success: true, argsSummary: '{"path":"C:/tmp/company-names.xlsx"}', output: JSON.stringify({ path: 'C:/tmp/company-names.xlsx', rows: [['Ceg neve']], row_count: 6 }) },
+    ]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/original spreadsheet target/i);
+  });
+
+  it('rejects missing source and confidence columns in read-back', () => {
+    const rows = [['Ceg neve', 'Weboldal linkje'], ...Array.from({ length: 25 }, (_, i) => [`Company ${i + 1}`, 'https://example.com'])];
+    const r = verifyBeforeComplete(scopedState(), [
+      { action: 'sheet.update_cells', success: true, argsSummary: '{"path":"C:/tmp/company-names.ods"}', output: 'saved C:/tmp/company-names.ods' },
+      { action: 'sheet.read', success: true, argsSummary: '{"path":"C:/tmp/company-names.ods"}', output: JSON.stringify({ path: 'C:/tmp/company-names.ods', rows, row_count: rows.length }) },
+    ]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/missing required columns/i);
+  });
+
+  it('accepts original-target write after full row read-back coverage', () => {
+    const rows = [
+      ['Ceg neve', 'Weboldal linkje', 'Forras URL', 'Bizonyossag'],
+      ...Array.from({ length: 25 }, (_, i) => [`Company ${i + 1}`, 'https://example.com', 'https://source.example', '0.82']),
+    ];
+    const r = verifyBeforeComplete(scopedState(), [
+      { action: 'web.batch_search', success: true, output: '25 queries searched' },
+      { action: 'sheet.update_cells', success: true, argsSummary: '{"path":"C:/tmp/company-names.ods"}', output: 'roundtrip_with_backup C:/tmp/company-names.ods' },
+      { action: 'sheet.read', success: true, argsSummary: '{"path":"C:/tmp/company-names.ods"}', output: JSON.stringify({ path: 'C:/tmp/company-names.ods', rows, row_count: rows.length }) },
+    ]);
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe('completion guard - web lookup evidence', () => {
+  it('rejects browser fallback for explicit internet search', () => {
+    const s = stateFor('Keresd ki az interneten a legfrissebb hireket a SpaceX-el kapcsolatban!');
+    const recent: RecentAction[] = [
+      { action: 'web.search', success: false, error: 'web_search_unavailable' },
+      { action: 'browser.open', success: true, argsSummary: '{"url":"https://www.anthropic.com/news"}', output: 'Opened' },
+      { action: 'browser.read', success: true, output: 'URL: https://www.anthropic.com/news\nTITLE: News' },
+    ];
+    const result = verifyBeforeComplete(s, recent);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/no provider-native or server-side web search evidence/i);
+  });
+
+  it('accepts server-side web.search with clickable sources', () => {
+    const s = stateFor('Keresd ki az interneten a legfrissebb hireket a SpaceX-el kapcsolatban!');
+    const output = JSON.stringify({
+      query: 'SpaceX latest news',
+      provider: 'brave',
+      searchedAt: '2026-06-24T10:00:00.000Z',
+      results: [{ title: 'SpaceX update', url: 'https://example.com/spacex', snippet: 'Latest news', rank: 1 }],
+    });
+    const result = verifyBeforeComplete(s, [{ action: 'web.search', success: true, argsSummary: '{"query":"SpaceX latest news"}', output }]);
+    expect(result.ok).toBe(true);
   });
 });

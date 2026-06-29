@@ -5,6 +5,7 @@
 
 import type { ActiveTaskState, RecentAction } from '../agent-state/types';
 import { verifyCompletion } from './goal-verifier';
+import { evidenceFromRecentActions, isExplicitWebLookup } from '../web-search/quality';
 
 export interface GuardResult {
   ok: boolean;
@@ -15,11 +16,12 @@ export interface GuardResult {
 const CONTROL_ACTIONS = new Set(['task.complete', 'ask_user', 'approval.request', 'skill.run']);
 const READBACK_ACTIONS = new Set([
   'file.exists', 'file.list', 'file.tree', 'file.read', 'file.metadata',
-  'sheet.read', 'sheet.to_json',
+  'sheet.read', 'sheet.to_json', 'sheet.profile',
   'document.read', 'document.read_many', 'folder.scan', 'folder.read_relevant', 'doc.read',
   'artifact.verify', 'artifact.design_lint', 'presentation.quality_lint', 'artifact.preview', 'artifact.list', 'artifact.pdf_extract_text',
   'artifact.pdf_metadata', 'artifact.pdf_page_count',
   'browser.read', 'browser.get_state', 'browser.assert_text', 'browser.assert_url', 'browser.extract_table',
+  'web.search', 'web.batch_search', 'web.extract_page', 'web.extract_contact_info', 'web.verify_source',
   'connection.call', 'email.compose',
 ]);
 
@@ -166,6 +168,100 @@ function activeSkillPrecheck(state: ActiveTaskState, recent: RecentAction[]): Gu
   return null;
 }
 
+function webLookupPrecheck(state: ActiveTaskState, recent: RecentAction[]): GuardResult | null {
+  const goal = `${state.originalUserGoal}\n${state.currentGoal}\n${state.expectedOutcome ?? ''}`;
+  if (state.intent !== 'web_lookup' || !isExplicitWebLookup(goal)) return null;
+
+  const evidence = evidenceFromRecentActions(recent);
+  if (evidence.mode !== 'server_side' && evidence.mode !== 'provider_native') {
+    return {
+      ok: false,
+      reason: 'The user asked for internet search, but no provider-native or server-side web search evidence succeeded.',
+      nextStepHint: 'Use web.search or web.batch_search. Do not fall back to browser.open for ordinary search; if no search provider is configured, report blocked_missing_web_search_capability.',
+    };
+  }
+  if (evidence.usedSearchEnginePage) {
+    return {
+      ok: false,
+      reason: 'A browser search-engine result page was used as search evidence.',
+      nextStepHint: 'Use the programmatic web.search/web.batch_search adapter instead of Google/Bing/DuckDuckGo pages.',
+    };
+  }
+  if (evidence.sources.length === 0) {
+    return {
+      ok: false,
+      reason: 'The web search action did not return any clickable source URLs.',
+      nextStepHint: 'Run web.search again with a better query or configure a search provider; do not complete without sources.',
+    };
+  }
+  if (evidence.quality === 'failed') {
+    return {
+      ok: false,
+      reason: `Web search evidence failed quality checks: ${evidence.warnings.join('; ')}`,
+      nextStepHint: 'Collect valid web.search evidence with source URLs before completing.',
+    };
+  }
+  return null;
+}
+
+function professionalSpreadsheetPrecheck(state: ActiveTaskState, recent: RecentAction[]): GuardResult | null {
+  const goal = `${state.originalUserGoal}\n${state.currentGoal}\n${state.expectedOutcome ?? ''}`;
+  const userRequest = `${state.originalUserGoal}\n${state.currentGoal}`;
+  const plainGoal = userRequest.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const robustLocalSpreadsheet =
+    state.intent === 'spreadsheet_local' || /\b(excel|xlsx|spreadsheet)\b|munkafuzet\w*|tablazat\w*/.test(plainGoal);
+  const robustProfessional =
+    /riport\w*|jelentes\w*|teljesitmeny\w*|performance|dashboard|osszesito\w*|minimum\s+\d+|legalabb\s+\d+|meg minden|kitart\w*|reszletes\w*|kpi/.test(plainGoal);
+  const robustRaw = /\b(csv|nyers adat|raw data only|plain export|egyszeru)\b/.test(plainGoal);
+  const robustCloud = state.intent === 'spreadsheet_cloud' || /google\s*(sheet|sheets)|google\s*tablazat\w*/.test(plainGoal);
+  if (robustCloud) return null;
+  if (robustLocalSpreadsheet && robustProfessional && !robustRaw && !robustCloud) {
+    const wroteSheet = recent.some((a) => a.success && ['sheet.write', 'sheet.append'].includes(a.action));
+    if (!wroteSheet) return null;
+    const missing = [
+      recent.some((a) => a.success && a.action === 'sheet.format_range') ? null : 'sheet.format_range',
+      recent.some((a) => a.success && a.action === 'sheet.add_table') ? null : 'sheet.add_table',
+      recent.some((a) => a.success && a.action === 'sheet.add_chart') ? null : 'sheet.add_chart',
+    ].filter((name): name is string => Boolean(name));
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        reason: `The user asked for a professional Excel report, but the workbook is missing visible report styling/actions: ${missing.join(', ')}.`,
+        nextStepHint:
+          'Continue the workbook: apply visible header/body styling with sheet.format_range, add a native styled table with sheet.add_table, add a relevant chart with sheet.add_chart, then read it back before task.complete.',
+      };
+    }
+    return null;
+  }
+  if (state.intent === 'spreadsheet_cloud' || /google\s*(sheet|sheets)|google\s*t[aá]bl[aá]zat\w*/i.test(goal)) return null;
+  const asksLocalSpreadsheet = state.intent === 'spreadsheet_local' || /\b(excel|xlsx|spreadsheet)\b|munkaf[uü]zet\w*|t[aá]bl[aá]zat\w*/i.test(goal);
+  if (!asksLocalSpreadsheet) return null;
+  if (/\b(csv|nyers adat|raw data only|plain export|egyszer[uű])\b/i.test(goal)) return null;
+
+  const wantsProfessionalReport = /riport\w*|jelent[eé]s\w*|teljes[ií]tm[eé]ny\w*|performance|dashboard|[oö]sszes[ií]t[oő]\w*|minimum\s+\d+|legal[aá]bb\s+\d+|meg minden|kit[aá]rt\w*|r[eé]szletes\w*|kpi/i.test(goal);
+  if (!wantsProfessionalReport) return null;
+
+  const wroteSheet = recent.some((a) => a.success && ['sheet.write', 'sheet.append'].includes(a.action));
+  if (!wroteSheet) return null;
+
+  const formatted = recent.some((a) => a.success && a.action === 'sheet.format_range');
+  const tabled = recent.some((a) => a.success && a.action === 'sheet.add_table');
+  const charted = recent.some((a) => a.success && a.action === 'sheet.add_chart');
+
+  const missing: string[] = [];
+  if (!formatted) missing.push('sheet.format_range');
+  if (!tabled) missing.push('sheet.add_table');
+  if (!charted) missing.push('sheet.add_chart');
+  if (missing.length === 0) return null;
+
+  return {
+    ok: false,
+    reason: `The user asked for a professional Excel report, but the workbook is missing visible report styling/actions: ${missing.join(', ')}.`,
+    nextStepHint:
+      'Continue the workbook: apply visible header/body styling with sheet.format_range, add a native styled table with sheet.add_table, add a relevant chart with sheet.add_chart, then read it back before task.complete.',
+  };
+}
+
 export function verifyBeforeComplete(
   state: ActiveTaskState,
   recent: RecentAction[],
@@ -178,6 +274,9 @@ export function verifyBeforeComplete(
 
   const artifactCheck = artifactCompletionPrecheck(state, recent);
   if (artifactCheck) return artifactCheck;
+
+  const webLookupCheck = webLookupPrecheck(state, recent);
+  if (webLookupCheck) return webLookupCheck;
 
   // If the user previously corrected a false completion, a prior task.complete is
   // not acceptable as evidence; the verifier already ignores control actions, but
@@ -196,6 +295,11 @@ export function verifyBeforeComplete(
   }
 
   const v = verifyCompletion(state, recent);
+  if (!v.ok) return { ok: v.ok, reason: v.reason, nextStepHint: v.nextStepHint };
+
+  const spreadsheetCheck = professionalSpreadsheetPrecheck(state, recent);
+  if (spreadsheetCheck) return spreadsheetCheck;
+
   return { ok: v.ok, reason: v.reason, nextStepHint: v.nextStepHint };
 }
 

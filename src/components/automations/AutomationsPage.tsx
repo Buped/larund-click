@@ -16,6 +16,8 @@ import { AUTOMATION_TEMPLATES, type AutomationTemplate } from '../../lib/automat
 import type { Automation, AutomationRun } from '../../lib/automations/types';
 import { resourceToReference } from '../../lib/mentions/types';
 import { listCatalogProviders } from '../../lib/connections/catalog';
+import type { ConnectionContext } from '../../lib/connections/connectedAccounts';
+import { isUsableConnectionRuntime } from '../../lib/connections/provider-aliases';
 import { triggerSummary } from './shared';
 import { NewAutomationWizard, type WizardInitial } from './NewAutomationWizard';
 import { AutomationDetail } from './AutomationDetail';
@@ -32,13 +34,13 @@ function statusOf(a: Automation): 'active' | 'paused' | 'failed' | 'draft' {
   return 'active';
 }
 
-function templateToInitial(t: AutomationTemplate): WizardInitial {
+function templateToInitial(t: AutomationTemplate, ctx: ConnectionContext): WizardInitial {
   // Map suggested connections to mention references so the wizard shows chips +
   // runs dependency checks against them.
-  const providers = listCatalogProviders();
+  const providers = listCatalogProviders(ctx);
   const references = t.suggestedConnectionIds.map((id) => {
     const p = providers.find((x) => x.id === id);
-    return resourceToReference({ kind: 'connection', refId: id, label: p?.name ?? id, available: p?.runtime === 'connected', detail: '' });
+    return resourceToReference({ kind: 'connection', refId: id, label: p?.name ?? id, available: p ? isUsableConnectionRuntime(p.runtime) : false, detail: '' });
   });
   return { name: t.name, prompt: t.prompt, references, trigger: t.suggestedTrigger, verification: t.verification };
 }
@@ -78,6 +80,7 @@ function AutomationCard({ a, run, linkedChatTitle, onOpen, onRun, onToggle, onWa
 }) {
   const norm = normalizeAutomation(a);
   const status = statusOf(a);
+  const setupStatus = norm.setupPlan.status;
   const activeRun = isActiveRun(run);
   const last = a.lastRunAt ? new Date(a.lastRunAt).toLocaleString() : '—';
   const next = a.nextRunAt ? new Date(a.nextRunAt).toLocaleString() : '—';
@@ -88,6 +91,7 @@ function AutomationCard({ a, run, linkedChatTitle, onOpen, onRun, onToggle, onWa
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <strong style={{ fontSize: 14, color: 'var(--text-primary)' }}>{a.name}</strong>
             <Badge text={status} color={statusColor(status)} />
+            {setupStatus !== 'not_required' && <Badge text={`setup ${setupStatus}`} color={setupStatus === 'ready' ? 'var(--success)' : setupStatus === 'failed' ? 'var(--danger)' : 'var(--warning)'} />}
             {activeRun && <Badge text={run!.status.replace('_', ' ')} color="var(--accent)" />}
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-hint)', marginTop: 4 }}>{triggerSummary(a.trigger)}</div>
@@ -129,8 +133,8 @@ function AutomationCard({ a, run, linkedChatTitle, onOpen, onRun, onToggle, onWa
   );
 }
 
-export function AutomationsPage({ userId, workspaceId, onOpenChat }: { userId: string; workspaceId?: string; onOpenChat?: (sessionId: string) => void }) {
-  const { items, loading, reload } = useAsyncList<Automation>(() => listAutomations({ userId, workspaceId, includeDisabled: true }), [userId, workspaceId]);
+export function AutomationsPage({ userId, workspaceId, refreshKey, onOpenChat }: { userId: string; workspaceId?: string; refreshKey?: number; onOpenChat?: (sessionId: string) => void }) {
+  const { items, loading, reload } = useAsyncList<Automation>(() => listAutomations({ userId, workspaceId, includeDisabled: true }), [userId, workspaceId, refreshKey]);
   const [tab, setTab] = useState<Tab>('All');
   const [query, setQuery] = useState('');
   const [wizard, setWizard] = useState<{ open: boolean; initial?: WizardInitial; editId?: string }>({ open: false });
@@ -172,7 +176,7 @@ export function AutomationsPage({ userId, workspaceId, onOpenChat }: { userId: s
     if (!a) return;
     const n = normalizeAutomation(a);
     setDetailId(null);
-    setWizard({ open: true, editId: id, initial: { name: n.name, description: n.description, prompt: n.prompt, references: n.referencedContext, trigger: n.trigger, verification: n.verificationChecklist, steps: n.steps, safety: n.safetyPolicy, chatMode: a.chatMode, linkedChatSessionId: a.linkedChatSessionId } });
+    setWizard({ open: true, editId: id, initial: { name: n.name, description: n.description, prompt: n.prompt, references: n.referencedContext, trigger: n.trigger, verification: n.verificationChecklist, steps: n.steps, setupPlan: n.setupPlan, safety: n.safetyPolicy, chatMode: a.chatMode, linkedChatSessionId: a.linkedChatSessionId } });
   }
 
   if (detailId) {
@@ -247,7 +251,7 @@ export function AutomationsPage({ userId, workspaceId, onOpenChat }: { userId: s
             <button style={btn} onClick={() => setWizard({ open: true })}><Icon name="plus" size={13} stroke={2} /> Create your first automation</button>
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-hint)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 10 }}>Templates</div>
-          <TemplateGallery onPick={(t) => setWizard({ open: true, initial: templateToInitial(t) })} />
+          <TemplateGallery onPick={(t) => setWizard({ open: true, initial: templateToInitial(t, { userId, workspaceId }) })} />
         </div>
       ) : (
         <>

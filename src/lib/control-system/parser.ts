@@ -4,7 +4,7 @@ import type { ControlAction, ControlActionName } from './types';
 export const ALLOWED_ACTIONS: ReadonlySet<ControlActionName> = new Set<ControlActionName>([
   // runtime
   'cli.run', 'process.start', 'process.status', 'process.kill',
-  'code.execute', 'code.install_package',
+  'code.execute', 'code.install_package', 'visualization.render',
   // files
   'file.read', 'file.write', 'file.edit', 'file.list', 'file.mkdir',
   'file.copy', 'file.move', 'file.delete', 'file.search', 'file.tree',
@@ -12,7 +12,7 @@ export const ALLOWED_ACTIONS: ReadonlySet<ControlActionName> = new Set<ControlAc
   'document.read', 'document.read_many', 'document.summarize',
   'folder.scan', 'folder.read_relevant',
   // data
-  'sheet.read', 'sheet.write', 'sheet.append', 'sheet.export_csv', 'sheet.to_json',
+  'sheet.read', 'sheet.write', 'sheet.update_cells', 'sheet.append', 'sheet.export_csv', 'sheet.to_json',
   'sheet.profile', 'sheet.query', 'sheet.format_range', 'sheet.add_chart', 'sheet.add_table',
   'doc.read', 'doc.write_txt', 'doc.write_docx',
   // artifacts
@@ -29,6 +29,9 @@ export const ALLOWED_ACTIONS: ReadonlySet<ControlActionName> = new Set<ControlAc
   'browser.open', 'browser.read', 'browser.get_state', 'browser.click', 'browser.type',
   'browser.key', 'browser.shortcut', 'browser.paste', 'browser.assert_text', 'browser.assert_url',
   'browser.wait', 'browser.extract_table', 'browser.download', 'browser.upload', 'browser.login',
+  // web search / extraction
+  'web.search', 'web.batch_search', 'web.open_result', 'web.extract_page',
+  'web.extract_contact_info', 'web.verify_source',
   // email composer
   'email.compose',
   // connections / skills / workflows

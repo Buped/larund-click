@@ -112,7 +112,7 @@ function DetailModal({ m, onChange, onClose }: { m: MemoryEntry; onChange: () =>
           : <div style={{ fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{m.content}</div>}
 
         {reason && !editing && (
-          <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: 'rgba(74,158,255,.06)', border: '1px solid rgba(74,158,255,.18)' }}>
+          <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: 'rgba(var(--accent-rgb),.06)', border: '1px solid rgba(var(--accent-rgb),.18)' }}>
             <div style={{ fontSize: 10.5, color: 'var(--text-hint)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 3 }}>Why saved</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{reason}</div>
           </div>

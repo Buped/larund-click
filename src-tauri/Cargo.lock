@@ -5540,6 +5540,7 @@ dependencies = [
  "calamine",
  "csv",
  "dirs 5.0.1",
+ "encoding_rs",
  "enigo",
  "image 0.25.10",
  "lopdf",

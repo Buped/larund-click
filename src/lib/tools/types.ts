@@ -10,6 +10,7 @@ export type ToolCategory =
   | 'documents'
   | 'artifacts'
   | 'browser'
+  | 'web'
   | 'apps'
   | 'data'
   | 'clipboard'

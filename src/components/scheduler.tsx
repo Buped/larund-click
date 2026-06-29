@@ -107,7 +107,7 @@ function TimePicker({ value, onChange }: { value: string; onChange: (v: string) 
       {col(String(hr12).padStart(2, "0"), () => setHour(1), () => setHour(-1))}
       <span style={{ fontSize: 22, fontWeight: 600, color: "var(--text-hint)", alignSelf: "center", marginBottom: 2 }}>:</span>
       {col(String(m).padStart(2, "0"), () => setMin(5), () => setMin(-5))}
-      <button onClick={toggleAMPM} style={{ fontSize: 13, fontWeight: 600, color: "var(--accent)", background: "rgba(74,158,255,.13)", border: "none", borderRadius: 7, padding: "5px 10px", cursor: "pointer", marginLeft: 6 }}>{ampm}</button>
+      <button onClick={toggleAMPM} style={{ fontSize: 13, fontWeight: 600, color: "var(--accent)", background: "rgba(var(--accent-rgb),.13)", border: "none", borderRadius: 7, padding: "5px 10px", cursor: "pointer", marginLeft: 6 }}>{ampm}</button>
     </div>
   );
 }
@@ -252,7 +252,7 @@ function TaskEditor({ task, apps, onSave, onClose, onDelete }: {
               {DAY_LABELS.map((lbl, i) => {
                 const on = days.includes(i);
                 return (
-                  <button key={i} onClick={() => toggleDay(i)} style={{ flex: 1, height: 34, borderRadius: 7, border: "1px solid", fontSize: 12, fontWeight: 500, cursor: "pointer", background: on ? "rgba(74,158,255,.15)" : "var(--bg-elevated)", borderColor: on ? "var(--accent)" : "var(--border)", color: on ? "var(--accent)" : "var(--text-hint)", transition: "all .12s" }}>{lbl}</button>
+                  <button key={i} onClick={() => toggleDay(i)} style={{ flex: 1, height: 34, borderRadius: 7, border: "1px solid", fontSize: 12, fontWeight: 500, cursor: "pointer", background: on ? "rgba(var(--accent-rgb),.15)" : "var(--bg-elevated)", borderColor: on ? "var(--accent)" : "var(--border)", color: on ? "var(--accent)" : "var(--text-hint)", transition: "all .12s" }}>{lbl}</button>
                 );
               })}
             </div>
@@ -280,7 +280,7 @@ function TaskEditor({ task, apps, onSave, onClose, onDelete }: {
 function SchTaskCard({ task, active, onClick }: { task: Task; active: boolean; onClick: () => void }) {
   const nextRun = task.enabled ? task.schedule.split("·")[1]?.trim() || "" : "Disabled";
   return (
-    <div onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderRadius: 10, border: "1px solid", borderColor: active ? "var(--accent)" : "var(--border)", background: active ? "rgba(74,158,255,.06)" : "var(--bg-elevated)", cursor: "pointer", transition: "all .12s" }}
+    <div onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderRadius: 10, border: "1px solid", borderColor: active ? "var(--accent)" : "var(--border)", background: active ? "rgba(var(--accent-rgb),.06)" : "var(--bg-elevated)", cursor: "pointer", transition: "all .12s" }}
       onMouseEnter={e => { if (!active) { (e.currentTarget as HTMLElement).style.borderColor = "var(--border-md)"; } }}
       onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; }}>
       <CatChip name={task.icon} color={task.color} size={36} iconSize={17} />

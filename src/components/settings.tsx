@@ -498,7 +498,7 @@ export function SettingsScreen({ onClose, user, credits, onSignOut, activeProjec
 
             {area === "personal" && section === "assistant" && (
               <>
-                <SettingRow label="Control system" sub="No-mouse operator: CLI, files, browser DOM, connections and skills"><span style={{ fontSize: 12.5, color: "var(--text-hint)" }}>Always on</span></SettingRow>
+                <SettingRow label="Structured execution" sub="CLI, files, browser pages, connections and skills"><span style={{ fontSize: 12.5, color: "var(--text-hint)" }}>Always on</span></SettingRow>
                 <SettingRow label="Autonomy mode" sub="Controls when the operator asks before tool calls"><Select value={autonomyMode} options={["Semi-automatic","Manual","Full autonomous"]} onChange={handleAutonomyChange} /></SettingRow>
                 <SettingRow label="Code execution approval" sub="Python code runs always ask by default; local no-network analysis can auto-run only if you opt in"><Select value={codeApproval} options={["Always ask","Auto for local read-only"]} onChange={handleCodeApprovalChange} /></SettingRow>
                 <SettingRow label="External writes" sub="Semi asks before remote writes, sends and logins; full acts silently except genuinely destructive actions"><span style={{ fontSize: 12.5, color: "var(--text-hint)" }}>Policy enforced</span></SettingRow>
@@ -663,7 +663,7 @@ export function SettingsScreen({ onClose, user, credits, onSignOut, activeProjec
               <>
                 <SettingRow label="Autonomy mode" sub="Controls when Larund asks before tool calls"><Select value={autonomyMode} options={["Semi-automatic","Manual","Full autonomous"]} onChange={handleAutonomyChange} /></SettingRow>
                 <SettingRow label="Code execution approval" sub="Default is conservative: every Python run asks. Network and package installs always ask."><Select value={codeApproval} options={["Always ask","Auto for local read-only"]} onChange={handleCodeApprovalChange} /></SettingRow>
-                <SettingRow label="No-mouse guarantee" sub="Larund never controls mouse/pixels; it acts through structured tools only"><span style={{ fontSize: 12.5, color: "var(--success)" }}>Enforced</span></SettingRow>
+                <SettingRow label="Structured tool safety" sub="Larund acts through verified tools and avoids unsafe desktop shortcuts"><span style={{ fontSize: 12.5, color: "var(--success)" }}>Enforced</span></SettingRow>
                 <div style={{ padding: "14px 0 8px", fontSize: 12.5, color: "var(--text-hint)" }}>Sandbox profiles constrain filesystem, network, risk, credential, process and send access.</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {BUILTIN_SANDBOX_PROFILES.map(p => (
@@ -738,7 +738,7 @@ export function SettingsScreen({ onClose, user, credits, onSignOut, activeProjec
                 </SettingRow>
                 <SettingRow label="Credit balance" sub="Credits available this month">
                   <span style={{ fontSize: 12.5, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
-                    {credits ? `${credits.visible_balance} / ${credits.monthly_credit_limit} kredit` : '—'}
+                    {credits?.unlimited ? '∞ / ∞ kredit' : credits ? `${credits.visible_balance} / ${credits.monthly_credit_limit} kredit` : '—'}
                   </span>
                 </SettingRow>
                 <div style={{ paddingTop: 12 }}>
