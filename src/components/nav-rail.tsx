@@ -20,11 +20,12 @@ import {
   declineProjectOwnershipTransfer,
 } from '../lib/projects/collaboration';
 
-export type Route = 'chat' | 'tasks' | 'automations' | 'artifacts' | 'skills' | 'memory' | 'connections' | 'logins' | 'mcp';
+export type Route = 'chat' | 'tasks' | 'email' | 'automations' | 'artifacts' | 'skills' | 'memory' | 'connections' | 'logins' | 'mcp';
 
 const NAV: Array<{ id: Route; label: string; icon: string; adminOnly?: boolean }> = [
   { id: 'chat', label: 'Chat', icon: 'message' },
   { id: 'tasks', label: 'Tasks', icon: 'check' },
+  { id: 'email', label: 'Email', icon: 'mail' },
   { id: 'automations', label: 'Automations', icon: 'zap', adminOnly: true },
   { id: 'artifacts', label: 'Artifacts', icon: 'fileText' },
   { id: 'skills', label: 'Skills', icon: 'sparkle' },

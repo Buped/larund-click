@@ -3,6 +3,7 @@ import { ALLOWED_ACTIONS, isLegacyVisualActionName } from '../../control-system/
 import { decide, DEFAULT_POLICY } from '../../tools/policy';
 import type { ControlAction } from '../../control-system/types';
 import { BENCHMARK_CATALOG, getBenchmark } from '../benchmarkCatalog';
+import { OFFICE_RESULTS_BENCHMARKS, getOfficeResultBenchmark } from '../officeResultsCatalog';
 import { CAPABILITY_MATRIX, allCapabilities } from '../capabilities';
 import { UNIVERSAL_FORBIDDEN_TOOLS } from '../benchmarkTypes';
 import { evaluateBenchmark, evaluateSuite, renderReadinessMarkdown } from '../benchmarkRunner';
@@ -32,6 +33,13 @@ describe('benchmark catalog integrity', () => {
   it('getBenchmark resolves by id', () => {
     expect(getBenchmark('B01-invoice-download')?.title).toMatch(/Invoice download/);
     expect(getBenchmark('nope')).toBeUndefined();
+  });
+
+  it('defines 27 office results benchmarks with unique ids', () => {
+    expect(OFFICE_RESULTS_BENCHMARKS).toHaveLength(27);
+    const ids = OFFICE_RESULTS_BENCHMARKS.map((b) => b.id);
+    expect(new Set(ids).size).toBe(27);
+    expect(getOfficeResultBenchmark('OR01-email-ops-1')?.title).toMatch(/Inbox triage/);
   });
 });
 
@@ -64,9 +72,18 @@ describe('benchmark / implementation consistency', () => {
   });
 
   it('every required capability id exists in the matrix', () => {
-    for (const b of BENCHMARK_CATALOG) {
+    for (const b of [...BENCHMARK_CATALOG, ...OFFICE_RESULTS_BENCHMARKS]) {
       for (const cap of b.requiredCapabilities) {
         expect(CAPABILITY_MATRIX[cap], `${b.id}: unknown capability ${cap}`).toBeDefined();
+      }
+    }
+  });
+
+  it('every office result allowed tool is a real, implemented control action', () => {
+    for (const b of OFFICE_RESULTS_BENCHMARKS) {
+      for (const tool of b.allowedTools) {
+        expect(ALLOWED_ACTIONS.has(tool), `${b.id}: ${tool} must be in the parser allow-list`).toBe(true);
+        expect(isLegacyVisualActionName(tool), `${b.id}: ${tool} must not be a legacy visual action`).toBe(false);
       }
     }
   });

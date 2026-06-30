@@ -113,6 +113,7 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
   { name: 'workflow.status', category: 'workflows', baseRisk: 'read_only', description: 'Check workflow status.' },
   { name: 'workflow.cancel', category: 'workflows', baseRisk: 'local_write', description: 'Cancel a workflow.' },
 
+  { name: 'screen.verify', category: 'runtime', baseRisk: 'read_only', description: 'Capture the current browser/desktop/artifact screen and visually verify it against the task success criteria with a vision model. Read-only perception that returns a done/progress verdict — never pixel control. Use after a browser/app change and before task.complete on a visual surface.' },
   { name: 'approval.request', category: 'approvals', baseRisk: 'read_only', description: 'Request human approval.' },
   { name: 'task.complete', category: 'runtime', baseRisk: 'read_only', description: 'Finish the task.' },
   { name: 'ask_user', category: 'runtime', baseRisk: 'read_only', description: 'Ask the user a question / manual handoff.' },

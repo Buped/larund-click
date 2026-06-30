@@ -91,6 +91,9 @@ Body`);
     for (const n of ['document-accounting', 'google-docs', 'local-office', 'google-sheets', 'google-workspace', 'task-verification']) {
       expect(names).toContain(n);
     }
+    for (const n of ['email-ops', 'document-ops', 'data-transfer-ops', 'client-materials', 'recurring-admin', 'spreadsheet-refresh', 'meeting-to-actions', 'workspace-maintenance', 'microtask-capture']) {
+      expect(names).toContain(n);
+    }
   });
 
   it('lists and runs newly bundled office/accounting skills', async () => {

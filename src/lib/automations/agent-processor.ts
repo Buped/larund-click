@@ -223,7 +223,7 @@ export async function agentQueueProcessor(item: TaskQueueItem): Promise<TaskQueu
           });
           state.approval = undefined;
           await markRunning(item, state, decision === 'deny' ? 'Approval denied' : 'Approval granted');
-          return decision;
+          return { decision };
         },
         onComplete: (text) => {
           summary = text;

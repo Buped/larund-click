@@ -11,12 +11,14 @@ import { performControlAction } from '../../control-system/executor';
 import type { ToolContext } from '../../tools/types';
 import { policyForAutonomyMode } from '../../tools/policy';
 import { tauriFetch } from '../../net/tauriFetch';
+import { __resetNativeAutofillSettingsForTests, getNativeAutofillSettings, setNativeAutofillEnabled } from '../../browser/native-autofill';
 
 const ctx = {} as unknown as ToolContext; // browser.login only uses invoke + the vault
 
 beforeEach(() => {
   invokeMock.mockReset();
   __resetCredentialsForTests();
+  __resetNativeAutofillSettingsForTests();
 });
 
 describe('credential vault', () => {
@@ -58,6 +60,36 @@ describe('browser.login', () => {
     const res = await performControlAction({ action: 'browser.login', domain: 'unknown.test' }, ctx);
     expect(res.success).toBe(false);
     expect(res.error).toBe('no_saved_login_for:unknown.test');
+  });
+
+  it('does not try native autofill by default', async () => {
+    invokeMock.mockResolvedValue('ok');
+    const res = await performControlAction({ action: 'browser.login', domain: 'native.test', url: 'https://native.test/login' }, ctx);
+    expect(res.success).toBe(false);
+    expect(invokeMock.mock.calls.some((c) => c[0] === 'browser_autofill_login')).toBe(false);
+  });
+
+  it('tries native autofill when enabled and records only the domain on success', async () => {
+    setNativeAutofillEnabled(true);
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'browser_autofill_login') return JSON.stringify({ status: 'filled', usernameFilled: true, passwordNonEmpty: true, domain: 'native.test' });
+      return 'ok';
+    });
+    const res = await performControlAction({ action: 'browser.login', domain: 'native.test', url: 'https://native.test/login' }, ctx);
+    expect(res.success).toBe(true);
+    expect(invokeMock.mock.calls.some((c) => c[0] === 'browser_autofill_login')).toBe(true);
+    expect(invokeMock.mock.calls.some((c) => c[0] === 'browser_type')).toBe(false);
+    expect(getNativeAutofillSettings().successfulDomains).toContain('native.test');
+  });
+
+  it('bypasses native autofill for an explicit credential id', async () => {
+    setNativeAutofillEnabled(true);
+    const c = await createCredential({ label: 'Acme', loginUrl: 'https://acme.test/login', username: 'agent@acme.test', password: 'TOPSECRET_pw' });
+    invokeMock.mockResolvedValue('ok');
+    const res = await performControlAction({ action: 'browser.login', credential_id: c.id }, ctx);
+    expect(res.success).toBe(true);
+    expect(invokeMock.mock.calls.some((call) => call[0] === 'browser_autofill_login')).toBe(false);
+    expect(invokeMock.mock.calls.some((call) => call[0] === 'browser_type' && (call[1] as { text: string }).text === 'TOPSECRET_pw')).toBe(true);
   });
 });
 

@@ -6,6 +6,8 @@
 //
 // Kept as a pure builder (no I/O) so it is fully unit-testable and cheap to call.
 
+import { LARUND_IDENTITY_CORE } from './identity';
+
 export interface ChatPersonaOptions {
   /** The user's free-text custom instructions from Settings, if any. */
   customInstructions?: string;
@@ -15,25 +17,13 @@ export interface ChatPersonaOptions {
   webSearch?: 'off' | 'auto' | 'required';
 }
 
-export const LARUND_IDENTITY = `You are Larund, an AI coworker inside the Larund Click desktop app.
-You are both a helpful assistant AND a reliable digital operator. You work through
-APIs, connections, MCP servers, files, the browser (DOM/CDP), the command line,
-skills, workflows and approvals. Keep internal execution constraints out of normal answers unless asked.`;
-
-const CHAT_IDENTITY = `You are Larund, an AI coworker inside the Larund Click desktop app.
-You are both a helpful assistant AND a reliable digital operator. You work through
-APIs, connections, MCP servers, files, the browser (DOM/CDP), the command line,
-skills, workflows and approvals. Keep internal execution constraints out of normal
-answers unless the user explicitly asks about them.`;
-
-const CAPABILITIES = `WHAT YOU CAN DO
-- Answer questions, explain, brainstorm and give advice like a thoughtful colleague.
-- Write and edit content: emails, posts, proposals, copy, scripts, docs.
-- Research the web and cite sources (when web search is enabled for the turn).
-- Create files and documents (including PDFs and spreadsheets) and verify them.
-- Operate the user's files and folders, connected apps, and the browser.
-- Create and run tasks, schedule automations, and run/build workflows.
-- Remember important facts locally (Memory) so you improve with the user over time.`;
+// Chat-side identity = the shared core (assistant/identity.ts) plus a tail that
+// only matters in conversation: keep operator/execution plumbing out of normal
+// answers unless the user asks. The standalone capability list lives in the core.
+const CHAT_IDENTITY = `${LARUND_IDENTITY_CORE}
+In the chat path you are the "talk to me" side of Larund: answer naturally, and in
+chit-chat you are an assistant first. Keep internal execution constraints out of
+normal answers unless the user explicitly asks about them.`;
 
 const RESPONSE_MODES = `HOW TO RESPOND — pick the right mode, do not over-act:
 1. Conversational answer — the user wants information, an opinion, help thinking,
@@ -109,7 +99,7 @@ const ACTION_CARDS = `CHAT-NATIVE GOOGLE CARDS
 
 /** Build the chat system prompt, folding in the user's settings for this turn. */
 export function buildChatSystemPrompt(opts: ChatPersonaOptions = {}): string {
-  const parts = [CHAT_IDENTITY, CAPABILITIES, RESPONSE_MODES, STYLE, RESPONSE_ENVELOPE, ACTION_CARDS];
+  const parts = [CHAT_IDENTITY, RESPONSE_MODES, STYLE, RESPONSE_ENVELOPE, ACTION_CARDS];
 
   if (opts.webSearch === 'required') {
     parts.push(

@@ -24,6 +24,10 @@ const CORE_ALWAYS_ALLOWED = new Set<string>(
     .filter((tool) => tool.baseRisk !== 'destructive' && tool.baseRisk !== 'process_exec')
     .map((tool) => tool.name),
 );
+// Read-only visual self-check is always available: the completion guard can
+// REQUIRE it for browser/app tasks, so a restrictive active skill must never be
+// able to block it (that would deadlock the run).
+CORE_ALWAYS_ALLOWED.add('screen.verify');
 
 function skillAllows(action: ControlAction, ctx: ToolContext): { ok: boolean; reason?: string } {
   const active = ctx.activeSkills?.filter((skill) => skill.allowedTools.length) ?? [];
@@ -75,7 +79,7 @@ export async function runControlAction(
   policy: RiskPolicy = DEFAULT_POLICY,
 ): Promise<ControlToolResult> {
   const started = Date.now();
-  const { risk, decision } = decide(action, policy);
+  const { risk, decision } = decide(action, policy, ctx.autonomyMode);
   const category = categoryOf(action.action);
   const argsSummary = sanitizeArgs(action);
 
@@ -112,14 +116,22 @@ export async function runControlAction(
   let approvalId: string | undefined;
   if (decision === 'ask') {
     const approval = approvalSummary(action, risk);
-    const approved = await ctx.approvals.request({
+    const { approved, feedback } = await ctx.approvals.request({
       action,
       risk,
       reason: approval.reason,
       argsSummary: approval.argsSummary,
     });
     if (!approved) {
-      const result: ControlToolResult = { success: false, output: '', error: 'approval_denied', approvalRequired: true };
+      // "Other" steering feedback turns a denial into a re-plan signal for the
+      // loop; a plain denial just reports approval_denied.
+      const result: ControlToolResult = {
+        success: false,
+        output: '',
+        error: feedback ? 'approval_steer' : 'approval_denied',
+        approvalRequired: true,
+        ...(feedback ? { approvalFeedback: feedback } : {}),
+      };
       audit(result);
       return result;
     }

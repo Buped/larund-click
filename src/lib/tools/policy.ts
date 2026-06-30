@@ -60,6 +60,35 @@ export function policyForAutonomyMode(mode: AutonomyMode): RiskPolicy {
   return DEFAULT_POLICY;
 }
 
+// Semi-autonomous "safety floor": risks that always require approval regardless
+// of whether the model self-flagged the action as critical. These are the
+// genuinely irreversible / high-consequence outcomes.
+const SAFETY_FLOOR_RISKS: ReadonlySet<ToolRisk> = new Set<ToolRisk>([
+  'destructive',
+  'external_send',
+  'credential_access',
+]);
+
+// Risks that, in semi mode, run automatically UNLESS the model marked the action
+// `critical: true` (its own judgement that the step is high-consequence).
+const SEMI_AI_JUDGED_RISKS: ReadonlySet<ToolRisk> = new Set<ToolRisk>([
+  'local_write',
+  'external_write',
+  'process_exec',
+]);
+
+/**
+ * Semi-autonomous hybrid decision: the model decides what is "critical" via the
+ * `critical` flag, backed by a deterministic safety floor that always asks for
+ * truly irreversible actions even when the model didn't flag them.
+ */
+function decideSemi(risk: ToolRisk, aiCritical: boolean): PolicyDecision {
+  if (SAFETY_FLOOR_RISKS.has(risk)) return 'ask';
+  if (aiCritical && SEMI_AI_JUDGED_RISKS.has(risk)) return 'ask';
+  // read_only / external_read and unflagged middle-ground actions run silently.
+  return 'auto';
+}
+
 /** Static category per action name. */
 export const ACTION_CATEGORY: Record<string, ToolCategory> = {
   'cli.run': 'runtime', 'process.start': 'runtime', 'process.status': 'runtime', 'process.kill': 'runtime',
@@ -94,6 +123,7 @@ export const ACTION_CATEGORY: Record<string, ToolCategory> = {
   'email.compose': 'connections',
   'connection.call': 'connections', 'skill.run': 'skills',
   'workflow.start': 'workflows', 'workflow.status': 'workflows', 'workflow.cancel': 'workflows',
+  'screen.verify': 'runtime',
   'approval.request': 'approvals', 'task.complete': 'runtime', 'ask_user': 'runtime',
 };
 
@@ -215,6 +245,8 @@ export function assessRisk(action: ControlAction): ToolRisk {
     case 'workflow.cancel':
       return 'local_write';
 
+    case 'screen.verify':
+      return 'read_only';
     case 'approval.request': case 'task.complete': case 'ask_user':
       return 'read_only';
     default:
@@ -232,12 +264,21 @@ function connectionToolRisk(tool: string): ToolRisk {
 }
 
 /** Resolve whether an action may run automatically, must ask, or is blocked. */
-export function decide(action: ControlAction, policy: RiskPolicy = DEFAULT_POLICY): {
+export function decide(
+  action: ControlAction,
+  policy: RiskPolicy = DEFAULT_POLICY,
+  mode?: AutonomyMode,
+): {
   risk: ToolRisk;
   decision: PolicyDecision;
 } {
   const risk = assessRisk(action);
-  let decision = policy[risk] ?? 'ask';
+  // Semi mode is a hybrid: the model self-assesses criticality (`critical`),
+  // floored by deterministic always-ask risks. Other modes use the flat table.
+  let decision =
+    mode === 'semi'
+      ? decideSemi(risk, action.critical === true)
+      : policy[risk] ?? 'ask';
   // Hard overrides: destructive shell + credential access never auto-run.
   if (action.action === 'cli.run' && isDangerousCommand(action.cmd)) decision = 'ask';
   // Code execution follows the dedicated code-exec approval setting, independent

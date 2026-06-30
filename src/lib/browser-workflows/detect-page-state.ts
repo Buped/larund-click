@@ -26,7 +26,7 @@ export function detectPageState(readOutput: string): PageState {
   }
 
   // Heuristic "ready" detection: a real app surface usually exposes inputs/buttons.
-  const looksInteractive = /CLICKABLE\/INPUTS:/i.test(text) && /(input|button|textbox|grid|cell)/i.test(text);
+  const looksInteractive = /(CLICKABLE\/INPUTS:|INPUTS:|BUTTONS\/LINKS:)/i.test(text) && /(input|button|textbox|grid|cell|link)/i.test(text);
   return {
     kind: looksInteractive ? 'webapp_ready' : 'loaded',
     url,

@@ -3,6 +3,11 @@
 // This file defines the ONLY actions the agent core may emit. There is no mouse,
 // cursor, screenshot-click, OCR-click, bbox, coordinate, grid or visual target
 // action anywhere in this union — by design. See docs/NO_MOUSE_CORE.md.
+//
+// The single exception is `screen.verify`: a READ-ONLY visual self-check that
+// captures a screenshot and asks a vision model whether the task succeeded. It is
+// perception, not control — it never returns coordinates or clicks — so the
+// no-mouse contract (which forbids visual *control*) is preserved.
 
 export type ToolRisk =
   | 'read_only'
@@ -44,7 +49,7 @@ export interface SheetUpdateCell {
   value: string | number | boolean | null;
 }
 
-export type ControlAction =
+type ControlActionVariant =
   // ── Runtime: CLI / process ────────────────────────────────────────────
   | { action: 'cli.run'; cmd: string; working_dir?: string; risk?: ToolRisk }
   | { action: 'process.start'; cmd: string; working_dir?: string; background?: boolean }
@@ -171,6 +176,8 @@ export type ControlAction =
 
   // ── Browser (CDP / DOM — element-based, never pixels) ──────────────────
   | { action: 'browser.open'; url: string; profile?: string; browser_profile_id?: string }
+  | { action: 'browser.list_tabs' }
+  | { action: 'browser.switch_tab'; target_id: string }
   | { action: 'browser.read'; selector?: string }
   | { action: 'browser.get_state' }
   | { action: 'browser.click'; target: string }
@@ -213,12 +220,32 @@ export type ControlAction =
   | { action: 'workflow.status'; workflow_id: string }
   | { action: 'workflow.cancel'; workflow_id: string }
 
+  // ── Visual self-check (read-only perception, NEVER control) ───────────
+  // Capture the current surface and visually verify it against the task's
+  // success criteria. Returns a structured verdict; emits no coordinates/clicks.
+  | { action: 'screen.verify'; surface?: 'browser' | 'desktop' | 'artifact'; criteria?: string[]; question?: string; path?: string; pages?: number[] }
+
   // ── Control flow / human-in-the-loop ──────────────────────────────────
   | { action: 'approval.request'; reason: string; proposed_action: ControlAction }
   | { action: 'task.complete'; summary: string }
   | { action: 'ask_user'; question: string };
 
-export type ControlActionName = ControlAction['action'];
+/**
+ * Optional model-emitted self-assessment fields, valid on ANY action.
+ *
+ * In semi-autonomous mode the model marks high-consequence / irreversible
+ * actions (sending email/messages, deleting, paying, external publishing,
+ * permission changes) with `critical: true` and a short `confirm_reason`, so the
+ * policy gate asks the user for approval. Trivial reversible steps (rename/move a
+ * file, drag a card, read) are left unmarked and run automatically. See the
+ * `decide()` hybrid logic in src/lib/tools/policy.ts.
+ */
+export type ControlAction = ControlActionVariant & {
+  critical?: boolean;
+  confirm_reason?: string;
+};
+
+export type ControlActionName = ControlActionVariant['action'];
 
 export interface ControlToolResult {
   success: boolean;
@@ -226,5 +253,11 @@ export interface ControlToolResult {
   error?: string;
   /** Set when an action requires human approval before it can run. */
   approvalRequired?: boolean;
+  /**
+   * Free-text the user typed via the approval card's "Other" option. When
+   * present the loop treats it as a steering correction and re-plans the next
+   * actions instead of executing the proposed one.
+   */
+  approvalFeedback?: string;
   details?: Record<string, unknown>;
 }

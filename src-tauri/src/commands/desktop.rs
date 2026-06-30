@@ -1562,6 +1562,13 @@ $items | ConvertTo-Json -Depth 6 -Compress
         send_request(sender, DesktopRequest::Screenshot)
     }
 
+    /// Capture the REAL primary screen the user sees (no agent-desktop session
+    /// required). Read-only perception for visual self-verification — there is no
+    /// pixel control here. See docs/NO_MOUSE_CORE.md.
+    pub fn capture_primary_screen() -> Result<DesktopScreenshot, String> {
+        unsafe { capture_desktop_screenshot() }
+    }
+
     pub fn agent_mouse_click(x: i32, y: i32, button: Option<String>) -> Result<(), String> {
         let guard = session_store().lock().map_err(|_| "Desktop session lock poisoned".to_string())?;
         let Some(session) = guard.as_ref() else {
@@ -2496,6 +2503,10 @@ mod windows_impl {
         Err("Agent desktops are only supported on Windows".to_string())
     }
 
+    pub fn capture_primary_screen() -> Result<DesktopScreenshot, String> {
+        Err("Screen capture is only supported on Windows".to_string())
+    }
+
     pub fn agent_mouse_click(_: i32, _: i32, _: Option<String>) -> Result<(), String> {
         Err("Agent desktops are only supported on Windows".to_string())
     }
@@ -2604,6 +2615,14 @@ mod windows_impl {
 }
 
 pub use windows_impl::*;
+
+/// Read-only capture of the real primary screen for visual self-verification.
+/// This is perception only — the no-mouse core still forbids visual *control*
+/// (clicking by pixel). See docs/NO_MOUSE_CORE.md.
+#[tauri::command]
+pub fn desktop_capture_screen() -> Result<DesktopScreenshot, String> {
+    capture_primary_screen()
+}
 
 #[cfg(all(test, target_os = "windows"))]
 mod launch_tests {

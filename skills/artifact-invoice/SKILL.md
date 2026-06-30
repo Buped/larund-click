@@ -26,6 +26,10 @@ Invoices are **always designed by default** — never emit a plain text-in-PDF i
    `status` is `pass`/`warn`. If it fails (broken accents, empty layout, missing totals),
    fix the model and regenerate.
 
+## Action shapes (exact JSON)
+{"action":"artifact.render_pdf","title":"<title>","output_name":"<optional.pdf>","model":{"kind":"invoice","language":"hu","testMode":true,"invoiceNumber":"<no>","currency":"HUF","vatRate":27,"issuer":{"name":"<issuer>","taxId":"<tax>"},"customer":{"name":"<customer>"},"issueDate":"<YYYY-MM-DD>","lineItems":[{"description":"<item>","quantity":1,"unit":"db","unitPrice":0}]}}
+{"action":"artifact.design_lint","path":"<path>","kind":"invoice","model":{"kind":"invoice"}}
+
 ## Rules
 1. If real invoice data is missing, ask for it or clearly mark the output as `TESZT/MINTA` (`testMode: true`).
 2. Never invent legally critical issuer, tax number, bank, VAT, or invoice number data for a real invoice.

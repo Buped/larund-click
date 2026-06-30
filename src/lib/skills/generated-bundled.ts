@@ -16,7 +16,7 @@ interface GeneratedSkillSpec {
 const READ_FILES = ['file.read', 'file.list', 'file.tree', 'file.search', 'document.read', 'document.read_many', 'folder.scan', 'folder.read_relevant'];
 const WRITE_FILES = ['file.write', 'file.edit', 'file.mkdir', 'file.copy', 'file.move', 'file.exists', 'file.list', 'file.tree'];
 const LOCAL_OFFICE = ['document.read', 'doc.read', 'doc.write_txt', 'doc.write_docx', 'sheet.read', 'sheet.write', 'sheet.append', 'sheet.export_csv', 'sheet.to_json', 'sheet.format_range', 'sheet.add_table', 'sheet.add_chart', 'file.exists'];
-const BROWSER = ['browser.open', 'browser.read', 'browser.get_state', 'browser.wait', 'browser.click', 'browser.type', 'browser.key', 'browser.shortcut', 'browser.paste', 'browser.assert_text', 'browser.assert_url', 'browser.extract_table', 'browser.download', 'browser.upload', 'clipboard.set', 'ask_user'];
+const BROWSER = ['browser.open', 'browser.list_tabs', 'browser.switch_tab', 'browser.read', 'browser.get_state', 'browser.wait', 'browser.click', 'browser.type', 'browser.key', 'browser.shortcut', 'browser.paste', 'browser.assert_text', 'browser.assert_url', 'browser.extract_table', 'browser.download', 'browser.upload', 'browser.login', 'clipboard.set', 'ask_user'];
 const CODE = ['file.read', 'file.write', 'file.edit', 'file.search', 'file.tree', 'cli.run'];
 
 const SPECS: GeneratedSkillSpec[] = [

@@ -13,6 +13,8 @@ function yamlList(items: string[]): string {
 
 function mapSource(source: SkillBuilderSource): SkillSource {
   switch (source) {
+    case 'admin_authored':
+    case 'self_learned':
     case 'workspace':
       return 'workspace';
     case 'imported':
@@ -80,7 +82,16 @@ export function compileToMarkdown(skill: SkillBuilderSkill): string {
 
 /** Compile straight to a runtime `Skill` (validated through the parser). */
 export function compileToSkill(skill: SkillBuilderSkill): Skill {
-  return loadSkillFromMarkdown(compileToMarkdown(skill), mapSource(skill.source));
+  const runtime = loadSkillFromMarkdown(compileToMarkdown(skill), mapSource(skill.source));
+  runtime.manifest.metadata = {
+    ...(runtime.manifest.metadata ?? {}),
+    kind: skill.kind ?? 'workflow',
+    target: skill.target,
+    learning: skill.learning,
+    builderSkillId: skill.id,
+    workspaceId: skill.workspaceId,
+  };
+  return runtime;
 }
 
 export interface CompileValidation {

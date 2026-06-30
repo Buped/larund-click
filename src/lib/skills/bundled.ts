@@ -36,7 +36,7 @@ Use this skill when the user asks to clean, sort, rename, archive, deduplicate, 
 const browserAutomation = `---
 name: browser-automation
 description: "Drive websites via the browser DOM/CDP tools (read/click/type/paste/extract) — never the mouse or screen pixels."
-allowed_tools: ["browser.open", "browser.read", "browser.get_state", "browser.click", "browser.type", "browser.key", "browser.shortcut", "browser.paste", "browser.assert_text", "browser.assert_url", "browser.wait", "browser.extract_table", "browser.download", "browser.upload", "clipboard.set", "ask_user"]
+allowed_tools: ["browser.open", "browser.read", "browser.get_state", "browser.click", "browser.type", "browser.key", "browser.shortcut", "browser.paste", "browser.assert_text", "browser.assert_url", "browser.wait", "browser.extract_table", "browser.download", "browser.upload", "browser.login", "clipboard.set", "ask_user"]
 requires_connections: []
 risk: "external_write"
 trigger: "open website fill form extract data log into web app browser"
@@ -48,14 +48,26 @@ Use this skill for web tasks that can be completed through DOM/CDP browser tools
 ## Process
 1. Open the target with browser.open, then run browser.wait and browser.read or browser.get_state.
 2. Inspect URL, title, visible text, inputs, buttons, and page state hints.
-3. If login, 2FA, CAPTCHA, paywall, or permission is required, ask_user for a manual step and resume after confirmation.
+3. If login is needed, call browser.login first (it autofills a saved credential). NEVER ask for, type, or read a password. If 2FA, CAPTCHA, paywall, or permission blocks you, ask_user for a manual step and resume the same task after confirmation.
 4. Act only by DOM text, labels, roles, selectors, keyboard shortcuts, paste, upload, or download.
 5. After every state-changing action, read the page again and verify the expected change.
+
+## Referenced apps (@App)
+- If an "## App:" block is referenced, use its domain/homeUrl/loginUrl and open it with that app's preferred browser (browser.open with browser_profile_id, or browser.login with app_id, which also picks the right browser).
+- browser.login with app_id fills the saved password automatically. NEVER ask for, type, or read the password.
 
 ## Verification
 - Use browser.assert_text or browser.assert_url for final proof when possible.
 - Extract tables with browser.extract_table instead of screenshots.
 - Opening a page is not completion unless the user only asked to open it.
+
+## Action shapes (exact JSON)
+{"action":"browser.login","app_id":"<saved app id, if a @App is referenced>","domain":"<or site host>","url":"<optional login url>"}
+{"action":"browser.shortcut","keys":["ctrl","v"]}
+{"action":"browser.paste","text":"<optional: set clipboard then paste>"}
+{"action":"browser.extract_table","selector":"<optional css>"}
+{"action":"browser.download","url":"<optional>","target":"<optional>","save_as":"<optional>"}
+{"action":"browser.upload","target":"<file input>","path":"<local path>"}
 
 ## Rules
 - Never use a mouse, cursor, coordinates, screenshots, OCR clicks, or visual pixel targeting.
@@ -194,6 +206,9 @@ This is an API-first task. A local TXT/DOCX file is NEVER an acceptable result.
   complete the task and tell the user they can connect + send right on the card.
 - NEVER write a TXT/DOCX file and NEVER loop with ask_user to "connect then say done".
 
+## Action shape (exact JSON)
+{"action":"email.compose","to":"<recipient>","cc":"<optional>","bcc":"<optional>","subject":"<subject>","body":"<markdown body>","sources":[{"label":"<source doc>","fileId":"<optional>"}]}
+
 ## Verification
 - A successful email.compose (the editable card) satisfies "draft prepared".
 - "Email sent" requires a google.gmail.send success confirmed in SENT.
@@ -202,14 +217,18 @@ This is an API-first task. A local TXT/DOCX file is NEVER an acceptable result.
 const localOffice = `---
 name: local-office
 description: "Create/read local Excel, CSV, text and document files directly without GUI Office control."
-allowed_tools: ["document.read", "doc.read", "doc.write_txt", "doc.write_docx", "sheet.read", "sheet.write", "sheet.append", "sheet.export_csv", "sheet.to_json", "sheet.format_range", "sheet.add_table", "sheet.add_chart", "file.exists"]
+allowed_tools: ["document.read", "doc.read", "doc.write_txt", "doc.write_docx", "sheet.read", "sheet.write", "sheet.update_cells", "sheet.append", "sheet.export_csv", "sheet.to_json", "sheet.format_range", "sheet.add_table", "sheet.add_chart", "file.exists"]
 requires_connections: []
 risk: "local_write"
-trigger: "excel xlsx csv word docx txt local office libreoffice"
+trigger: "excel xlsx csv word docx txt local office libreoffice report riport workbook"
 ---
 
 # Local Office
 Use this skill for local spreadsheet, CSV, DOCX, TXT, and office-style file work when the user wants files on disk.
+
+## Original target file & source preservation
+- If the user gave a local spreadsheet path and said write into / fill / update / edit it, that same file is the mutation target — never create a sibling and call it done. Prefer sheet.update_cells for targeted edits (it preserves rows, headers, formulas, unrelated cells).
+- For .ods input, do not produce a .xlsx sibling unless the user approved a format change; use a direct ODS write or an ODS -> XLSX -> ODS round-trip with a .backup.ods, then read back from the original .ods.
 
 ## Process
 1. Determine the requested local format and output path.
@@ -222,9 +241,19 @@ Use this skill for local spreadsheet, CSV, DOCX, TXT, and office-style file work
    borders, and colored KPI cells for change/risk/trend-style fields.
 4. For vague report wording like "and everything like that" / "meg minden ilyesmi",
    expand the schema with business-relevant columns instead of creating a tiny grid.
+   If the user asks for at least N rows, create N or more real data rows and verify the
+   count — for "minimum 50" the workbook must contain at least 50 real data rows.
 5. For text/DOCX output, use doc.write_txt or doc.write_docx.
 6. Avoid GUI Office automation. Opening a file is preview only, not editing.
 7. If the user asked for Google Sheets or Google Docs, switch to the cloud skill instead.
+
+## Action shapes (exact JSON)
+{"action":"sheet.update_cells","path":"<LOCAL .xlsx/.ods/.csv path>","sheet":"<optional>","cells":[{"row":2,"column":"B","value":"x"}],"preserveExisting":true,"backup":true}
+{"action":"sheet.format_range","path":"<LOCAL .xlsx path>","range":"A1:D1","background":"#1F2937","font_color":"#FFFFFF","bold":true,"freeze_rows":1,"number_format":"currency_huf","conditional":{"op":"lt","value":0,"background":"#FF0000"}}
+{"action":"sheet.add_table","path":"<LOCAL .xlsx path>","range":"A1:D200","name":"Campaigns","style":"TableStyleMedium2"}
+{"action":"sheet.add_chart","path":"<LOCAL .xlsx path>","chart_type":"bar","series":["Sheet1!$B$2:$B$13"],"series_titles":["Revenue"],"title":"Monthly revenue","from_cell":"E2","to_cell":"M20"}
+{"action":"sheet.to_json","path":"<LOCAL .xlsx/.csv path>","max_rows":<optional>}
+{"action":"sheet.export_csv","path":"<LOCAL .xlsx path>","target_path":"<csv path>"}
 
 ## Verification
 - Read spreadsheet outputs with sheet.read or sheet.to_json.
@@ -260,7 +289,7 @@ Use this skill when the user references invoices, receipts, folders of documents
 const taskVerification = `---
 name: task-verification
 description: "Before completing, verify the requested outcome actually exists with a read-back appropriate to the surface."
-allowed_tools: ["file.exists", "file.list", "file.tree", "file.read", "sheet.read", "browser.read", "browser.get_state", "browser.assert_text", "browser.assert_url", "connection.call"]
+allowed_tools: ["file.exists", "file.list", "file.tree", "file.read", "sheet.read", "browser.read", "browser.get_state", "browser.assert_text", "browser.assert_url", "screen.verify", "connection.call"]
 requires_connections: []
 risk: "read_only"
 trigger: "verify confirm check done complete read back outcome"
@@ -281,6 +310,13 @@ Use this skill before task.complete and whenever a task result needs proof.
 4. Google Docs: google.docs.read/export or browser/document read-back.
 5. Browser tasks: browser.read plus assert_text/assert_url after any state-changing action.
 6. Connections/MCP: read the provider response or query the created/updated object.
+
+## Visual self-check (screen.verify)
+- screen.verify captures a screenshot of the current surface and a vision model judges it against your criteria, returning {done, progress, metCriteria, unmetCriteria, blockers, nextStepHint}. It is PERCEPTION ONLY — never coordinates or clicks.
+- For a browser or desktop-app task the runtime BLOCKS task.complete until screen.verify returns done:true with no blockers, taken AFTER your last change. Pass concrete success criteria; if done:false, finish the work and re-verify; on a blocker, ask_user then resume.
+
+## Action shape (exact JSON)
+{"action":"screen.verify","surface":"browser","criteria":["<visible success condition>"],"question":"<optional focus>"}
 
 ## Blockers
 - Login, CAPTCHA, permissions, missing auth, or unavailable tools require ask_user or a blocked status.
@@ -399,6 +435,13 @@ Use this skill when the user asks for a local PDF, beautiful downloadable docume
 4. Render with artifact.render_pdf; do not use plain txt/markdown as the final artifact.
 5. Verify with artifact.verify, including expected text when the user named content.
 
+## Action shapes (exact JSON)
+{"action":"artifact.plan","request":"<document request>","references":["<optional expected text>"]}
+{"action":"artifact.render_pdf","title":"<title>","template_id":"<optional>","output_name":"<optional.pdf>","model":{"title":"<title>","language":"hu","format":"pdf","page":{"size":"A4","orientation":"portrait"},"sections":[]}}
+{"action":"artifact.verify","path":"<path>","expected_text":["<text>"],"expected_kind":"pdf"}
+{"action":"artifact.preview","path":"<path>","pages":[1]}
+{"action":"artifact.copy_to","from_path":"<path>","target_dir":"<folder>"}
+
 ## Verification
 - Confirm the PDF exists, is readable, has page count when available, and contains expected strings.
 - Completion is allowed only after artifact.verify succeeds.`;
@@ -422,6 +465,11 @@ Use this skill when the user asks for a PPTX, presentation, slide deck, pitch de
 4. Render with artifact.render_pptx.
 5. Verify with artifact.verify and match requested slide count exactly.
 
+## Action shapes (exact JSON)
+{"action":"artifact.render_pptx","title":"<title>","output_name":"<optional.pptx>","model":{"kind":"presentation","title":"<title>","language":"hu","aspectRatio":"16:9","themeId":"larund-dark","theme":{"background":"#0B0E14","surface":"#171A21","primary":"#EE7E3A","accent":"#F4A261","text":"#F7EFE3","mutedText":"#A6AEBD","border":"#2A2F3A","onAccent":"#0B0E14"},"slides":[{"type":"title","kicker":"<kicker>","title":"<title>","subtitle":"<sub>"},{"type":"cards","title":"<t>","cards":[{"title":"<t>","body":"<b>","icon":"workflow"}]},{"type":"closing","title":"<t>","cta":"<cta>"}]}}
+{"action":"presentation.quality_lint","model":{"kind":"presentation"},"expected_slide_count":5}
+{"action":"artifact.verify","path":"<path>","expected_kind":"pptx"}
+
 ## Verification
 - Completion requires artifact.verify with readable true and the requested slideCount.`;
 
@@ -443,13 +491,18 @@ Use this skill when the user asks for editable Word/DOCX output, contracts, proj
 3. Render with artifact.render_docx.
 4. Export PDF only when the user asks for it too, using artifact.convert if LibreOffice is available.
 
+## Action shapes (exact JSON)
+{"action":"artifact.render_docx","title":"<title>","template_id":"<optional>","output_name":"<optional.docx>","model":{"title":"<title>","language":"hu","format":"docx","page":{"size":"A4","orientation":"portrait"},"sections":[]}}
+{"action":"artifact.convert","from_path":"<path>","to":"pdf","output_name":"<optional>"}
+{"action":"artifact.verify","path":"<path>","expected_text":["<text>"],"expected_kind":"docx"}
+
 ## Verification
 - Run artifact.verify and confirm expected text is extractable.`;
 
 const artifactInvoice = `---
 name: artifact-invoice
 description: "Create professional local invoice PDFs/DOCX files while avoiding invented legal-critical invoice data."
-allowed_tools: ["artifact.plan", "artifact.render_pdf", "artifact.render_docx", "artifact.verify", "artifact.preview", "ask_user"]
+allowed_tools: ["artifact.plan", "artifact.render_pdf", "artifact.render_docx", "artifact.verify", "artifact.design_lint", "artifact.preview", "ask_user"]
 requires_connections: []
 risk: "local_write"
 trigger: "szamla számla invoice dijbekero díjbekérő fizetesi bizonylat fizetési bizonylat arajanlat árajánlat"
@@ -457,6 +510,10 @@ trigger: "szamla számla invoice dijbekero díjbekérő fizetesi bizonylat fizet
 
 # Artifact Invoice
 Use this skill for invoices, test invoices, fee requests, receipts, and invoice-like offers.
+
+## Action shapes (exact JSON)
+{"action":"artifact.render_pdf","title":"<title>","output_name":"<optional.pdf>","model":{"kind":"invoice","language":"hu","testMode":true,"invoiceNumber":"<no>","currency":"HUF","vatRate":27,"issuer":{"name":"<issuer>","taxId":"<tax>"},"customer":{"name":"<customer>"},"issueDate":"<YYYY-MM-DD>","lineItems":[{"description":"<item>","quantity":1,"unit":"db","unitPrice":0}]}}
+{"action":"artifact.design_lint","path":"<path>","kind":"invoice","model":{"kind":"invoice"}}
 
 ## Rules
 1. If real invoice data is missing, ask for it or clearly mark the output as TESZT/MINTA.
@@ -480,7 +537,12 @@ Use this skill for business reports, executive summaries, performance reports, a
 1. Read referenced sources.
 2. Use a structured model with cover, executive summary, metrics, tables, risks, and next steps.
 3. Prefer premium-dark-report or modern-light-report based on the user's style request.
-4. Render and verify before completion.`;
+4. Render and verify before completion.
+
+## Action shapes (exact JSON)
+{"action":"artifact.render_pdf","title":"<title>","output_name":"<optional.pdf>","model":{"title":"<title>","language":"hu","format":"pdf","page":{"size":"A4","orientation":"portrait"},"sections":[]}}
+{"action":"artifact.render_docx","title":"<title>","output_name":"<optional.docx>","model":{"title":"<title>","language":"hu","format":"docx","sections":[]}}
+{"action":"artifact.verify","path":"<path>","expected_text":["<text>"]}`;
 
 const artifactProposal = `---
 name: artifact-proposal
@@ -498,7 +560,12 @@ Use this skill for proposals, offers, commercial documents, and scope/pricing ar
 1. Build one source DocumentArtifactModel.
 2. Include summary, scope, deliverables, timeline, pricing table, assumptions, and next steps.
 3. If PDF and Word are both requested, render both from the same source model.
-4. Verify every output file separately.`;
+4. Verify every output file separately.
+
+## Action shapes (exact JSON)
+{"action":"artifact.render_pdf","title":"<title>","output_name":"<optional.pdf>","model":{"title":"<title>","language":"hu","format":"pdf","sections":[]}}
+{"action":"artifact.render_docx","title":"<title>","output_name":"<optional.docx>","model":{"title":"<title>","language":"hu","format":"docx","sections":[]}}
+{"action":"artifact.verify","path":"<path>","expected_text":["<text>"]}`;
 
 const artifactVerification = `---
 name: artifact-verification
@@ -518,7 +585,15 @@ Use this skill after every artifact render and before task.complete.
 3. Page count or slide count is present when relevant.
 4. Expected text is checked when the user provided concrete content.
 5. Preview/thumbnail exists when generated.
-6. Manifest appears in artifact.list.`;
+6. Manifest appears in artifact.list.
+
+## Action shapes (exact JSON)
+{"action":"artifact.verify","path":"<path>","expected_text":["<text>"],"expected_kind":"pdf"}
+{"action":"artifact.preview","path":"<path>","pages":[1]}
+{"action":"artifact.list","workspace_id":"<optional>","task_id":"<optional>"}
+{"action":"artifact.pdf_extract_text","path":"<pdf>"}
+{"action":"artifact.pdf_metadata","path":"<pdf>"}
+{"action":"artifact.pdf_page_count","path":"<pdf>"}`;
 
 const dataAnalysisAndCode = `---
 name: data-analysis-and-code
@@ -571,14 +646,259 @@ The code runs in a throwaway sandbox folder. It cannot read/write outside that
 folder except the input files you reference (they are copied in by file name).
 Network is OFF unless explicitly enabled, and enabling it always asks for approval.
 
+## Large spreadsheets — profile & query first
+- Never pull thousands of raw rows into context. For >~200 rows, call \`sheet.profile\`
+  first; for any total/average/per-X question use \`sheet.query\` (exact result, no
+  estimate). Only \`sheet.read\` a few raw rows after profiling when genuinely needed.
+
+## Action shapes (exact JSON)
+{"action":"sheet.profile","path":"<LOCAL .xlsx/.csv path>","sheet":"<optional>"}
+{"action":"sheet.query","path":"<LOCAL .xlsx/.csv path>","sheet":"<optional>","filter":{"match":"all","conditions":[{"column":"Quarter","op":"eq","value":"Q2"}]},"aggregate":[{"op":"sum","column":"Amount"}],"group_by":["Region"],"limit":<optional>}
+{"action":"code.execute","code":"<python source>","input_refs":["<ref id or file path>"],"timeout_secs":45,"allow_network":false,"label":"<short label>"}
+{"action":"code.install_package","package":"<pip package>","reason":"<why needed>"}
+
 ## Verification
 - For a numeric/statistical answer, state the concrete computed value(s).
 - For a chart, confirm the PNG was generated (it appears inline).
 - If the goal was an Excel/Word/PPTX deliverable, verify it was produced by the
   native sheet/artifact engine, not by Python directly.`;
 
+const officeResultSkills = [
+  `---
+name: "email-ops"
+description: "Review, organize, label, draft replies, and optionally send Gmail messages with draft-first approval."
+version: "1.0.0"
+categories: ["office-results", "email", "google-workspace"]
+trigger: "email e-mail gmail inbox triage reply draft valasz levelek rendszerezes atnezes"
+trigger_phrases: ["email triage", "gmail reply draft", "emailek atnezese", "levelek rendszerezese", "valasz piszkozat"]
+when_to_use: ["Use when the user asks to inspect, organize, summarize, label, draft, reply to, or send email."]
+when_not_to_use: ["Do not use for generic document writing unless the output is an email draft or send."]
+allowed_tools: ["connection.call", "email.compose", "document.read", "document.read_many", "approval.request", "ask_user"]
+requires_connections: ["google-workspace"]
+risk: "external_send"
+verification_checklist: ["Search/read the real Gmail messages or thread first.", "Create an editable draft before send.", "Require approval before google.gmail.send.", "Read back draft/message status or labels after changes."]
+supports_automation: true
+supports_manual_run: true
+status: "enabled"
+---
+
+# Email Ops
+Search and read Gmail first, classify messages, create labels or reply drafts when needed, and send only after explicit approval. Completion requires draft/message/label read-back evidence.`,
+  `---
+name: "document-ops"
+description: "Find, read, summarize, prepare, and export documents across local files, Drive, Google Docs, and Notion."
+version: "1.0.0"
+categories: ["office-results", "documents", "google-workspace", "notion"]
+trigger: "document docs drive notion search summarize osszefoglal dokumentum elokeszit"
+trigger_phrases: ["document search", "document summary", "drive document prep", "notion page summary", "dokumentum kereses"]
+allowed_tools: ["document.read", "document.read_many", "folder.scan", "folder.read_relevant", "connection.call", "doc.write_txt", "doc.write_docx", "artifact.plan", "artifact.render_pdf", "artifact.render_docx", "artifact.verify", "ask_user"]
+requires_connections: []
+risk: "local_write"
+verification_checklist: ["Read each referenced source before summarizing.", "Keep a source list.", "Read back the prepared document or artifact.", "For cloud docs, read provider metadata or content after writing."]
+supports_automation: true
+supports_manual_run: true
+status: "enabled"
+---
+
+# Document Ops
+Resolve local, Drive, Google Docs, or Notion sources; search then read exact documents; prepare the requested output; verify by local read-back or provider read-back.`,
+  `---
+name: "data-transfer-ops"
+description: "Copy structured data between systems with schema mapping, conflict handling, write-back, and target verification."
+version: "1.0.0"
+categories: ["office-results", "data", "integrations"]
+trigger: "copy data transfer sync migrate masol masold atmasol atmasold adat rendszerbol rendszerbe crm sheets notion hubspot"
+trigger_phrases: ["copy data between systems", "system to system copy", "adat masolas", "masold at", "HubSpot to Sheets", "Notion to CRM"]
+allowed_tools: ["connection.call", "sheet.read", "sheet.write", "sheet.append", "sheet.update_cells", "sheet.to_json", "file.write", "approval.request", "ask_user"]
+requires_connections: []
+risk: "external_write"
+verification_checklist: ["Read source data and infer source schema.", "Preview target mapping before risky writes.", "Use ask_on_conflict as the default conflict policy.", "Read target rows/records back and compare counts/key fields."]
+supports_automation: true
+supports_manual_run: true
+status: "enabled"
+---
+
+# Data Transfer Ops
+Read source and target schemas, build a field mapping, use ask_on_conflict for ambiguity, write the smallest safe batch, then compare source count/key fields to target read-back.`,
+  `---
+name: "client-materials"
+description: "Create client-ready proposals, offers, reports, summaries, and follow-up materials from briefs and source files."
+version: "1.0.0"
+categories: ["office-results", "client", "documents", "sales"]
+trigger: "proposal offer ajanlat riport report client material ugyfelanyag osszefoglalo"
+trigger_phrases: ["proposal pack", "client report", "ajanlat keszites", "ugyfelanyag", "executive summary"]
+allowed_tools: ["document.read", "document.read_many", "folder.scan", "connection.call", "artifact.plan", "artifact.render_pdf", "artifact.render_docx", "artifact.verify", "artifact.preview", "email.compose", "ask_user"]
+requires_connections: []
+risk: "local_write"
+verification_checklist: ["Read source brief/materials first.", "Render the requested artifact type.", "Run artifact.verify with expected text.", "Draft email only when requested; send requires approval."]
+supports_automation: true
+supports_manual_run: true
+status: "enabled"
+---
+
+# Client Materials
+Read the brief and source folder, build proposal/report artifacts with scope, metrics, risks, assumptions and next steps, verify the artifact, and only draft delivery emails unless approved to send.`,
+  `---
+name: "recurring-admin"
+description: "Turn recurring admin work into safe automations with triggers, setup bindings, approvals, run history, and verification."
+version: "1.0.0"
+categories: ["office-results", "automation", "admin"]
+trigger: "recurring admin automation ismertlodo adminisztracio weekly daily scheduler workflow"
+trigger_phrases: ["recurring admin", "ismetlodo adminisztracio", "make this weekly", "daily admin brief"]
+allowed_tools: ["workflow.start", "connection.call", "file.write", "file.read", "doc.write_txt", "approval.request", "ask_user"]
+requires_connections: []
+risk: "local_write"
+verification_checklist: ["Define trigger, inputs, outputs, owner, and safety policy.", "Create or reference durable setup bindings.", "Record approval points.", "Run a test or produce a verified blueprint."]
+supports_automation: true
+supports_manual_run: true
+status: "enabled"
+---
+
+# Recurring Admin
+Convert repeated admin work into a workflow with trigger, setup bindings, input mapping, output target, safety policy, run history, and verification checklist.`,
+  `---
+name: "spreadsheet-refresh"
+description: "Refresh local or Google spreadsheets by reading, profiling, updating, appending, formatting, and verifying changed ranges."
+version: "1.0.0"
+categories: ["office-results", "spreadsheet", "data"]
+trigger: "spreadsheet refresh sheet update tablazat frissites excel google sheets range"
+trigger_phrases: ["spreadsheet refresh", "sheet update", "tablazat frissites", "Google Sheets update", "Excel refresh"]
+allowed_tools: ["sheet.read", "sheet.profile", "sheet.query", "sheet.write", "sheet.append", "sheet.update_cells", "sheet.to_json", "sheet.format_range", "sheet.add_table", "sheet.add_chart", "connection.call", "ask_user"]
+requires_connections: []
+risk: "external_write"
+verification_checklist: ["Read/profile the sheet before modification.", "Use the narrowest update range possible.", "Read back the affected range.", "For report workbooks, add visible formatting/table/chart when requested."]
+supports_automation: true
+supports_manual_run: true
+status: "enabled"
+---
+
+# Spreadsheet Refresh
+Read/profile the sheet, update the narrowest safe range, read the affected range back, and apply visible formatting/table/chart gates for professional reports.`,
+  `---
+name: "meeting-to-actions"
+description: "Turn meeting notes into decisions, action items, CRM updates, follow-up drafts, tasks, and read-back evidence."
+version: "1.0.0"
+categories: ["office-results", "meetings", "crm", "email"]
+trigger: "meeting notes follow-up crm update action items task hatarido megbeszeles jegyzet"
+trigger_phrases: ["meeting notes to actions", "CRM update after meeting", "follow-up email draft", "meeting jegyzet"]
+allowed_tools: ["document.read", "document.read_many", "connection.call", "email.compose", "doc.write_txt", "doc.write_docx", "approval.request", "ask_user"]
+requires_connections: []
+risk: "external_write"
+verification_checklist: ["Read meeting notes first.", "Extract decisions, action items, owners, and due dates.", "Ask on ambiguous CRM records.", "Read back CRM/task updates and email draft evidence."]
+supports_automation: true
+supports_manual_run: true
+status: "enabled"
+---
+
+# Meeting To Actions
+Read notes, extract decisions/actions/owners/due dates, find the CRM record, draft updates and follow-up email, then verify CRM/task and draft evidence.`,
+  `---
+name: "workspace-maintenance"
+description: "Maintain Gmail, Drive, Notion, HubSpot, and other workspaces by detecting stale, duplicate, missing, or misfiled records."
+version: "1.0.0"
+categories: ["office-results", "workspace", "maintenance"]
+trigger: "workspace maintenance drive notion gmail hubspot crm cleanup labels folders database karbantartas"
+trigger_phrases: ["workspace maintenance", "system cleanup", "Drive cleanup", "Notion database cleanup", "CRM hygiene"]
+allowed_tools: ["connection.call", "document.read", "folder.scan", "file.write", "doc.write_txt", "approval.request", "ask_user"]
+requires_connections: []
+risk: "external_write"
+verification_checklist: ["Run read-only audit before writes.", "Report proposed changes and risks.", "Write only approved changes.", "Read changed records/folders/labels back."]
+supports_automation: true
+supports_manual_run: true
+status: "enabled"
+---
+
+# Workspace Maintenance
+Inventory the workspace, detect stale/missing/duplicate/misfiled items, propose maintenance actions, apply only approved changes, and read back changed items.`,
+  `---
+name: "microtask-capture"
+description: "Capture repeated 5-15 minute digital tasks into reusable workflow templates and candidate skills after verified success."
+version: "1.0.0"
+categories: ["office-results", "automation", "learning"]
+trigger: "microtask small task reusable workflow learn task 5 minutes 15 minutes apro digitalis feladat"
+trigger_phrases: ["turn this into workflow", "microtask capture", "learn this task", "apro digitalis feladat"]
+allowed_tools: ["workflow.start", "file.write", "file.read", "ask_user"]
+requires_connections: []
+risk: "local_write"
+verification_checklist: ["Use evidence from a successful run.", "Capture trigger, inputs, steps, tools, approvals, outputs, and verification.", "Save only as draft/review candidate unless the user explicitly approves."]
+supports_automation: true
+supports_manual_run: true
+status: "enabled"
+---
+
+# Microtask Capture
+Use successful task evidence to draft a reusable workflow or candidate skill with trigger, inputs, steps, tools, approvals, outputs, and verification. Draft-only until reviewed.`,
+];
+
+const webResearchStandard = `---
+name: web-research-standard
+description: "Research the web to a quality standard: programmatic search first, synthesize sources, cite URLs, and extract result pages — never browse a search-engine results page."
+allowed_tools: ["web.search", "web.batch_search", "web.extract_page", "web.open_result", "web.extract_contact_info", "web.verify_source", "ask_user"]
+requires_connections: []
+risk: "external_read"
+trigger: "search internet web research latest news current sources keres interneten utananez forras hir cite"
+when_to_use: ["Use when the user asks to search the internet, get latest info, current news, or web-sourced facts."]
+when_not_to_use: ["Do not use to interact with one specific known web app (use browser-automation)."]
+---
+
+# Web Research Standard
+Use this skill for internet lookup and research-grade answers from web sources.
+
+## Tool order
+1. A known service with a connection/API → use that first.
+2. Otherwise web.search / web.batch_search. NEVER open a search-engine results page with browser.open.
+3. web.extract_page on the most relevant result URLs so the answer is based on page content, not titles.
+4. browser.open only for a specific source URL that needs interactive viewing.
+
+## Output quality
+- If no search provider is configured, stop with ask_user/blocking explanation — do not browse as a human substitute.
+- A web-backed answer must SYNTHESIZE sources: start with the direct answer, then evidence, dates/freshness, uncertainty, and practical implications.
+- Prefer primary/reference sources. If sources are weak, stale, or conflicting, say so explicitly — do not hide uncertainty.
+- Cite source URLs in factual summaries with enough detail for the user to trust what was found and what remains unknown.
+
+## Action shapes (exact JSON)
+{"action":"web.search","query":"<search query>","locale":"<optional>","country":"<optional>","maxResults":5,"depth":"quick"}
+{"action":"web.batch_search","queries":["<q1>","<q2>"],"concurrency":4,"maxResultsPerQuery":5,"locale":"<optional>","country":"<optional>"}
+{"action":"web.open_result","url":"<selected result URL>"}
+{"action":"web.extract_page","url":"<selected result URL>","maxChars":12000}
+{"action":"web.extract_contact_info","url":"<source URL>","text":"<optional extracted text>"}
+{"action":"web.verify_source","url":"<source URL>","claim":"<optional claim>","expectedDomain":"<optional domain>"}
+
+## Verification
+- Ground every factual claim in an extracted/cited source; flag low-confidence or conflicting findings.`;
+
+const chatVisualization = `---
+name: chat-visualization
+description: "Render a final chat-native visual (chart/diagram/dashboard) with visualization.render as self-contained static HTML/CSS/SVG in Larund dark style."
+allowed_tools: ["visualization.render", "code.execute", "ask_user"]
+requires_connections: []
+risk: "read_only"
+trigger: "chart diagram graph visualization vizualizacio grafikon abra dashboard flow map process view"
+when_to_use: ["Use when the user wants a chart, diagram, visual map, dashboard snippet or visual explanation rendered in chat."]
+when_not_to_use: ["Do not use when the user asked for a chart inside an Excel/XLSX file (use local-office sheet.add_chart)."]
+---
+
+# Chat Visualization
+The visual is final user-facing output, NOT thinking. Never put visual HTML/SVG/chart code into the thinking/progress prose.
+
+## Standard
+- Render with visualization.render as self-contained, static HTML/CSS/SVG: no scripts, no forms, no external assets/fonts, no inline event handlers.
+- Larund is dark-mode only. All text must be light and readable: #f4f0ea for primary text, #a6aeba for muted labels. Never use black or dark gray for titles, axis labels, ticks, captions, legends or annotations. Use a deep background, subtle borders, an orange accent, and a responsive SVG.
+- Use code.execute only when computation/data cleaning is genuinely needed; once the data is known, render the visual with visualization.render, not as a Python PNG.
+- For a time-series/period/trend, do not draw a two-point line: use as many data points as the sources provide. If only start and end values are known, say data is limited and design a comparison card instead of faking a trend line.
+- A serious visualization includes a clear title, concise subtitle, source/date note, axis labels, readable ticks, highlighted key numbers, and one annotation explaining the main takeaway.
+
+## Action shape (exact JSON)
+{"action":"visualization.render","title":"<short title>","height":420,"html":"<self-contained static HTML/CSS/SVG, no scripts/forms/external assets>"}
+
+## Verification
+- Confirm the rendered visual carries title, labels, source/date and a takeaway; never emit visual code into progress prose.`;
+
 export const BUNDLED_SKILL_FILES: string[] = [
+  webResearchStandard,
+  chatVisualization,
   dataAnalysisAndCode,
+  ...officeResultSkills,
   fileOrganizer,
   browserAutomation,
   googleSheetsWeb,

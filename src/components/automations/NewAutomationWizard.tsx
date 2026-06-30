@@ -10,7 +10,7 @@ import { MentionEditor, MentionChip } from '../mentions/MentionEditor';
 import type { ReferencedContext } from '../../lib/mentions/types';
 import { listCatalogProviders } from '../../lib/connections/catalog';
 import { isUsableConnectionRuntime, normalizeConnectionProviderId } from '../../lib/connections/provider-aliases';
-import { createAutomation, updateAutomation } from '../../lib/automations/store';
+import { createAutomation, getAutomation, updateAutomation } from '../../lib/automations/store';
 import { runAutomation } from '../../lib/automations/runner';
 import { isAutomationSetupReady, prepareAutomation, setupRequired } from '../../lib/automations/setup';
 import { generateAutomationSteps } from '../../lib/automations/planner';
@@ -309,7 +309,11 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
 
   async function persist(enabled: boolean): Promise<string> {
     if (savedId) {
-      await updateAutomation(savedId, { name: name || 'Untitled automation', description, enabled, status: enabled ? 'active' : 'disabled', trigger: buildTrigger(), prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety, setupPlan, taskTemplate: draftAutomation().taskTemplate, chatMode, linkedChatSessionId, chatVisibility: 'private_local' });
+      const existing = await getAutomation(savedId);
+      const metadata = existing?.metadata?.isBuiltIn === true
+        ? { ...existing.metadata, userCustomized: true }
+        : existing?.metadata;
+      await updateAutomation(savedId, { name: name || 'Untitled automation', description, enabled, status: enabled ? 'active' : 'disabled', trigger: buildTrigger(), prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety, setupPlan, taskTemplate: draftAutomation().taskTemplate, chatMode, linkedChatSessionId, chatVisibility: 'private_local', metadata });
       return savedId;
     }
     const created = await createAutomation({ userId, workspaceId, name: name || 'Untitled automation', description, enabled, trigger: buildTrigger(), taskTemplate: draftAutomation().taskTemplate, prompt, referencedContext: references, steps, verificationChecklist: verification, safetyPolicy: safety, setupPlan, chatMode, linkedChatSessionId, chatVisibility: 'private_local' });
@@ -392,8 +396,24 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
     <>
     <div className="scrim" style={{ position: 'fixed', inset: 0, display: 'grid', placeItems: 'center', zIndex: 100, background: 'rgba(0,0,0,.7)' }}>
       <div className="modal-pop" style={{ width: 720, maxWidth: '94vw', maxHeight: '92vh', background: 'var(--bg-surface)', border: '1px solid var(--border-md)', borderRadius: 16, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 18px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text-primary)' }}>{isEditMode ? 'Edit automation' : 'New automation'}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-hint)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name.trim() || 'Configure a reusable workflow'}</div>
+          </div>
+          <button
+            type="button"
+            aria-label="Close automation editor"
+            title="Close"
+            onClick={onClose}
+            style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(var(--ov-color),.04)', border: '1px solid var(--border)', cursor: 'pointer', color: 'var(--text-muted)', display: 'grid', placeItems: 'center', flexShrink: 0 }}
+          >
+            <Icon name="x" size={16} stroke={2} />
+          </button>
+        </div>
+
         {/* Stepper */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '14px 18px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 18px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
           {STEPS.map((s, i) => {
             const navigable = canNavigateToStep(i);
             const issue = stepHasIssue(i);
@@ -405,8 +425,6 @@ export function NewAutomationWizard({ userId, workspaceId, initial, editId, onCl
             </button>
             );
           })}
-          <div style={{ flex: 1 }} />
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-hint)' }}><Icon name="x" size={16} stroke={2} /></button>
         </div>
 
         <div className="scroll" style={{ flex: 1, minHeight: 0, padding: 20 }}>

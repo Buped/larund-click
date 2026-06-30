@@ -122,4 +122,58 @@ describe('google workspace provider', () => {
     const read = await call('google.sheets.read_values', { mock: true, spreadsheetId });
     expect(read.output).toContain('c');
   });
+
+  it('gmail mock: labels, thread reply draft and draft update round-trip', async () => {
+    const draft = await call('google.gmail.create_draft', { mock: true, to: 'a@b.com', subject: 'Thread topic', body: 'hello', threadId: 'thread-1' });
+    const draftId = String(draft.details?.draftId);
+
+    const label = await call('google.gmail.create_label', { mock: true, name: 'Needs reply' });
+    expect(label.details?.verified).toBe(true);
+
+    const thread = await call('google.gmail.read_thread', { mock: true, threadId: 'thread-1' });
+    expect(thread.output).toContain('Thread topic');
+
+    const reply = await call('google.gmail.create_reply_draft', { mock: true, threadId: 'thread-1', body: 'reply body' });
+    expect(reply.details?.verified).toBe(true);
+
+    const updated = await call('google.gmail.update_draft', { mock: true, draftId, to: 'a@b.com', subject: 'Updated', body: 'new body' });
+    expect(updated.output).toContain('updated');
+  });
+
+  it('gmail mock: lists and downloads attachments', async () => {
+    const attachments = await call('google.gmail.list_attachments', { mock: true, messageId: 'message-1' });
+    expect(attachments.output).toContain('invoice.pdf');
+    const downloaded = await call('google.gmail.download_attachment', { mock: true, messageId: 'message-1', attachmentId: 'att-1' });
+    expect(downloaded.success).toBe(true);
+    expect(downloaded.details?.bytes).toBeGreaterThan(0);
+  });
+
+  it('drive mock: resolves, ensures folders and copies files', async () => {
+    const resolved = await call('google.drive.resolve_reference', { mock: true, url: 'https://drive.google.com/file/d/file-1/view' });
+    expect(resolved.output).toContain('file-1');
+
+    const folder = await call('google.drive.ensure_folder', { mock: true, name: 'Clients' });
+    expect(folder.details?.verified).toBe(true);
+
+    const copied = await call('google.drive.copy_file', { mock: true, fileId: 'file-1', name: 'Copy' });
+    expect(copied.details?.verified).toBe(true);
+
+    const search = await call('google.drive.search_and_read', { mock: true, query: 'contract' });
+    expect(search.output).toContain('files');
+  });
+
+  it('sheets mock: batch get/update and append_or_update round-trip', async () => {
+    const created = await call('google.sheets.create', { mock: true, title: 'Batch' });
+    const spreadsheetId = String(created.details?.spreadsheetId);
+    const updated = await call('google.sheets.batch_update_values', {
+      mock: true,
+      spreadsheetId,
+      data: [{ range: 'A1:B2', values: [['Name', 'Status'], ['Ada', 'Ready']] }],
+    });
+    expect(updated.details?.verified).toBe(true);
+    const batch = await call('google.sheets.batch_get_values', { mock: true, spreadsheetId, ranges: ['A1:B2'] });
+    expect(batch.output).toContain('Ada');
+    const appended = await call('google.sheets.append_or_update_rows', { mock: true, spreadsheetId, range: 'A1', values: [['Grace', 'Done']] });
+    expect(appended.details?.verified).toBe(true);
+  });
 });

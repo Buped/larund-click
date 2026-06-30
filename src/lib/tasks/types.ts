@@ -43,6 +43,7 @@ export type EvidenceKind =
   | 'approval'
   | 'read_back'
   | 'verification'
+  | 'visual_verification'
   | 'file_output'
   | 'connection_output'
   | 'error'

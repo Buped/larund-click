@@ -25,13 +25,13 @@ export async function callCustomApiTool(args: {
   let approvalId: string | undefined;
   if (decision === 'ask') {
     approvalId = `custom-api-approval-${Date.now()}`;
-    const ok = await (args.approvals ?? new AutoApprovalService()).request({
+    const { approved } = await (args.approvals ?? new AutoApprovalService()).request({
       action: { action: 'connection.call', connection: `custom_api:${connection.id}`, tool: tool.name, args: args.input },
       risk: tool.risk,
       reason: `Custom API tool ${connection.name}/${tool.name} is classified ${tool.risk}.`,
       argsSummary: sanitizeArgs(args.input),
     });
-    if (!ok) return block('approval_denied');
+    if (!approved) return block('approval_denied');
   }
 
   const url = renderUrl(connection.baseUrl, tool.pathTemplate, args.input);

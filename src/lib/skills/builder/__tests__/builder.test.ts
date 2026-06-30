@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetRecordBackendForTests } from '../../../coworker/persistence';
+import { recordBackend } from '../../../coworker/persistence';
 import {
   DuplicateSkillNameError,
+  WorkspaceRequiredForSkillError,
   createBuilderSkill,
   listBuilderSkills,
   setBuilderSkillEnabled,
 } from '../store';
+import { learnFromCompletedTask, listLearningEvents } from '../../learning';
 import { compileToMarkdown, compileToSkill, validateBuilderSkill } from '../compiler';
 import { dryRunSkill } from '../test-runner';
 import { suggestSkillsFromTasks } from '../suggester';
@@ -88,6 +91,11 @@ describe('skill builder compiler', () => {
 });
 
 describe('skill builder store', () => {
+  it('requires workspaceId for new custom skills', async () => {
+    await expect(createBuilderSkill({ userId: 'u1', name: 'No workspace', description: 'x' }))
+      .rejects.toBeInstanceOf(WorkspaceRequiredForSkillError);
+  });
+
   it('creates and lists workspace skills', async () => {
     await createBuilderSkill({ userId: 'u1', workspaceId: 'ws1', name: 'A', description: 'a skill' });
     const list = await listBuilderSkills({ userId: 'u1', workspaceId: 'ws1' });
@@ -104,6 +112,36 @@ describe('skill builder store', () => {
     await createBuilderSkill({ userId: 'u1', workspaceId: 'ws1', name: 'WS1 skill', description: 'x' });
     expect(await listBuilderSkills({ userId: 'u1', workspaceId: 'ws2' })).toHaveLength(0);
     expect(await listBuilderSkills({ userId: 'u1', workspaceId: 'ws1' })).toHaveLength(1);
+  });
+
+  it('does not load legacy user-global skills in workspace runtime', async () => {
+    const now = new Date().toISOString();
+    await recordBackend().put('builder_skills', {
+      id: 'legacy-skill',
+      userId: 'u1',
+      name: 'Legacy Global',
+      version: '1.0.0',
+      description: 'old global skill',
+      source: 'user',
+      triggerPhrases: ['legacy'],
+      categories: ['general'],
+      whenToUse: [],
+      whenNotToUse: [],
+      requiredConnections: [],
+      requiredMcpServers: [],
+      allowedTools: ['file.read'],
+      riskLevel: 'read_only',
+      steps: [],
+      verificationChecklist: [],
+      fallbackStrategy: 'Ask user.',
+      examplePrompts: [],
+      exampleRuns: [],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const skills = await loadAllSkillsAsync('u1', 'ws1');
+    expect(skills.some((s) => s.manifest.name === 'Legacy Global')).toBe(false);
   });
 });
 
@@ -164,5 +202,70 @@ describe('skill suggestion from repeated tasks', () => {
       { taskRunId: 't1', userId: 'u1', workspaceId: 'ws1', title: 'one off', prompt: 'do a thing once', tools: ['cli.run'] },
     ]);
     expect(drafts).toHaveLength(0);
+  });
+});
+
+describe('adaptive skill learning', () => {
+  it('auto-enables low-risk explicit learned workflows', async () => {
+    const result = await learnFromCompletedTask({
+      userId: 'u1',
+      workspaceId: 'ws1',
+      taskRunId: 'task-1',
+      title: 'Prepare weekly note',
+      prompt: 'Prepare this weekly note and remember this workflow next time',
+      recentActions: [
+        { action: 'file.write', success: true, output: 'wrote note.md' },
+        { action: 'file.read', success: true, output: 'note content' },
+      ],
+    });
+    expect(result.promotedSkill?.enabled).toBe(true);
+    expect(result.promotedSkill?.source).toBe('workspace');
+    expect(result.promotedSkill?.learning?.autoLearned).toBe(true);
+  });
+
+  it('auto-promotes two similar verified low-risk runs', async () => {
+    await learnFromCompletedTask({
+      userId: 'u1',
+      workspaceId: 'ws1',
+      taskRunId: 'task-1',
+      title: 'Weekly client report',
+      prompt: 'Compile weekly client report from local files',
+      recentActions: [
+        { action: 'file.write', success: true, output: 'report.md' },
+        { action: 'file.read', success: true, output: 'report' },
+      ],
+    });
+    const second = await learnFromCompletedTask({
+      userId: 'u1',
+      workspaceId: 'ws1',
+      taskRunId: 'task-2',
+      title: 'Weekly client report again',
+      prompt: 'Compile weekly client report from local files',
+      recentActions: [
+        { action: 'file.write', success: true, output: 'report.md' },
+        { action: 'file.read', success: true, output: 'report' },
+      ],
+    });
+    expect(second.promotedSkill?.enabled).toBe(true);
+    expect(second.promotedSkill?.learning?.originTaskRunIds).toEqual(expect.arrayContaining(['task-1', 'task-2']));
+  });
+
+  it('keeps risky learned tasks as disabled suggestions', async () => {
+    const result = await learnFromCompletedTask({
+      userId: 'u1',
+      workspaceId: 'ws1',
+      taskRunId: 'task-1',
+      title: 'Submit web form',
+      prompt: 'Fill this web form and remember this',
+      recentActions: [
+        { action: 'browser.open', success: true, argsSummary: 'https://example.com/form', output: 'opened' },
+        { action: 'browser.type', success: true, output: 'typed' },
+        { action: 'browser.read', success: true, output: 'saved' },
+      ],
+    });
+    expect(result.promotedSkill?.source).toBe('suggested');
+    expect(result.promotedSkill?.enabled).toBe(false);
+    expect(result.promotedSkill?.kind).toBe('app_profile');
+    expect((await listLearningEvents({ userId: 'u1', workspaceId: 'ws1' }))).toHaveLength(1);
   });
 });

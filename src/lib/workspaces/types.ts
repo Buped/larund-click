@@ -43,6 +43,9 @@ export interface Workspace {
   autonomyMode: AutonomyMode;
   defaultModelId?: string;
   workflowConfig?: Record<string, unknown>;
+  skillLearningConfig?: {
+    autoLearnLowRisk: boolean;
+  };
   createdAt: string;
   updatedAt: string;
   archivedAt?: string;

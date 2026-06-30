@@ -7,6 +7,7 @@ import type {
   CreateSkillBuilderInput,
   SkillBuilderPatch,
   SkillBuilderSkill,
+  SkillLearningMetadata,
 } from './types';
 
 const COLLECTION = 'builder_skills';
@@ -21,6 +22,12 @@ export class DuplicateSkillNameError extends Error {
   }
 }
 
+export class WorkspaceRequiredForSkillError extends Error {
+  constructor() {
+    super('workspace_id_required_for_skill');
+  }
+}
+
 function slug(name: string): string {
   return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'skill';
 }
@@ -32,10 +39,14 @@ async function nameTaken(userId: string, name: string, workspaceId?: string, exc
 }
 
 export async function createBuilderSkill(input: CreateSkillBuilderInput): Promise<SkillBuilderSkill> {
+  if (!input.workspaceId) {
+    throw new WorkspaceRequiredForSkillError();
+  }
   if (await nameTaken(input.userId, input.name, input.workspaceId)) {
     throw new DuplicateSkillNameError(input.name);
   }
   const now = new Date().toISOString();
+  const learning = normalizeLearning(input.learning, now);
   const skill: SkillBuilderSkill = {
     id: `skill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     userId: input.userId,
@@ -44,6 +55,15 @@ export async function createBuilderSkill(input: CreateSkillBuilderInput): Promis
     version: '1.0.0',
     description: input.description.trim(),
     source: input.source ?? (input.workspaceId ? 'workspace' : 'user'),
+    status: input.status,
+    checksum: input.checksum,
+    approvedAt: input.approvedAt,
+    approvedBy: input.approvedBy,
+    originTaskRunId: input.originTaskRunId,
+    originAutomationId: input.originAutomationId,
+    kind: input.kind ?? 'workflow',
+    target: input.target,
+    learning,
     instructionBody: input.instructionBody?.trim() || undefined,
     triggerPhrases: input.triggerPhrases ?? [],
     categories: input.categories ?? ['general'],
@@ -108,10 +128,51 @@ export async function listBuilderSkills(filter: {
   return rows
     .map(toSkill)
     .filter((s) => s.userId === filter.userId)
-    // user-global skills (no workspaceId) apply everywhere; workspace skills only in their workspace.
-    .filter((s) => !s.workspaceId || !filter.workspaceId || s.workspaceId === filter.workspaceId)
+    // v2 canonical storage is workspace-scoped Supabase data. Legacy user-global
+    // rows are only visible when no workspace filter is provided for migration.
+    .filter((s) => filter.workspaceId ? s.workspaceId === filter.workspaceId : !s.workspaceId)
     .filter((s) => filter.includeSuggested || s.source !== 'suggested')
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+export async function migrateLegacyUserSkillsToWorkspace(userId: string, workspaceId: string): Promise<SkillBuilderSkill[]> {
+  if (!workspaceId) throw new WorkspaceRequiredForSkillError();
+  const legacy = await listBuilderSkills({ userId, includeSuggested: true });
+  const migrated: SkillBuilderSkill[] = [];
+  for (const skill of legacy.filter((s) => !s.workspaceId)) {
+    const targetName = await nameTaken(userId, skill.name, workspaceId)
+      ? `${skill.name} legacy`
+      : skill.name;
+    const now = new Date().toISOString();
+    const updated: SkillBuilderSkill = {
+      ...skill,
+      id: `skill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: targetName,
+      workspaceId,
+      source: skill.source === 'suggested' ? 'suggested' : 'workspace',
+      kind: skill.kind ?? 'workflow',
+      learning: normalizeLearning(skill.learning, now),
+      updatedAt: now,
+    };
+    await recordBackend().put(COLLECTION, updated as unknown as RecordRow);
+    await recordBackend().delete(COLLECTION, skill.id);
+    migrated.push(updated);
+  }
+  return migrated;
+}
+
+function normalizeLearning(input: Partial<SkillLearningMetadata> | undefined, now: string): SkillLearningMetadata | undefined {
+  if (!input) return undefined;
+  return {
+    originTaskRunIds: input.originTaskRunIds ?? [],
+    autoLearned: input.autoLearned ?? false,
+    confidence: input.confidence ?? 0,
+    promotedAt: input.promotedAt,
+    lastUsedAt: input.lastUsedAt ?? now,
+    usageCount: input.usageCount ?? 0,
+    successCount: input.successCount ?? 0,
+    failureCount: input.failureCount ?? 0,
+  };
 }
 
 function bumpPatch(version: string): string {

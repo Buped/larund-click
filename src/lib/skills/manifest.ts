@@ -31,6 +31,9 @@ export interface RichSkillManifest {
   tags: string[];
   supportsAutomation: boolean;
   supportsManualRun: boolean;
+  kind: 'workflow' | 'app_profile';
+  target?: Record<string, unknown>;
+  learning?: Record<string, unknown>;
 }
 
 const DEFAULT_VERSION = '1.0.0';
@@ -107,5 +110,8 @@ export function toRichManifest(skill: Skill): RichSkillManifest {
     tags: m.tags ?? [],
     supportsAutomation: m.supports_automation ?? true,
     supportsManualRun: m.supports_manual_run ?? true,
+    kind: m.metadata?.kind === 'app_profile' ? 'app_profile' : 'workflow',
+    target: typeof m.metadata?.target === 'object' && m.metadata.target !== null ? m.metadata.target as Record<string, unknown> : undefined,
+    learning: typeof m.metadata?.learning === 'object' && m.metadata.learning !== null ? m.metadata.learning as Record<string, unknown> : undefined,
   };
 }

@@ -36,6 +36,8 @@ export function SkillCard({ skill, onOpen, onToggle }: {
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
         <Badge text={sourceLabel(skill.source)} color={skill.source === 'built_in' ? 'var(--accent)' : skill.source === 'suggested' ? 'var(--warning)' : 'var(--success)'} />
+        {skill.kind === 'app_profile' && <Badge text="App profile" color="var(--accent)" />}
+        {skill.learning?.autoLearned && <Badge text="Auto-learned" color="var(--success)" />}
         <Badge text={skill.riskLevel} color={statusColor(skill.riskLevel)} />
         {skill.categories.slice(0, 3).map((c) => <Badge key={c} text={c} />)}
       </div>
@@ -44,7 +46,9 @@ export function SkillCard({ skill, onOpen, onToggle }: {
           ? skill.requiredConnections.map((c) => <Badge key={c} text={c} color="var(--accent)" />)
           : <Badge text="No required connection" />}
       </div>
-      <div style={{ marginTop: 'auto', fontSize: 11.5, color: 'var(--text-hint)' }}>Open</div>
+      <div style={{ marginTop: 'auto', fontSize: 11.5, color: 'var(--text-hint)' }}>
+        {skill.learning ? `${skill.learning.originTaskRunIds.length} source task(s) - used ${skill.learning.usageCount}` : 'Open'}
+      </div>
     </button>
   );
 }

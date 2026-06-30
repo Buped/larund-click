@@ -47,10 +47,42 @@ describe('guarded runControlAction', () => {
 
   it('runs a destructive action once approved', async () => {
     invokeMock.mockResolvedValue('Deleted');
-    const approvals = new PromptApprovalService(async () => 'allow_once');
+    const approvals = new PromptApprovalService(async () => ({ decision: 'allow_once' }));
     const res = await runControlAction({ action: 'file.delete', path: 'a.txt', recursive: true }, ctx({ approvals }));
     expect(res.success).toBe(true);
     expect(invokeMock).toHaveBeenCalledWith('fs_delete', { path: 'a.txt', recursive: true });
+  });
+
+  it('surfaces "Other" steering feedback instead of running the action', async () => {
+    const approvals = new PromptApprovalService(async () => ({ decision: 'steer', feedback: 'rename it to b.txt instead' }));
+    const res = await runControlAction({ action: 'file.delete', path: 'a.txt' }, ctx({ approvals }));
+    expect(res.success).toBe(false);
+    expect(res.error).toBe('approval_steer');
+    expect(res.approvalRequired).toBe(true);
+    expect(res.approvalFeedback).toBe('rename it to b.txt instead');
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('applies the semi-mode hybrid gate from ctx.autonomyMode', async () => {
+    invokeMock.mockResolvedValue('Moved');
+    // file.move is reversible local_write → auto in semi when not flagged critical,
+    // so it runs even with a deny-by-default approver (the gate never asks).
+    const approvals = new PromptApprovalService(undefined, 'deny');
+    const res = await runControlAction(
+      { action: 'file.move', from: 'a', to: 'b' },
+      ctx({ autonomyMode: 'semi', approvals }),
+    );
+    expect(res.success).toBe(true);
+  });
+
+  it('semi-mode asks for a critical-flagged middle-ground action', async () => {
+    const approvals = new PromptApprovalService(undefined, 'deny');
+    const res = await runControlAction(
+      { action: 'file.move', from: 'a', to: 'b', critical: true } as never,
+      ctx({ autonomyMode: 'semi', approvals }),
+    );
+    expect(res.success).toBe(false);
+    expect(res.error).toBe('approval_denied');
   });
 
   it('lets the agent move local files even when only read-only skills are active', async () => {

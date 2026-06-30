@@ -27,14 +27,14 @@ export async function callMcpTool(args: {
   if (decision === 'block') return block('mcp_call_blocked_by_policy');
   if (decision === 'ask') {
     approvalId = `mcp-approval-${Date.now()}`;
-    const ok = await (args.approvals ?? new AutoApprovalService()).request({
+    const { approved } = await (args.approvals ?? new AutoApprovalService()).request({
       action: { action: 'connection.call', connection: `mcp:${server.id}`, tool: tool.name, args: args.input },
       risk: tool.risk,
       reason: `MCP tool ${server.name}/${tool.name} is classified ${tool.risk}.`,
       argsSummary: sanitizeArgs(args.input),
       preview: tool.description,
     });
-    if (!ok) return block('approval_denied', true);
+    if (!approved) return block('approval_denied', true);
   }
   const result = await mcpClient().callTool(server.id, tool.name, args.input);
   audit.record({

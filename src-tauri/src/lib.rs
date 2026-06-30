@@ -94,8 +94,11 @@ pub fn run() {
             commands::agent::send_notification,
             // ── browser (DOM/CDP automation — the GUI substitute) ────────────
             commands::browser::browser_open,
+            commands::browser::browser_list_tabs,
+            commands::browser::browser_switch_tab,
             commands::browser::browser_click,
             commands::browser::browser_type,
+            commands::browser::browser_autofill_login,
             commands::browser::browser_read,
             commands::browser::browser_key,
             commands::browser::browser_shortcut,
@@ -105,6 +108,11 @@ pub fn run() {
             commands::browser::browser_upload,
             commands::browser::browser_probe,
             commands::browser::browser_close,
+            // ── visual self-check (READ-ONLY perception, never control) ──────
+            // Screenshots for `screen.verify` only: a vision model judges whether
+            // the task succeeded. No pixel clicking — the no-mouse contract holds.
+            commands::browser::browser_screenshot,
+            commands::desktop::desktop_capture_screen,
             // ── network (CORS-free HTTP for OAuth token exchange, etc.) ──────
             commands::net::http_request,
         ])

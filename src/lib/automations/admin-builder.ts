@@ -9,6 +9,7 @@ import { checkAutomationDependencies, type DependencyReport } from './dependenci
 import { defaultSafetyPolicy, defaultVerification } from './migrate';
 import { heuristicSteps } from './planner';
 import { prepareAutomation, setupRequired } from './setup';
+import { generateAdminSkillDrafts, type AdminSkillDraft } from './admin-skill-builder';
 import type {
   Automation,
   AutomationSetupBindingKind,
@@ -44,6 +45,7 @@ export interface AdminAutomationBuildResult {
   dependencyReport: DependencyReport;
   warnings: string[];
   setupRunId?: string;
+  skillDrafts: AdminSkillDraft[];
 }
 
 export interface AdminAutomationDraftJson {
@@ -792,5 +794,14 @@ export async function buildAutomationFromAdminText(input: AdminAutomationBuildIn
     }
   }
   const preparedAutomation = await import('./store').then((store) => store.getAutomation(automation.id)).catch(() => null);
-  return { automation: preparedAutomation ?? automation, dependencyReport, warnings, setupRunId };
+  const finalAutomation = preparedAutomation ?? automation;
+  const skillBuild = await generateAdminSkillDrafts({
+    userId: input.userId,
+    workspaceId: input.projectId,
+    adminText: text,
+    automation: finalAutomation,
+    availableConnectionIds: [...new Set(requiredConnectionIds)],
+  });
+  warnings.push(...skillBuild.warnings);
+  return { automation: finalAutomation, dependencyReport, warnings, setupRunId, skillDrafts: skillBuild.drafts };
 }

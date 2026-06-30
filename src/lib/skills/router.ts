@@ -34,6 +34,7 @@ export interface SkillRoute {
 
 export interface SkillRouterResult {
   selectedSkills: SkillRoute[];
+  selectedChain: SkillRoute[];
   primarySkill?: SkillRoute;
   confidence: number;
   reason: string;
@@ -63,6 +64,9 @@ const SYNONYMS: Array<{ pattern: RegExp; terms: string[] }> = [
   { pattern: /heti riport|dashboard|analytics|marketing report/i, terms: ['marketing-report', 'data-reporting'] },
   { pattern: /korrel|regresszi|\btrend\b|sz[oó]r[aá]s|kiugr[oó]|anom[aá]li|outlier|statisztik|eloszl[aá]s|diagram|grafikon|\bpython\b|elemz[eé]s/i, terms: ['data-analysis-and-code', 'analysis', 'statistics', 'chart'] },
   { pattern: /form|űrlap|urlap|browser|webapp/i, terms: ['browser-automation', 'form-filler'] },
+  { pattern: /\b(e-?mail|gmail)\b|email|level(et|ek)|üzenetet\s+küld|piszkozat/i, terms: ['email-ops', 'email'] },
+  { pattern: /keres[eé]?s?\b|interneten|web\s*search|\blatest\b|\bnews\b|h[ií]rek?|forr[aá]s|ut[aá]nan[eé]z/i, terms: ['web-research-standard', 'web', 'research'] },
+  { pattern: /vizualiz|\bchart\b|\bgraph\b|visual\s*map|process\s*view|flow\s*chart|[aá]bra\b/i, terms: ['chat-visualization', 'visualization', 'chart'] },
 ];
 
 function normalize(value: string): string {
@@ -128,6 +132,7 @@ function score(manifest: RichSkillManifest, input: SkillRouterInput): { score: n
     ...manifest.trigger.flatMap(tokenize),
     ...tokenize(manifest.description),
     ...manifest.whenToUse.flatMap(tokenize),
+    ...targetTerms(manifest).flatMap(tokenize),
   ]);
   const taskTokens = new Set([...tokenize(task), ...expandedTerms.flatMap(tokenize), ...refTerms.flatMap(tokenize)]);
   const reasons: string[] = [];
@@ -182,6 +187,14 @@ function score(manifest: RichSkillManifest, input: SkillRouterInput): { score: n
       (input.currentSurface === 'local_files' && manifest.allowedTools.some((t) => t.startsWith('file.') || t.startsWith('document.') || t.startsWith('sheet.')));
     if (surfaceMatch) raw += 5;
   }
+  if (manifest.kind === 'app_profile') {
+    const target = targetTerms(manifest);
+    if (target.some((term) => includesPhrase(task, term))) {
+      raw += 18;
+      reasons.push('app/site profile target match');
+    }
+    if (input.currentSurface === 'browser') raw += 4;
+  }
   if (input.recentTaskHistory?.some((h) => h.outcome === 'failed' && h.failedSkillIds?.includes(manifest.id))) raw -= 6;
   raw += RISK_WEIGHT[manifest.risk] ?? 0;
 
@@ -189,6 +202,47 @@ function score(manifest: RichSkillManifest, input: SkillRouterInput): { score: n
   const hardMissing = missing.filter((m) => m.kind === 'connection' || m.kind === 'status').length;
   if (hardMissing) raw *= 0.72;
   return { score: raw, reasons };
+}
+
+function targetTerms(manifest: RichSkillManifest): string[] {
+  const target = manifest.target ?? {};
+  const out: string[] = [];
+  for (const key of ['appName', 'domain', 'preferredBrowserProfileId']) {
+    const value = target[key];
+    if (typeof value === 'string') out.push(value);
+  }
+  for (const key of ['urlPatterns', 'windowTitlePatterns']) {
+    const value = target[key];
+    if (Array.isArray(value)) out.push(...value.filter((item): item is string => typeof item === 'string'));
+  }
+  return out;
+}
+
+function needsVerification(route: SkillRoute): boolean {
+  return route.manifest.risk !== 'read_only';
+}
+
+function buildSelectedChain(selected: SkillRoute[], manifests: RichSkillManifest[]): SkillRoute[] {
+  const appProfile = selected.find((route) => route.manifest.kind === 'app_profile');
+  const workflow = selected.find((route) => route.manifest.kind !== 'app_profile' && route.name !== 'task-verification');
+  const chain = [appProfile, workflow].filter((route): route is SkillRoute => Boolean(route));
+  const verification = selected.find((route) => route.name === 'task-verification')
+    ?? manifests.find((manifest) => manifest.name === 'task-verification');
+  if (workflow && needsVerification(workflow) && verification) {
+    const route = 'skillId' in verification
+      ? verification
+      : {
+          skillId: verification.id,
+          name: verification.name,
+          score: 0,
+          confidence: 1,
+          reason: 'verification required for active workflow',
+          missingRequirements: [],
+          manifest: verification,
+        };
+    if (!chain.some((item) => item.name === route.name)) chain.push(route as SkillRoute);
+  }
+  return chain.length ? chain : selected.slice(0, 1);
 }
 
 export function routeSkills(manifests: RichSkillManifest[], input: SkillRouterInput): SkillRouterResult {
@@ -212,9 +266,11 @@ export function routeSkills(manifests: RichSkillManifest[], input: SkillRouterIn
 
   const selected = routes.slice(0, 5);
   const primary = selected[0];
+  const selectedChain = buildSelectedChain(selected, manifests);
   const missing = selected.flatMap((s) => s.missingRequirements);
   return {
     selectedSkills: selected,
+    selectedChain,
     primarySkill: primary,
     confidence: primary?.confidence ?? 0,
     reason: primary ? `${primary.name}: ${primary.reason}` : 'No confident skill match.',
@@ -235,7 +291,8 @@ export function renderSkillRoutePrompt(result: SkillRouterResult): string {
     '## Relevant skills',
     'Runtime rule: if the primary skill confidence is at least 60%, skill.run must happen before improvising. Explicit @skill mentions must be loaded unless disabled/blocked.',
     `Primary: ${result.primarySkill?.name ?? 'none'} (${Math.round(result.confidence * 100)}%)`,
+    result.selectedChain.length ? `Skill chain: ${result.selectedChain.map((route) => route.name).join(' -> ')}` : '',
     `Reason: ${result.reason}`,
     ...lines,
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }

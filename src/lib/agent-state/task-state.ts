@@ -2,7 +2,7 @@
 // the model sees every turn. This is what makes the operator *persistent*.
 
 import type { TaskPreflight } from '../control-system/preflight';
-import { deriveExpectedArtifacts, deriveTargetDocument, derivePendingChecks } from './goal-state';
+import { deriveExpectedArtifacts, deriveTargetDocument, derivePendingChecks, deriveSuccessCriteria } from './goal-state';
 import type { ActiveTaskState, FailedAttempt, TaskSurface } from './types';
 
 function genId(): string {
@@ -28,6 +28,7 @@ export function createTaskState(goal: string, pf: TaskPreflight): ActiveTaskStat
     userCorrections: [],
     completedChecks: [],
     pendingChecks: derivePendingChecks(pf),
+    successCriteria: deriveSuccessCriteria(pf),
     forbiddenStrategies: [...pf.forbiddenTools.map((t) => `Do not rely on ${t} to satisfy this task.`)],
     createdAt: now,
     updatedAt: now,
@@ -119,6 +120,19 @@ export function renderTaskStatePrompt(state: ActiveTaskState): string {
   }
   if (state.pendingChecks.length) {
     lines.push(`Pending verification: ${state.pendingChecks.join('; ')}`);
+  }
+  const visualCriteria = (state.successCriteria ?? []).filter((c) => c.method === 'visual' || c.method === 'both');
+  if (visualCriteria.length) {
+    lines.push('Visual success criteria (confirm with screen.verify before task.complete):');
+    for (const c of visualCriteria) lines.push(`  - [${c.status}] ${c.text}`);
+  }
+  if (state.lastVisualVerdict) {
+    const v = state.lastVisualVerdict;
+    lines.push(
+      `Last visual check: done=${v.done}, progress=${v.progress}%` +
+        (v.unmetCriteria.length ? `, still unmet: ${v.unmetCriteria.join('; ')}` : '') +
+        (v.blockers.length ? `, blockers: ${v.blockers.join('; ')}` : ''),
+    );
   }
   return lines.join('\n');
 }

@@ -151,16 +151,16 @@ export function preflight(task: string): TaskPreflight {
   if (isGoogleSheet(t)) {
     return {
       intent: 'spreadsheet_cloud',
-      targetSurface: 'browser',
+      targetSurface: 'connection',
       targetUrl: url ?? 'https://sheets.new',
       targetDocumentType: 'google_sheet',
       requiresAuth: true,
       mutates: true,
       expectedOutcome:
-        'A Google Sheet open in the browser contains the requested data (rows visible in the grid). A local file does NOT satisfy this.',
+        'A Google Sheet exists in Google Workspace with the requested data, confirmed by google.sheets.read_values. A browser grid is only a fallback. A local file does NOT satisfy this.',
       recommendedTools: [
-        'browser.open', 'browser.read', 'browser.wait', 'browser.paste',
-        'browser.shortcut', 'clipboard.set', 'connection.call', 'ask_user',
+        'connection.call', 'ask_user', 'browser.open', 'browser.read', 'browser.wait',
+        'browser.paste', 'browser.shortcut', 'clipboard.set',
       ],
       forbiddenTools: ['sheet.write'],
     };

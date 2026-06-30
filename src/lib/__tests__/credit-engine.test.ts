@@ -68,6 +68,40 @@ describe('admin credit bypass', () => {
     const result = await deductCredits({ userId: 'normal-user', usdCost: 1, source: 'ai_model:test' });
 
     expect(result.deducted).toBe(true);
-    expect(rpcMock).toHaveBeenCalled();
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+    expect(rpcMock).toHaveBeenCalledWith(
+      'deduct_larund_credits',
+      expect.objectContaining({
+        p_user_id: 'normal-user',
+        p_usd_cost: 1,
+        p_uc_amount: 1.2,
+        p_oc_amount: 12,
+        p_source: 'ai_model:test',
+      }),
+    );
+    // On success the RPC writes the transaction row itself — no client-side insert.
+    expect(insertMock).not.toHaveBeenCalled();
+  });
+
+  it('does not silently swallow a failed deduction RPC', async () => {
+    isUserAdminForCreditsMock.mockResolvedValue(false);
+    rpcMock.mockResolvedValue({ error: { message: 'function does not exist' } });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const result = await deductCredits({ userId: 'normal-user', usdCost: 1, source: 'ai_model:test' });
+
+    expect(result.deducted).toBe(false);
+    // Failure must be visible, not swallowed.
+    expect(errorSpy).toHaveBeenCalled();
+    // And an rpc_failed transaction row is recorded for observability.
+    expect(insertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_id: 'normal-user',
+        source: 'ai_model:test',
+        metadata: expect.objectContaining({ status: 'rpc_failed' }),
+      }),
+    );
+
+    errorSpy.mockRestore();
   });
 });

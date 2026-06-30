@@ -17,3 +17,11 @@ Use this skill after every artifact render and before `task.complete`.
 4. Expected text is checked when the user provided concrete content.
 5. Preview/thumbnail exists when generated.
 6. Manifest appears in `artifact.list`.
+
+## Action shapes (exact JSON)
+{"action":"artifact.verify","path":"<path>","expected_text":["<text>"],"expected_kind":"pdf"}
+{"action":"artifact.preview","path":"<path>","pages":[1]}
+{"action":"artifact.list","workspace_id":"<optional>","task_id":"<optional>"}
+{"action":"artifact.pdf_extract_text","path":"<pdf>"}
+{"action":"artifact.pdf_metadata","path":"<pdf>"}
+{"action":"artifact.pdf_page_count","path":"<pdf>"}

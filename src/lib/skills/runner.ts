@@ -6,6 +6,7 @@ import { loadSkillFromMarkdown, mergeSkills, scoreSkill } from './loader';
 import { toRichManifest, type RichSkillManifest } from './manifest';
 import { listBuilderSkills } from './builder/store';
 import { compileToSkill } from './builder/compiler';
+import { syncApprovedSharedSkills } from './shared-store';
 
 /** Build the active skill set (currently the validated bundled skills). */
 export function loadAllSkills(): Skill[] {
@@ -24,8 +25,11 @@ export async function loadAllSkillsAsync(userId?: string, workspaceId?: string):
   if (userId) {
     try {
       const builder = await listBuilderSkills({ userId, workspaceId });
-      custom = builder
-        .filter((s) => s.enabled && s.source !== 'suggested')
+      const shared = await syncApprovedSharedSkills({ userId, workspaceId }).catch(() => []);
+      custom = [
+        ...builder.filter((s) => s.enabled && s.source !== 'suggested'),
+        ...shared.map((record) => record.manifestJson).filter((s) => s.enabled !== false && s.status !== 'blocked' && s.status !== 'deprecated'),
+      ]
         .map(compileToSkill)
         .filter((s) => s.enabled);
     } catch {

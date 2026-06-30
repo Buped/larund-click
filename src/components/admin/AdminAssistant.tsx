@@ -2,12 +2,15 @@ import { useState } from 'react';
 import { Icon } from '../icons';
 import { buildAutomationFromAdminText } from '../../lib/automations/admin-builder';
 import type { DependencyReport } from '../../lib/automations/dependencies';
+import type { AdminSkillDraft } from '../../lib/automations/admin-skill-builder';
+import { approveSharedSkill, saveSkillForReview } from '../../lib/skills/shared-store';
 
 type Message = {
   id: string;
   role: 'user' | 'assistant';
   text: string;
   report?: DependencyReport;
+  skillDrafts?: AdminSkillDraft[];
 };
 
 export function AdminAssistant({
@@ -62,6 +65,7 @@ export function AdminAssistant({
           role: 'assistant',
           text: `Draft created: ${result.automation.name}.${blockerText}${setupText}${warningText}`,
           report: result.dependencyReport,
+          skillDrafts: result.skillDrafts,
         },
       ]);
       onCreated?.(result.automation.id);
@@ -73,6 +77,61 @@ export function AdminAssistant({
     } finally {
       setBusy(false);
     }
+  }
+
+  function updateSkillDraft(messageId: string, index: number, patch: Partial<AdminSkillDraft['skill']>) {
+    setMessages((prev) => prev.map((message) => {
+      if (message.id !== messageId || !message.skillDrafts) return message;
+      return {
+        ...message,
+        skillDrafts: message.skillDrafts.map((draft, i) => i === index ? { ...draft, skill: { ...draft.skill, ...patch } } : draft),
+      };
+    }));
+  }
+
+  async function saveWorkspaceSkill(messageId: string, draft: AdminSkillDraft) {
+    try {
+      await saveSkillForReview({
+        skill: { ...draft.skill, status: 'approved', enabled: true },
+        source: 'admin_authored',
+        userId,
+        workspaceId: projectId ?? draft.skill.workspaceId,
+        status: 'approved',
+        originAutomationId: draft.skill.originAutomationId,
+      });
+      setMessages((prev) => [...prev, { id: `m-${Date.now()}-skill`, role: 'assistant', text: `Workspace skill saved: ${draft.skill.name}` }]);
+      markDraftSaved(messageId, draft.skill.id, 'Saved workspace skill');
+    } catch (error) {
+      setMessages((prev) => [...prev, { id: `m-${Date.now()}-skill-e`, role: 'assistant', text: `Skill save failed: ${error instanceof Error ? error.message : String(error)}` }]);
+    }
+  }
+
+  async function approveGlobalSkill(messageId: string, draft: AdminSkillDraft) {
+    try {
+      const pending = await saveSkillForReview({
+        skill: { ...draft.skill, status: 'pending_review', enabled: false },
+        source: 'admin_authored',
+        userId,
+        workspaceId: projectId ?? draft.skill.workspaceId,
+        status: 'pending_review',
+        originAutomationId: draft.skill.originAutomationId,
+      });
+      await approveSharedSkill(pending.id, { makeGlobal: true });
+      setMessages((prev) => [...prev, { id: `m-${Date.now()}-skill`, role: 'assistant', text: `Approved shared skill: ${draft.skill.name}` }]);
+      markDraftSaved(messageId, draft.skill.id, 'Approved shared skill');
+    } catch (error) {
+      setMessages((prev) => [...prev, { id: `m-${Date.now()}-skill-e`, role: 'assistant', text: `Shared approval failed: ${error instanceof Error ? error.message : String(error)}` }]);
+    }
+  }
+
+  function markDraftSaved(messageId: string, skillId: string, label: string) {
+    setMessages((prev) => prev.map((message) => {
+      if (message.id !== messageId || !message.skillDrafts) return message;
+      return {
+        ...message,
+        skillDrafts: message.skillDrafts.map((draft) => draft.skill.id === skillId ? { ...draft, warnings: [...draft.warnings, label] } : draft),
+      };
+    }));
   }
 
   return (
@@ -163,6 +222,46 @@ export function AdminAssistant({
                     ))}
                     {message.report.warnings.slice(0, 3).map((issue) => (
                       <div key={`w-${issue.kind}-${issue.refId}`} style={{ color: 'var(--warning)' }}>{issue.message}</div>
+                    ))}
+                  </div>
+                )}
+                {message.skillDrafts && message.skillDrafts.length > 0 && (
+                  <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {message.skillDrafts.map((draft, index) => (
+                      <div key={draft.skill.id} style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, padding: 9, background: 'var(--bg-elevated)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 7 }}>
+                          <Icon name="sparkle" size={13} stroke={1.7} />
+                          <strong style={{ fontSize: 12.5 }}>Skill draft</strong>
+                          <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>{draft.proposedScope}</span>
+                          <span style={{ fontSize: 11, color: draft.dryRun.ok ? 'var(--success)' : 'var(--danger)' }}>{draft.dryRun.ok ? 'dry-run ok' : 'dry-run issue'}</span>
+                        </div>
+                        <input
+                          value={draft.skill.name}
+                          onChange={(event) => updateSkillDraft(message.id, index, { name: event.target.value })}
+                          style={{ width: '100%', boxSizing: 'border-box', borderRadius: 6, border: '1px solid var(--border-md)', background: 'var(--bg-input)', color: 'var(--text-primary)', padding: '7px 8px', fontSize: 12, marginBottom: 6 }}
+                        />
+                        <textarea
+                          value={draft.skill.description}
+                          onChange={(event) => updateSkillDraft(message.id, index, { description: event.target.value })}
+                          style={{ width: '100%', boxSizing: 'border-box', minHeight: 58, resize: 'vertical', borderRadius: 6, border: '1px solid var(--border-md)', background: 'var(--bg-input)', color: 'var(--text-primary)', padding: '7px 8px', fontSize: 12, lineHeight: 1.35 }}
+                        />
+                        <div style={{ marginTop: 6, fontSize: 11.2, color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>
+                          Tools: {draft.skill.allowedTools.join(', ') || 'none'} · Risk: {draft.skill.riskLevel}
+                        </div>
+                        {(draft.dryRun.errors.length > 0 || draft.warnings.length > 0) && (
+                          <div style={{ marginTop: 6, fontSize: 11.2, color: draft.dryRun.errors.length ? 'var(--danger)' : 'var(--warning)' }}>
+                            {[...draft.dryRun.errors, ...draft.warnings].slice(0, 4).join(' ')}
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', gap: 7, marginTop: 8, flexWrap: 'wrap' }}>
+                          <button type="button" onClick={() => void saveWorkspaceSkill(message.id, draft)} style={{ height: 28, padding: '0 9px', borderRadius: 6, border: '1px solid var(--border-md)', background: 'transparent', color: 'var(--text-primary)', fontSize: 11.5, cursor: 'pointer' }}>
+                            Save as workspace skill
+                          </button>
+                          <button type="button" onClick={() => void approveGlobalSkill(message.id, draft)} style={{ height: 28, padding: '0 9px', borderRadius: 6, border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 11.5, cursor: 'pointer' }}>
+                            Approve to shared library
+                          </button>
+                        </div>
+                      </div>
                     ))}
                   </div>
                 )}

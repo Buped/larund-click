@@ -3,7 +3,7 @@
 import { AutomationsPage as AutomationsBuilder } from '../automations/AutomationsPage';
 
 export function AutomationsPage({ userId, projectId, isAdmin, refreshKey, onOpenChat }: { userId: string; projectId?: string | null; isAdmin: boolean; refreshKey?: number; onOpenChat?: (sessionId: string) => void }) {
-  if (!isAdmin) return null;
+  void isAdmin;
 
   return <AutomationsBuilder userId={userId} workspaceId={projectId ?? undefined} refreshKey={refreshKey} onOpenChat={onOpenChat} />;
 }

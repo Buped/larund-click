@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { CONTROL_SYSTEM_PROMPT } from '../prompt';
 import { isLegacyVisualActionName, parseControlAction } from '../parser';
+import { BUNDLED_SKILL_FILES } from '../../skills/bundled';
+
+// Tool-specific procedural detail now lives in on-demand skill bodies (bundled.ts),
+// not the always-injected operator prompt. These helpers find the relevant skill.
+const ALL_SKILLS = BUNDLED_SKILL_FILES.join('\n\n');
+const skillBody = (name: string) =>
+  BUNDLED_SKILL_FILES.find((s) => s.includes(`name: ${name}`) || s.includes(`name: "${name}"`)) ?? '';
 
 describe('no-mouse parser', () => {
   it('accepts structured no-mouse actions', () => {
@@ -36,27 +43,37 @@ describe('no-mouse parser', () => {
     expect(isLegacyVisualActionName('file.move')).toBe(false);
   });
 
-  it('prompt declares structured visualization and no legacy tools', () => {
+  it('prompt declares structured visualization, core contract, skills pointer and no legacy tools', () => {
     expect(CONTROL_SYSTEM_PROMPT).not.toContain('mouse_click');
     expect(CONTROL_SYSTEM_PROMPT).not.toContain('soc.visual');
     expect(CONTROL_SYSTEM_PROMPT).not.toContain('desktop_click_point');
+    // visualization.render stays a core always-available action shape.
     expect(CONTROL_SYSTEM_PROMPT).toContain('visualization.render');
-    expect(CONTROL_SYSTEM_PROMPT).toContain('CHAT-NATIVE VISUALIZATION');
-    expect(CONTROL_SYSTEM_PROMPT).toMatch(/not thinking/i);
-    expect(CONTROL_SYSTEM_PROMPT).toMatch(/two-point line/i);
+    expect(CONTROL_SYSTEM_PROMPT).toMatch(/CHAT VISUALIZATION/);
+    // The slimmed prompt keeps the output contract + the on-demand skills pointer.
+    expect(CONTROL_SYSTEM_PROMPT).toContain('skill.run');
+    expect(CONTROL_SYSTEM_PROMPT).toContain('COMPLETION CHECKLIST');
+    expect(CONTROL_SYSTEM_PROMPT).toMatch(/USE SKILLS/i);
   });
 
-  it('prompt requires professional Excel report output for XLSX requests', () => {
-    expect(CONTROL_SYSTEM_PROMPT).toContain('EXCEL REPORT STANDARD');
-    expect(CONTROL_SYSTEM_PROMPT).toMatch(/default\s+to\s+\.xlsx/i);
-    expect(CONTROL_SYSTEM_PROMPT).toContain('meg minden ilyesmi');
-    expect(CONTROL_SYSTEM_PROMPT).toMatch(/minimum 50/i);
-    expect(CONTROL_SYSTEM_PROMPT).toContain('native Excel Table');
-    expect(CONTROL_SYSTEM_PROMPT).toMatch(/summary\s+sheet/i);
-    expect(CONTROL_SYSTEM_PROMPT).toContain('visible static');
-    expect(CONTROL_SYSTEM_PROMPT).toContain('LibreOffice');
-    expect(CONTROL_SYSTEM_PROMPT).toContain('sheet.add_table');
-    expect(CONTROL_SYSTEM_PROMPT).toContain('sheet.add_chart');
-    expect(CONTROL_SYSTEM_PROMPT).toMatch(/sheet\.read or sheet\.to_json/i);
+  it('moved the full chat-visualization standard into its skill body', () => {
+    const viz = skillBody('chat-visualization');
+    expect(viz).toContain('visualization.render');
+    expect(viz).toMatch(/not thinking/i);
+    expect(viz).toMatch(/two-point line/i);
+    expect(viz).toContain('#f4f0ea');
+  });
+
+  it('moved the professional Excel report standard into the local-office skill body', () => {
+    const office = skillBody('local-office');
+    expect(office).toMatch(/\.xlsx by default|default\s+to\s+\.xlsx/i);
+    expect(office).toContain('native Excel Table');
+    expect(office).toMatch(/summary\s+sheet/i);
+    expect(office).toContain('LibreOffice');
+    expect(office).toContain('sheet.add_table');
+    expect(office).toContain('sheet.add_chart');
+    // The richer report wording and minimum-rows rule remain reachable somewhere in the catalog.
+    expect(ALL_SKILLS).toContain('meg minden ilyesmi');
+    expect(ALL_SKILLS).toMatch(/minimum 50/i);
   });
 });

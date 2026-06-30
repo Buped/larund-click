@@ -78,7 +78,7 @@ describe('automation agent queue processor', () => {
   it('goes waiting_approval and resumes after approval', async () => {
     runControlLoopMock.mockImplementation(async (_task: string, _model: string, _user: string, callbacks: AgentLoopCallbacks) => {
       callbacks.onStatus('executing');
-      const decision = await callbacks.onApproval!({ action: 'browser.click', risk: 'external_write', reason: 'Like post', argsSummary: '{"label":"Like"}' });
+      const { decision } = await callbacks.onApproval!({ action: 'browser.click', risk: 'external_write', reason: 'Like post', argsSummary: '{"label":"Like"}' });
       if (decision !== 'deny') callbacks.onComplete('Liked after approval');
     });
     const automation = await createAutomation({

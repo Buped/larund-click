@@ -515,6 +515,7 @@ function SkillBuilderForm({ userId, workspaceId, onDone, onCancel }: { userId: s
 
   async function save() {
     if (!name.trim() || !description.trim()) { setErr('Name and description are required.'); return; }
+    if (!workspaceId) { setErr('Choose or create a workspace before creating skills.'); return; }
     setBusy(true); setErr(null);
     try {
       await createBuilderSkill({

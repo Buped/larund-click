@@ -3,6 +3,7 @@ import { listBuilderSkills, updateBuilderSkill, deleteBuilderSkill, createBuilde
 import type { CreateSkillBuilderInput, SkillBuilderPatch, SkillBuilderSkill } from '../builder/types';
 import { builderSkillToPackage, skillToPackage } from './adapter';
 import type { SkillPackage } from './types';
+import { syncApprovedSharedSkills } from '../shared-store';
 
 export async function listSkillPackages(args: {
   userId: string;
@@ -15,7 +16,12 @@ export async function listSkillPackages(args: {
     workspaceId: args.workspaceId,
     includeSuggested: args.includeSuggested,
   }).catch(() => []);
-  return [...custom.map(builderSkillToPackage), ...builtIn];
+  const shared = await syncApprovedSharedSkills({ userId: args.userId, workspaceId: args.workspaceId }).catch(() => []);
+  return dedupeByName([
+    ...custom.map(builderSkillToPackage),
+    ...shared.map((record) => builderSkillToPackage(record.manifestJson)),
+    ...builtIn,
+  ]);
 }
 
 export async function getSkillPackage(id: string, args: { userId: string; workspaceId?: string }): Promise<SkillPackage | null> {
@@ -46,6 +52,9 @@ export async function setSkillPackageEnabled(skill: SkillPackage, enabled: boole
       version: skill.version,
       description: skill.description,
       source: args.workspaceId ? 'workspace' : 'user',
+      kind: skill.kind ?? 'workflow',
+      target: skill.target,
+      learning: skill.learning,
       instructionBody: skill.instructionBody,
       triggerPhrases: skill.triggerPhrases,
       categories: skill.categories,
@@ -77,4 +86,16 @@ export async function setSkillPackageEnabled(skill: SkillPackage, enabled: boole
   }
   const updated = await setBuilderSkillEnabled(skill.id, enabled);
   return updated ? builderSkillToPackage(updated) : null;
+}
+
+function dedupeByName(skills: SkillPackage[]): SkillPackage[] {
+  const seen = new Set<string>();
+  const out: SkillPackage[] = [];
+  for (const skill of skills) {
+    const key = skill.name.trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(skill);
+  }
+  return out;
 }

@@ -62,6 +62,15 @@ export interface UserCorrection {
   timestamp: number;
 }
 
+/** A concrete acceptance condition the run is checked against. */
+export interface SuccessCriterion {
+  id: string;
+  text: string;
+  /** How this criterion is proven: structured read-back, visual screenshot, or both. */
+  method: 'structured' | 'visual' | 'both';
+  status: 'pending' | 'met' | 'unmet';
+}
+
 export interface SpreadsheetExpectedScope {
   kind: 'spreadsheet_rows';
   sourcePath: string;
@@ -120,6 +129,10 @@ export interface ActiveTaskState {
   };
   requiresAuth?: boolean;
   lastKnownState?: string;
+  /** Explicit, visually-checkable acceptance conditions ("definition of done"). */
+  successCriteria?: SuccessCriterion[];
+  /** Latest screenshot-based verdict from a screen.verify action. */
+  lastVisualVerdict?: import('../control-system/vision-verifier').VisualVerdict;
   failedAttempts: FailedAttempt[];
   userCorrections: UserCorrection[];
   completedChecks: string[];

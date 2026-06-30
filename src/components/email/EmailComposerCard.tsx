@@ -3,6 +3,8 @@ import type { EmailDraft, EmailDraftStatus } from '../../lib/email/types';
 import { isGmailConnected, saveGmailDraft, sendGmailDraft } from '../../lib/email/gmail-actions';
 import { markdownToEmailInnerHtml } from '../../lib/email/html';
 import { beginOAuthConnect } from '../../lib/connections/oauth/connect';
+import { createConnectionRegistry } from '../../lib/connections/registry';
+import { TemplatePicker } from './TemplatePicker';
 
 // Chat-embedded email composer. Renders an editable mini email client and drives
 // the real Gmail draft/send tools. Status is authoritative: a local_draft is never
@@ -53,6 +55,8 @@ export function EmailComposerCard({ draft, userId, onChange }: Props) {
   const [bodyView, setBodyView] = useState<'preview' | 'source'>('preview');
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState('');
   // draft.gmailConnected flips true after a successful inline connect; otherwise
   // ask the live store. This keeps the card reactive right after connecting.
   const connected = draft.gmailConnected || (userId ? isGmailConnected(userId) : false);
@@ -113,6 +117,22 @@ export function EmailComposerCard({ draft, userId, onChange }: Props) {
     }
   }
 
+  // Diagnostics: run the provider's own connection probe so the user sees exactly
+  // which Google service (Gmail/Drive/…) is green/red instead of guessing.
+  async function handleTest() {
+    if (!userId || testing) return;
+    setTesting(true);
+    setTestResult('');
+    try {
+      const res = await createConnectionRegistry(userId).call('google-workspace', 'google.test_connection', {});
+      setTestResult(res.output || (res.success ? 'A kapcsolat rendben.' : (res.error ?? 'Ismeretlen hiba.')));
+    } catch (e) {
+      setTestResult(`A teszt nem futott le: ${String((e as Error)?.message ?? e)}`);
+    } finally {
+      setTesting(false);
+    }
+  }
+
   async function handleCopy() {
     const text = `To: ${draft.to}\n${draft.cc ? `Cc: ${draft.cc}\n` : ''}${draft.bcc ? `Bcc: ${draft.bcc}\n` : ''}Subject: ${draft.subject}\n\n${draft.body}`;
     try { await navigator.clipboard.writeText(text); } catch { /* clipboard may be unavailable */ }
@@ -153,9 +173,12 @@ export function EmailComposerCard({ draft, userId, onChange }: Props) {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', marginBottom: 3 }}>
             <div style={label}>Szöveg</div>
-            <div style={{ marginLeft: 'auto', display: 'inline-flex', gap: 2, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 7, padding: 2 }}>
+            <div style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            {editable && <TemplatePicker userId={userId} subject={draft.subject} body={draft.body} onApply={(next) => patch(next)} />}
+            <div style={{ display: 'inline-flex', gap: 2, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 7, padding: 2 }}>
               <button onClick={() => setBodyView('preview')} style={toggleBtn(bodyView === 'preview')}>Előnézet</button>
               <button onClick={() => setBodyView('source')} style={toggleBtn(bodyView === 'source')}>Forrás</button>
+            </div>
             </div>
           </div>
           {bodyView === 'preview' ? (
@@ -202,6 +225,12 @@ export function EmailComposerCard({ draft, userId, onChange }: Props) {
           </div>
         )}
 
+        {testResult && (
+          <div style={{ fontSize: 12, color: 'var(--text)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 10px', whiteSpace: 'pre-wrap' }}>
+            {testResult}
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingTop: 2 }}>
           {!connected ? (
             <button onClick={handleConnect} disabled={!userId || connecting || !!busy} style={btn(Boolean(userId) && !connecting && !busy, true)}>
@@ -220,6 +249,9 @@ export function EmailComposerCard({ draft, userId, onChange }: Props) {
             </>
           )}
           <button onClick={handleCopy} style={btn(true, false)}>Másolás</button>
+          <button onClick={handleTest} disabled={!userId || testing} style={btn(Boolean(userId) && !testing, false)}>
+            {testing ? 'Tesztelés…' : 'Kapcsolat tesztelése'}
+          </button>
           {draft.webUrl && (
             <a href={draft.webUrl} target="_blank" rel="noreferrer" style={{ ...btn(true, false), textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
               Megnyitás Gmailben

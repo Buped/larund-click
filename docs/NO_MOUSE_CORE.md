@@ -4,6 +4,20 @@ Larund Click's agent core **does not control the mouse or cursor**. There is no
 screenshot-click, OCR-click, bbox, coordinate, grid, target-resolver, visual
 grounding or Self-Operating-Computer path anywhere in the runtime.
 
+## Visual *verification* is allowed; visual *control* is not
+
+The no-mouse rule is about **control**. Read-only **perception** is permitted: the
+`screen.verify` action captures a screenshot (browser via CDP, the real desktop via
+GDI, or an artifact preview) and a vision model judges whether the task's success
+criteria are visibly satisfied. It returns a structured verdict
+(`{done, progress, metCriteria, unmetCriteria, blockers, nextStepHint}`) and **never**
+returns coordinates, clicks, or any pixel target. The agent still acts only through
+structured tools (DOM/CDP/API/keyboard). For browser/desktop-app tasks the completion
+guard *requires* a passing `screen.verify` before `task.complete`. The only screen
+commands registered in `lib.rs` are the read-only captures
+(`browser_screenshot`, `desktop_capture_screen`); no mouse/click/type desktop command
+is registered. See `src/lib/control-system/vision-verifier.ts`.
+
 ## Why
 
 Pixel/visual cursor control (the old SOC mode) was unreliable, unauditable, and

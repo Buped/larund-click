@@ -10,6 +10,7 @@
 //! %LOCALAPPDATA%\LarundClick\AgentChrome. The user logs in once there and it
 //! stays logged in for future tasks.
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::process::Command;
@@ -198,9 +199,34 @@ if(/captcha|i'?m not a robot|nem vagyok robot/.test(bodyText))hints.push('captch
 if(/access denied|permission required|nincs jogosultság|403 forbidden/.test(bodyText))hints.push('permission_required');
 return 'URL: '+location.href+'\nTITLE: '+document.title+'\nFOCUSED: '+focused+'\nSTATE_HINTS: '+(hints.join(',')||'none')+'\nINPUTS:\n'+inputs.join('\n')+'\nBUTTONS/LINKS:\n'+buttons.join(' | ');})()"#;
 
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserTabInfo {
+    id: String,
+    title: String,
+    url: String,
+    active: bool,
+}
+
+#[derive(Clone, Debug)]
+struct TargetInfo {
+    id: String,
+    title: String,
+    url: String,
+    type_name: String,
+    opener_id: Option<String>,
+}
+
 struct BrowserState {
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
     next_id: u64,
+    targets: HashMap<String, TargetInfo>,
+    target_sessions: HashMap<String, String>,
+    session_targets: HashMap<String, String>,
+    active_target_id: Option<String>,
+    previous_target_id: Option<String>,
+    recent_tab_notice: Option<String>,
+    active_requests: HashMap<String, usize>,
 }
 
 static BROWSER: OnceLock<Mutex<Option<BrowserState>>> = OnceLock::new();
@@ -372,38 +398,205 @@ fn ensure_browser() -> Result<(), String> {
     Err("The browser did not become reachable on the debug port".to_string())
 }
 
-fn connect_page() -> Result<BrowserState, String> {
-    let list = parse_json_http(&http_get("/json/list")?)?;
-    let arr = list.as_array().ok_or("CDP /json/list was not an array")?;
-    let page = arr
-        .iter()
-        .find(|t| t.get("type").and_then(|x| x.as_str()) == Some("page"))
-        .ok_or("No page target in agent Chrome")?;
-    let ws_url_raw = page
+fn target_info_from_value(v: &Value) -> Option<TargetInfo> {
+    let id = v.get("targetId").or_else(|| v.get("id")).and_then(|x| x.as_str())?.to_string();
+    Some(TargetInfo {
+        id,
+        title: v.get("title").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+        url: v.get("url").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+        type_name: v.get("type").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+        opener_id: v.get("openerId").and_then(|x| x.as_str()).map(|s| s.to_string()),
+    })
+}
+
+fn choose_page_target(targets: &HashMap<String, TargetInfo>) -> Option<&TargetInfo> {
+    targets
+        .values()
+        .filter(|t| t.type_name == "page")
+        .max_by_key(|t| (!t.url.starts_with("about:"), !t.url.is_empty()))
+}
+
+fn version_ws_url() -> Result<String, String> {
+    let version = parse_json_http(&http_get("/json/version")?)?;
+    let ws_url_raw = version
         .get("webSocketDebuggerUrl")
         .and_then(|x| x.as_str())
-        .ok_or("No webSocketDebuggerUrl for page target")?;
-    // Defensive: ensure the URL carries the debug host:port even if it was omitted.
+        .ok_or("No browser-level webSocketDebuggerUrl from /json/version")?;
     let target = current_target();
-    let ws_url = if let Some(rest) = ws_url_raw.strip_prefix("ws://127.0.0.1/") {
+    Ok(if let Some(rest) = ws_url_raw.strip_prefix("ws://127.0.0.1/") {
         format!("ws://{}:{}/{}", target.host, target.port, rest)
     } else {
         ws_url_raw.to_string()
-    };
+    })
+}
+
+fn read_initial_targets() -> HashMap<String, TargetInfo> {
+    let mut out = HashMap::new();
+    if let Ok(resp) = http_get("/json/list") {
+        if let Ok(list) = parse_json_http(&resp) {
+            if let Some(arr) = list.as_array() {
+                for v in arr {
+                    if let Some(info) = target_info_from_value(v) {
+                        out.insert(info.id.clone(), info);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn connect_browser() -> Result<BrowserState, String> {
+    let ws_url = version_ws_url()?;
     let (socket, _resp) = tungstenite::connect(&ws_url).map_err(|e| e.to_string())?;
     if let MaybeTlsStream::Plain(s) = socket.get_ref() {
         s.set_read_timeout(Some(Duration::from_secs(35))).ok();
     }
-    Ok(BrowserState { socket, next_id: 0 })
+    let targets = read_initial_targets();
+    let active_target_id = choose_page_target(&targets).map(|t| t.id.clone());
+    let mut state = BrowserState {
+        socket,
+        next_id: 0,
+        targets,
+        target_sessions: HashMap::new(),
+        session_targets: HashMap::new(),
+        active_target_id,
+        previous_target_id: None,
+        recent_tab_notice: None,
+        active_requests: HashMap::new(),
+    };
+    cdp_root(&mut state, "Target.setDiscoverTargets", json!({ "discover": true })).ok();
+    refresh_targets(&mut state).ok();
+    ensure_active_session(&mut state)?;
+    enable_session_domains(&mut state).ok();
+    Ok(state)
 }
 
-fn cdp(state: &mut BrowserState, method: &str, params: Value) -> Result<Value, String> {
+fn refresh_targets(state: &mut BrowserState) -> Result<(), String> {
+    let res = cdp_root(state, "Target.getTargets", json!({}))?;
+    if let Some(infos) = res.get("targetInfos").and_then(|x| x.as_array()) {
+        for v in infos {
+            if let Some(info) = target_info_from_value(v) {
+                state.targets.insert(info.id.clone(), info);
+            }
+        }
+    }
+    if state.active_target_id.is_none() {
+        state.active_target_id = choose_page_target(&state.targets).map(|t| t.id.clone());
+    }
+    Ok(())
+}
+
+fn ensure_active_session(state: &mut BrowserState) -> Result<String, String> {
+    if state.active_target_id.is_none() {
+        refresh_targets(state).ok();
+    }
+    let target_id = state
+        .active_target_id
+        .clone()
+        .or_else(|| choose_page_target(&state.targets).map(|t| t.id.clone()))
+        .ok_or("No page target in agent browser")?;
+    state.active_target_id = Some(target_id.clone());
+    if let Some(sid) = state.target_sessions.get(&target_id) {
+        return Ok(sid.clone());
+    }
+    let res = cdp_root(
+        state,
+        "Target.attachToTarget",
+        json!({ "targetId": target_id, "flatten": true }),
+    )?;
+    let sid = res
+        .get("sessionId")
+        .and_then(|x| x.as_str())
+        .ok_or("Target.attachToTarget returned no sessionId")?
+        .to_string();
+    state.target_sessions.insert(target_id.clone(), sid.clone());
+    state.session_targets.insert(sid.clone(), target_id);
+    Ok(sid)
+}
+
+fn enable_session_domains(state: &mut BrowserState) -> Result<(), String> {
+    cdp(state, "Page.enable", json!({})).ok();
+    cdp(state, "Runtime.enable", json!({})).ok();
+    cdp(state, "DOM.enable", json!({})).ok();
+    cdp(state, "Network.enable", json!({})).ok();
+    Ok(())
+}
+
+fn handle_cdp_event(state: &mut BrowserState, v: &Value) {
+    let Some(method) = v.get("method").and_then(|x| x.as_str()) else { return };
+    let params = v.get("params").unwrap_or(&Value::Null);
+    match method {
+        "Target.targetCreated" | "Target.targetInfoChanged" => {
+            if let Some(info) = params.get("targetInfo").and_then(target_info_from_value) {
+                let is_new_popup = method == "Target.targetCreated"
+                    && info.type_name == "page"
+                    && info.opener_id.as_deref() == state.active_target_id.as_deref();
+                let id = info.id.clone();
+                let url = info.url.clone();
+                state.targets.insert(id.clone(), info);
+                if is_new_popup {
+                    state.previous_target_id = state.active_target_id.clone();
+                    state.active_target_id = Some(id.clone());
+                    state.recent_tab_notice = Some(format!("AUTO_TAB_SWITCH: opened popup tab {} {}", id, url));
+                }
+            }
+        }
+        "Target.targetDestroyed" => {
+            if let Some(target_id) = params.get("targetId").and_then(|x| x.as_str()) {
+                let target_id = target_id.to_string();
+                state.targets.remove(&target_id);
+                if let Some(sid) = state.target_sessions.remove(&target_id) {
+                    state.session_targets.remove(&sid);
+                    state.active_requests.remove(&sid);
+                }
+                if state.active_target_id.as_deref() == Some(&target_id) {
+                    if let Some(prev) = state.previous_target_id.clone().filter(|p| state.targets.contains_key(p)) {
+                        state.active_target_id = Some(prev.clone());
+                        state.recent_tab_notice = Some(format!("AUTO_TAB_SWITCH: popup closed; returned to tab {}", prev));
+                    } else {
+                        state.active_target_id = choose_page_target(&state.targets).map(|t| t.id.clone());
+                    }
+                }
+            }
+        }
+        "Target.attachedToTarget" => {
+            let sid = params.get("sessionId").and_then(|x| x.as_str()).map(|s| s.to_string());
+            let tid = params
+                .get("targetInfo")
+                .and_then(|x| x.get("targetId"))
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string());
+            if let (Some(sid), Some(tid)) = (sid, tid) {
+                state.target_sessions.insert(tid.clone(), sid.clone());
+                state.session_targets.insert(sid, tid);
+            }
+        }
+        "Network.requestWillBeSent" => {
+            if let Some(sid) = v.get("sessionId").and_then(|x| x.as_str()) {
+                *state.active_requests.entry(sid.to_string()).or_insert(0) += 1;
+            }
+        }
+        "Network.loadingFinished" | "Network.loadingFailed" => {
+            if let Some(sid) = v.get("sessionId").and_then(|x| x.as_str()) {
+                let entry = state.active_requests.entry(sid.to_string()).or_insert(0);
+                *entry = entry.saturating_sub(1);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn cdp_send(state: &mut BrowserState, method: &str, params: Value, session_id: Option<String>) -> Result<Value, String> {
     state.next_id += 1;
     let id = state.next_id;
-    let payload = json!({ "id": id, "method": method, "params": params }).to_string();
+    let mut payload = json!({ "id": id, "method": method, "params": params });
+    if let Some(sid) = &session_id {
+        payload["sessionId"] = json!(sid);
+    }
     state
         .socket
-        .send(Message::Text(payload.into()))
+        .send(Message::Text(payload.to_string().into()))
         .map_err(|e| e.to_string())?;
 
     let deadline = Instant::now() + Duration::from_secs(40);
@@ -424,6 +617,7 @@ fn cdp(state: &mut BrowserState, method: &str, params: Value) -> Result<Value, S
                     }
                     return Ok(v.get("result").cloned().unwrap_or(Value::Null));
                 }
+                handle_cdp_event(state, &v);
                 // otherwise it's an event or another id — keep reading
             }
             Message::Close(_) => return Err("CDP connection closed".to_string()),
@@ -432,11 +626,28 @@ fn cdp(state: &mut BrowserState, method: &str, params: Value) -> Result<Value, S
     }
 }
 
+fn cdp_root(state: &mut BrowserState, method: &str, params: Value) -> Result<Value, String> {
+    cdp_send(state, method, params, None)
+}
+
+fn cdp(state: &mut BrowserState, method: &str, params: Value) -> Result<Value, String> {
+    let sid = ensure_active_session(state)?;
+    cdp_send(state, method, params, Some(sid))
+}
+
 fn eval(state: &mut BrowserState, expr: &str) -> Result<String, String> {
+    eval_in_context(state, expr, None)
+}
+
+fn eval_in_context(state: &mut BrowserState, expr: &str, context_id: Option<i64>) -> Result<String, String> {
+    let mut params = json!({ "expression": expr, "returnByValue": true, "awaitPromise": true });
+    if let Some(ctx) = context_id {
+        params["contextId"] = json!(ctx);
+    }
     let res = cdp(
         state,
         "Runtime.evaluate",
-        json!({ "expression": expr, "returnByValue": true, "awaitPromise": true }),
+        params,
     )?;
     if let Some(exc) = res.get("exceptionDetails") {
         return Err(format!("JS error: {}", exc));
@@ -449,11 +660,90 @@ fn eval(state: &mut BrowserState, expr: &str) -> Result<String, String> {
     })
 }
 
+fn frame_ids_from_tree_node(node: &Value, out: &mut Vec<String>) {
+    if let Some(id) = node
+        .get("frame")
+        .and_then(|f| f.get("id"))
+        .and_then(|x| x.as_str())
+    {
+        out.push(id.to_string());
+    }
+    if let Some(children) = node.get("childFrames").and_then(|x| x.as_array()) {
+        for child in children {
+            frame_ids_from_tree_node(child, out);
+        }
+    }
+}
+
+fn frame_execution_contexts(state: &mut BrowserState) -> Vec<i64> {
+    let mut contexts = Vec::new();
+    if let Ok(tree) = cdp(state, "Page.getFrameTree", json!({})) {
+        let mut frame_ids = Vec::new();
+        if let Some(root) = tree.get("frameTree") {
+            frame_ids_from_tree_node(root, &mut frame_ids);
+        }
+        for frame_id in frame_ids.into_iter().skip(1) {
+            if let Ok(world) = cdp(
+                state,
+                "Page.createIsolatedWorld",
+                json!({ "frameId": frame_id, "worldName": "larund-click" }),
+            ) {
+                if let Some(ctx) = world.get("executionContextId").and_then(|x| x.as_i64()) {
+                    contexts.push(ctx);
+                }
+            }
+        }
+    }
+    contexts
+}
+
+fn eval_across_frames(state: &mut BrowserState, expr: &str) -> Result<String, String> {
+    let first = eval(state, expr)?;
+    if !first.starts_with("NOT_FOUND") {
+        return Ok(first);
+    }
+    for ctx in frame_execution_contexts(state) {
+        if let Ok(r) = eval_in_context(state, expr, Some(ctx)) {
+            if !r.starts_with("NOT_FOUND") {
+                return Ok(if r.starts_with("CLICKED") || r.starts_with("TYPED") {
+                    format!("{r} in iframe")
+                } else {
+                    r
+                });
+            }
+        }
+    }
+    Ok(first)
+}
+
+fn network_idle(state: &mut BrowserState, quiet: Duration, max: Duration) {
+    let sid = match ensure_active_session(state) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let start = Instant::now();
+    let mut idle_since: Option<Instant> = None;
+    while start.elapsed() < max {
+        let active = *state.active_requests.get(&sid).unwrap_or(&0);
+        if active == 0 {
+            let since = idle_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= quiet {
+                return;
+            }
+        } else {
+            idle_since = None;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        // Give the CDP socket a chance to surface network events by issuing a cheap command.
+        let _ = cdp(state, "Runtime.evaluate", json!({ "expression": "1", "returnByValue": true }));
+    }
+}
+
 fn wait_ready(state: &mut BrowserState) {
     for _ in 0..40 {
         if let Ok(rs) = eval(state, "document.readyState") {
             if rs == "complete" {
-                std::thread::sleep(Duration::from_millis(400));
+                network_idle(state, Duration::from_millis(500), Duration::from_secs(3));
                 return;
             }
         }
@@ -461,25 +751,31 @@ fn wait_ready(state: &mut BrowserState) {
     }
 }
 
-fn with_browser<T>(f: impl FnOnce(&mut BrowserState) -> Result<T, String>) -> Result<T, String> {
+fn is_transient_cdp_error(e: &str) -> bool {
+    let low = e.to_lowercase();
+    low.contains("closed")
+        || low.contains("reset")
+        || low.contains("timeout")
+        || low.contains("os error")
+        || low.contains("broken")
+        || low.contains("execution context was destroyed")
+        || low.contains("target closed")
+        || low.contains("session")
+}
+
+fn with_browser<T>(f: impl Fn(&mut BrowserState) -> Result<T, String>) -> Result<T, String> {
     let mut guard = store().lock().map_err(|_| "browser lock poisoned".to_string())?;
     if guard.is_none() {
         ensure_browser()?;
-        *guard = Some(connect_page()?);
+        *guard = Some(connect_browser()?);
     }
-    let state = guard.as_mut().unwrap();
-    let result = f(state);
+    let result = f(guard.as_mut().unwrap());
     if let Err(e) = &result {
-        // Drop the connection on transport-level failures so the next call
-        // relaunches/reconnects (handles a closed tab or killed Chrome).
-        let low = e.to_lowercase();
-        if low.contains("closed")
-            || low.contains("reset")
-            || low.contains("timeout")
-            || low.contains("os error")
-            || low.contains("broken")
-        {
+        if is_transient_cdp_error(e) {
             *guard = None;
+            ensure_browser()?;
+            *guard = Some(connect_browser()?);
+            return f(guard.as_mut().unwrap());
         }
     }
     result
@@ -504,6 +800,62 @@ fn apply_profile(profile: Option<BrowserProfileArg>) -> Result<(), String> {
     Ok(())
 }
 
+fn tab_list(state: &mut BrowserState) -> Vec<BrowserTabInfo> {
+    refresh_targets(state).ok();
+    let active = state.active_target_id.clone();
+    let mut tabs: Vec<BrowserTabInfo> = state
+        .targets
+        .values()
+        .filter(|t| t.type_name == "page")
+        .map(|t| BrowserTabInfo {
+            id: t.id.clone(),
+            title: t.title.clone(),
+            url: t.url.clone(),
+            active: Some(&t.id) == active.as_ref(),
+        })
+        .collect();
+    tabs.sort_by(|a, b| b.active.cmp(&a.active).then(a.title.cmp(&b.title)));
+    tabs
+}
+
+fn session_header(state: &mut BrowserState) -> String {
+    let tabs = tab_list(state);
+    let active = tabs.iter().find(|t| t.active);
+    let notice = state.recent_tab_notice.take();
+    format!(
+        "TABS: {} open; active={} {} {}\n{}",
+        tabs.len(),
+        active.map(|t| t.id.as_str()).unwrap_or("(none)"),
+        active.map(|t| t.title.as_str()).unwrap_or(""),
+        active.map(|t| t.url.as_str()).unwrap_or(""),
+        notice.unwrap_or_else(|| "AUTO_TAB_SWITCH: none".to_string())
+    )
+}
+
+#[tauri::command]
+pub async fn browser_list_tabs() -> Result<Vec<BrowserTabInfo>, String> {
+    with_browser(|s| Ok(tab_list(s)))
+}
+
+#[tauri::command]
+pub async fn browser_switch_tab(target_id: String) -> Result<String, String> {
+    with_browser(|s| {
+        refresh_targets(s).ok();
+        let info = s
+            .targets
+            .get(&target_id)
+            .filter(|t| t.type_name == "page")
+            .cloned()
+            .ok_or_else(|| format!("No page tab with target id {target_id}"))?;
+        s.previous_target_id = s.active_target_id.clone();
+        s.active_target_id = Some(target_id.clone());
+        ensure_active_session(s)?;
+        enable_session_domains(s).ok();
+        s.recent_tab_notice = Some(format!("AUTO_TAB_SWITCH: manual switch to tab {} {}", info.id, info.url));
+        Ok(format!("Switched to tab {} {}", info.id, info.url))
+    })
+}
+
 #[tauri::command]
 pub async fn browser_open(url: String, browser_profile: Option<BrowserProfileArg>) -> Result<String, String> {
     apply_profile(browser_profile)?;
@@ -517,12 +869,16 @@ pub async fn browser_open(url: String, browser_profile: Option<BrowserProfileArg
 #[tauri::command]
 pub async fn browser_click(target: String) -> Result<String, String> {
     with_browser(|s| {
+        let before = s.active_target_id.clone();
         let t = serde_json::to_string(&target).unwrap_or_else(|_| "\"\"".into());
-        let r = eval(s, &format!("({})({})", CLICK_JS, t))?;
+        let r = eval_across_frames(s, &format!("({})({})", CLICK_JS, t))?;
         if r.starts_with("NOT_FOUND") {
             return Err(format!("No element matching \"{}\" was found on the page", target));
         }
         wait_ready(s);
+        if s.active_target_id == before {
+            refresh_targets(s).ok();
+        }
         Ok(r)
     })
 }
@@ -532,7 +888,7 @@ pub async fn browser_type(target: String, text: String) -> Result<String, String
     with_browser(|s| {
         let tg = serde_json::to_string(&target).unwrap_or_else(|_| "\"\"".into());
         let tx = serde_json::to_string(&text).unwrap_or_else(|_| "\"\"".into());
-        let r = eval(s, &format!("({})({},{})", TYPE_JS, tg, tx))?;
+        let r = eval_across_frames(s, &format!("({})({},{})", TYPE_JS, tg, tx))?;
         if r.starts_with("NOT_FOUND") {
             return Err(format!("No input matching \"{}\" was found on the page", target));
         }
@@ -561,6 +917,8 @@ fn key_descriptor(k: &str) -> Result<(String, String, i64), String> {
     match lower.as_str() {
         "enter" | "return" => Ok(("Enter".into(), "Enter".into(), 13)),
         "tab" => Ok(("Tab".into(), "Tab".into(), 9)),
+        "arrowdown" | "down" => Ok(("ArrowDown".into(), "ArrowDown".into(), 40)),
+        "arrowup" | "up" => Ok(("ArrowUp".into(), "ArrowUp".into(), 38)),
         "escape" | "esc" => Ok(("Escape".into(), "Escape".into(), 27)),
         "space" => Ok((" ".into(), "Space".into(), 32)),
         "backspace" => Ok(("Backspace".into(), "Backspace".into(), 8)),
@@ -605,34 +963,31 @@ pub async fn browser_shortcut(keys: Vec<String>) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn browser_read(selector: Option<String>) -> Result<String, String> {
-    with_browser(|s| match selector {
+    with_browser(|s| match selector.as_ref() {
         Some(sel) if !sel.trim().is_empty() => {
             let q = serde_json::to_string(&sel).unwrap_or_else(|_| "\"\"".into());
             let expr = format!(
                 "(function(s){{const e=document.querySelector(s);return e?((e.innerText||e.value||e.textContent||'')+'').trim():'NOT_FOUND';}})({})",
                 q
             );
-            let r = eval(s, &expr)?;
+            let r = eval_across_frames(s, &expr)?;
             if r == "NOT_FOUND" {
                 return Err(format!("No element matching \"{}\" was found on the page", sel));
             }
             Ok(r)
         }
-        _ => eval(s, READ_JS),
+        _ => {
+            let header = session_header(s);
+            Ok(format!("{}\n{}", header, eval(s, READ_JS)?))
+        }
     })
 }
 
 #[tauri::command]
 pub async fn browser_key(key: String) -> Result<String, String> {
     with_browser(|s| {
-        let (k, vk) = match key.to_lowercase().as_str() {
-            "enter" | "return" => ("Enter", 13),
-            "tab" => ("Tab", 9),
-            "escape" | "esc" => ("Escape", 27),
-            "backspace" => ("Backspace", 8),
-            _ => return Err(format!("Unsupported browser key: {}", key)),
-        };
-        let p = json!({ "key": k, "code": k, "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk });
+        let (k, code, vk) = key_descriptor(&key)?;
+        let p = json!({ "key": k, "code": code, "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk });
         let mut down = p.clone();
         down["type"] = json!("keyDown");
         let mut up = p;
@@ -641,6 +996,114 @@ pub async fn browser_key(key: String) -> Result<String, String> {
         cdp(s, "Input.dispatchKeyEvent", up)?;
         wait_ready(s);
         Ok(format!("Pressed {}", key))
+    })
+}
+
+fn dispatch_key(state: &mut BrowserState, key: &str) -> Result<(), String> {
+    let (k, code, vk) = key_descriptor(key)?;
+    let p = json!({ "key": k, "code": code, "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk });
+    let mut down = p.clone();
+    down["type"] = json!("keyDown");
+    let mut up = p;
+    up["type"] = json!("keyUp");
+    cdp(state, "Input.dispatchKeyEvent", down)?;
+    cdp(state, "Input.dispatchKeyEvent", up)?;
+    Ok(())
+}
+
+fn element_center_via_dom(state: &mut BrowserState, selector: &str) -> Result<(f64, f64), String> {
+    let doc = cdp(state, "DOM.getDocument", json!({ "depth": -1, "pierce": true }))?;
+    let root = doc
+        .get("root")
+        .and_then(|r| r.get("nodeId"))
+        .and_then(|n| n.as_i64())
+        .ok_or("could not read document root")?;
+    let found = cdp(state, "DOM.querySelector", json!({ "nodeId": root, "selector": selector }))?;
+    let node_id = found
+        .get("nodeId")
+        .and_then(|n| n.as_i64())
+        .filter(|n| *n != 0)
+        .ok_or("selector_not_found")?;
+    cdp(state, "DOM.scrollIntoViewIfNeeded", json!({ "nodeId": node_id })).ok();
+    let model = cdp(state, "DOM.getBoxModel", json!({ "nodeId": node_id }))?;
+    let content = model
+        .get("model")
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_array())
+        .ok_or("box_model_missing")?;
+    let xs: Vec<f64> = content.iter().step_by(2).filter_map(|v| v.as_f64()).collect();
+    let ys: Vec<f64> = content.iter().skip(1).step_by(2).filter_map(|v| v.as_f64()).collect();
+    if xs.is_empty() || ys.is_empty() {
+        return Err("box_model_empty".to_string());
+    }
+    Ok((xs.iter().sum::<f64>() / xs.len() as f64, ys.iter().sum::<f64>() / ys.len() as f64))
+}
+
+fn element_center_via_js(state: &mut BrowserState, target: &str) -> Result<(f64, f64), String> {
+    let q = serde_json::to_string(target).unwrap_or_else(|_| "\"\"".into());
+    let js = format!(
+        r#"(function(target){{
+function vis(e){{try{{const r=e.getBoundingClientRect();const s=getComputedStyle(e);return r.width>1&&r.height>1&&s.visibility!=='hidden'&&s.display!=='none';}}catch(_){{return false;}}}}
+function lab(e){{return (((e.getAttribute&&e.getAttribute('placeholder'))||(e.getAttribute&&e.getAttribute('aria-label'))||e.name||e.id||(e.labels&&e.labels[0]&&e.labels[0].innerText)||'')+'').toLowerCase();}}
+let el=null;try{{el=document.querySelector(target);if(el&&!vis(el))el=null;}}catch(_){{}}
+if(!el){{const t=(target||'').trim().toLowerCase();const c=[...document.querySelectorAll('input,textarea,[role=textbox],[role=searchbox],[role=combobox]')].filter(vis);el=c.find(e=>lab(e).includes(t));}}
+if(!el)return 'NOT_FOUND';
+el.scrollIntoView({{block:'center',inline:'center'}});
+const r=el.getBoundingClientRect();return JSON.stringify([r.left+r.width/2,r.top+r.height/2]);}})({})"#,
+        q
+    );
+    let r = eval_across_frames(state, &js)?;
+    if r == "NOT_FOUND" {
+        return Err("target_not_found".to_string());
+    }
+    let xy: Vec<f64> = serde_json::from_str(&r).map_err(|e| e.to_string())?;
+    Ok((*xy.first().ok_or("missing x")?, *xy.get(1).ok_or("missing y")?))
+}
+
+fn element_center(state: &mut BrowserState, target: &str) -> Result<(f64, f64), String> {
+    element_center_via_dom(state, target).or_else(|_| element_center_via_js(state, target))
+}
+
+fn autofill_status(state: &mut BrowserState, username_target: &str, password_target: Option<&str>) -> Result<Value, String> {
+    let user = serde_json::to_string(username_target).unwrap_or_else(|_| "\"\"".into());
+    let pass = serde_json::to_string(password_target.unwrap_or("input[type=password]")).unwrap_or_else(|_| "\"input[type=password]\"".into());
+    let js = format!(
+        r#"(function(usernameTarget,passwordTarget){{
+function vis(e){{try{{const r=e.getBoundingClientRect();const s=getComputedStyle(e);return r.width>1&&r.height>1&&s.visibility!=='hidden'&&s.display!=='none';}}catch(_){{return false;}}}}
+function lab(e){{return (((e.getAttribute&&e.getAttribute('placeholder'))||(e.getAttribute&&e.getAttribute('aria-label'))||e.name||e.id||(e.labels&&e.labels[0]&&e.labels[0].innerText)||'')+'').toLowerCase();}}
+function findInput(target,fallback){{let el=null;try{{el=document.querySelector(target);if(el&&!vis(el))el=null;}}catch(_){{}}if(!el){{try{{el=document.querySelector(fallback);if(el&&!vis(el))el=null;}}catch(_){{}}}}if(!el){{const t=(target||'').trim().toLowerCase();const c=[...document.querySelectorAll('input,textarea,[role=textbox],[role=searchbox],[role=combobox]')].filter(vis);el=c.find(e=>lab(e).includes(t));}}return el;}}
+const u=findInput(usernameTarget,'input[type=email],input[name=email],input[name=username],input[id=identifierId]');
+let p=null;try{{p=document.querySelector(passwordTarget);}}catch(_){{}}if(p&&!vis(p))p=null;if(!p){{try{{p=document.querySelector('input[type=password]');}}catch(_){{}}}}
+// Security invariant: this code never reads or returns the password value. It only checks whether the browser filled a non-empty password field.
+return JSON.stringify({{usernameFilled:!!(u&&('value' in u)&&u.value.length>0),passwordNonEmpty:!!(p&&('value' in p)&&p.value.length>0),url:location.href,domain:location.hostname}});
+}})({},{})"#,
+        user, pass
+    );
+    let r = eval(state, &js)?;
+    serde_json::from_str(&r).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn browser_autofill_login(username_field_target: String, password_field_target: Option<String>) -> Result<String, String> {
+    with_browser(|s| {
+        let (x, y) = element_center(s, &username_field_target)?;
+        cdp(s, "Input.dispatchMouseEvent", json!({ "type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1 }))?;
+        cdp(s, "Input.dispatchMouseEvent", json!({ "type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1 }))?;
+        std::thread::sleep(Duration::from_millis(500));
+        let mut status = autofill_status(s, &username_field_target, password_field_target.as_deref())?;
+        let filled = status.get("usernameFilled").and_then(|v| v.as_bool()).unwrap_or(false)
+            || status.get("passwordNonEmpty").and_then(|v| v.as_bool()).unwrap_or(false);
+        if !filled {
+            dispatch_key(s, "ArrowDown").ok();
+            std::thread::sleep(Duration::from_millis(120));
+            dispatch_key(s, "Enter").ok();
+            std::thread::sleep(Duration::from_millis(700));
+            status = autofill_status(s, &username_field_target, password_field_target.as_deref())?;
+        }
+        let filled = status.get("usernameFilled").and_then(|v| v.as_bool()).unwrap_or(false)
+            || status.get("passwordNonEmpty").and_then(|v| v.as_bool()).unwrap_or(false);
+        status["status"] = json!(if filled { "filled" } else { "not_filled" });
+        Ok(status.to_string())
     })
 }
 
@@ -672,8 +1135,24 @@ pub async fn browser_screenshot() -> Result<DesktopScreenshot, String> {
 /// for `seconds` if no text is given. Used to wait out long operations (e.g. an
 /// AI design being generated) before reading the result.
 #[tauri::command]
-pub async fn browser_wait(text: Option<String>, seconds: Option<u64>) -> Result<String, String> {
+pub async fn browser_wait(text: Option<String>, selector: Option<String>, seconds: Option<u64>) -> Result<String, String> {
     let max = seconds.unwrap_or(20).min(120);
+    if let Some(sel) = selector.filter(|s| !s.trim().is_empty()) {
+        return with_browser(|s| {
+            let q = serde_json::to_string(&sel).unwrap_or_else(|_| "\"\"".into());
+            let expr = format!("!!document.querySelector({})", q);
+            let start = Instant::now();
+            loop {
+                if eval_across_frames(s, &expr).unwrap_or_default() == "true" {
+                    return Ok(format!("Selector \"{}\" appeared on the page", sel));
+                }
+                if start.elapsed() > Duration::from_secs(max) {
+                    return Ok(format!("Waited {}s; selector \"{}\" did not appear yet", max, sel));
+                }
+                std::thread::sleep(Duration::from_millis(800));
+            }
+        });
+    }
     match text {
         Some(t) if !t.trim().is_empty() => with_browser(|s| {
             let needle = serde_json::to_string(&t.to_lowercase()).unwrap_or_else(|_| "\"\"".into());
@@ -683,7 +1162,7 @@ pub async fn browser_wait(text: Option<String>, seconds: Option<u64>) -> Result<
             );
             let start = Instant::now();
             loop {
-                if eval(s, &expr).unwrap_or_default() == "true" {
+                if eval_across_frames(s, &expr).unwrap_or_default() == "true" {
                     return Ok(format!("\"{}\" appeared on the page", t));
                 }
                 if start.elapsed() > Duration::from_secs(max) {
@@ -711,7 +1190,7 @@ pub async fn browser_probe() -> Result<bool, String> {
 pub async fn browser_close() -> Result<(), String> {
     let mut guard = store().lock().map_err(|_| "browser lock poisoned".to_string())?;
     if let Some(mut st) = guard.take() {
-        let _ = cdp(&mut st, "Browser.close", json!({}));
+        let _ = cdp_root(&mut st, "Browser.close", json!({}));
     }
     Ok(())
 }
@@ -743,7 +1222,7 @@ fn completed_files(dir: &str) -> std::collections::HashSet<String> {
 #[tauri::command]
 pub async fn browser_extract_table(selector: Option<String>) -> Result<String, String> {
     with_browser(|s| {
-        let q = serde_json::to_string(&selector.unwrap_or_default()).unwrap_or_else(|_| "\"\"".into());
+        let q = serde_json::to_string(&selector.clone().unwrap_or_default()).unwrap_or_else(|_| "\"\"".into());
         let js = format!(
             r#"(function(sel){{
 function vis(e){{try{{const r=e.getBoundingClientRect();return r.width>1&&r.height>1;}}catch(_){{return true;}}}}
@@ -755,7 +1234,7 @@ const rows=[...t.rows].map(r=>[...r.cells].map(c=>(c.innerText||'').replace(/\t/
 return rows.join('\n');}})({})"#,
             q
         );
-        let r = eval(s, &js)?;
+        let r = eval_across_frames(s, &js)?;
         if r == "NOT_FOUND" {
             return Err("No table was found on the page".to_string());
         }
@@ -778,7 +1257,7 @@ pub async fn browser_download(
 
     with_browser(|s| {
         // Route downloads to our staging dir and allow them to proceed without a prompt.
-        cdp(
+        cdp_root(
             s,
             "Browser.setDownloadBehavior",
             json!({ "behavior": "allow", "downloadPath": staging, "eventsEnabled": true }),

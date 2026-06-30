@@ -92,60 +92,35 @@ export async function deductCredits(input: DeductCreditsInput): Promise<DeductCr
 
   const { supabase } = await import('./supabase');
   const relatedEntityId = input.relatedEntityId ?? relatedIdFromMetadata(input.metadata);
-  const rpcAttempts = [
-    {
-      fn: 'deduct_larund_credits',
-      args: {
-        p_user_id: input.userId,
-        p_usd_cost: amounts.usdCost,
-        p_uc_amount: amounts.ucAmount,
-        p_oc_amount: amounts.ocAmount,
-        p_source: input.source,
-        p_related_entity_id: relatedEntityId,
-        p_metadata: input.metadata ?? {},
-      },
-    },
-    {
-      fn: 'deduct_uc_credits',
-      args: {
-        p_user_id: input.userId,
-        p_uc_amount: amounts.ucAmount,
-        p_reason: input.source,
-        p_metadata: input.metadata ?? {},
-      },
-    },
-    {
-      fn: 'deduct_uc_credits',
-      args: {
-        p_user_id: input.userId,
-        p_amount: amounts.ucAmount,
-        p_reason: input.source,
-      },
-    },
-    {
-      fn: 'deduct_uc_credits',
-      args: {
-        p_user_id: input.userId,
-        p_cost_usd: amounts.ucAmount,
-      },
-    },
-  ];
 
-  for (const attempt of rpcAttempts) {
-    try {
-      const { error } = await supabase.rpc(attempt.fn, attempt.args);
-      if (!error) {
-        if (attempt.fn !== 'deduct_larund_credits') {
-          await logCreditTransaction(input, amounts, relatedEntityId).catch(() => undefined);
-        }
-        return { ...amounts, deducted: true };
-      }
-    } catch {
-      // Try the next known deployment shape.
+  // Canonical deduction path: the `deduct_larund_credits` RPC decrements
+  // user_credits.uc_balance and writes the credit_transactions row atomically.
+  // Any failure here is surfaced loudly — silently swallowing it once let credit
+  // deduction stay broken in production for months unnoticed.
+  let rpcError: unknown = null;
+  try {
+    const { error } = await supabase.rpc('deduct_larund_credits', {
+      p_user_id: input.userId,
+      p_usd_cost: amounts.usdCost,
+      p_uc_amount: amounts.ucAmount,
+      p_oc_amount: amounts.ocAmount,
+      p_source: input.source,
+      p_related_entity_id: relatedEntityId,
+      p_metadata: input.metadata ?? {},
+    });
+    if (!error) {
+      return { ...amounts, deducted: true };
     }
+    rpcError = error;
+  } catch (e) {
+    rpcError = e;
   }
 
-  await logCreditTransaction(input, amounts, relatedEntityId, 'rpc_failed').catch(() => undefined);
+  console.error(
+    `Credit deduction failed (source=${input.source}, user=${input.userId}):`,
+    rpcError instanceof Error ? rpcError.message : rpcError,
+  );
+  await logCreditTransaction(input, amounts, relatedEntityId, 'rpc_failed');
   return { ...amounts, deducted: false };
 }
 
@@ -156,7 +131,7 @@ async function logCreditTransaction(
   status = 'deducted',
 ): Promise<void> {
   const { supabase } = await import('./supabase');
-  await supabase.from('credit_transactions').insert({
+  const { error } = await supabase.from('credit_transactions').insert({
     user_id: input.userId,
     source: input.source,
     usd_cost: amounts.usdCost,
@@ -165,6 +140,12 @@ async function logCreditTransaction(
     related_entity_id: relatedEntityId,
     metadata: { ...(input.metadata ?? {}), status },
   });
+  if (error) {
+    console.error(
+      `Credit transaction log failed (source=${input.source}, status=${status}):`,
+      error.message,
+    );
+  }
 }
 
 function relatedIdFromMetadata(metadata?: Record<string, unknown>): string | undefined {

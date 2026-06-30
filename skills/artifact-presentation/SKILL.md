@@ -29,6 +29,11 @@ plain/skeleton PPTX with only raw text boxes.
    `status` is `pass`/`warn`. If it fails (skeleton, wrong count, untitled slides, no
    visual variety, broken accents), fix the model and regenerate.
 
+## Action shapes (exact JSON)
+{"action":"artifact.render_pptx","title":"<title>","output_name":"<optional.pptx>","model":{"kind":"presentation","title":"<title>","language":"hu","aspectRatio":"16:9","themeId":"larund-dark","theme":{"background":"#0B0E14","surface":"#171A21","surfaceAlt":"#1F242E","primary":"#EE7E3A","accent":"#F4A261","text":"#F7EFE3","mutedText":"#A6AEBD","border":"#2A2F3A","onAccent":"#0B0E14"},"slides":[{"type":"title","kicker":"<kicker>","title":"<title>","subtitle":"<sub>"},{"type":"cards","title":"<t>","cards":[{"title":"<t>","body":"<b>","icon":"workflow"}]},{"type":"closing","title":"<t>","cta":"<cta>"}]}}
+{"action":"presentation.quality_lint","model":{"kind":"presentation"},"expected_slide_count":5}
+{"action":"artifact.verify","path":"<path>","expected_kind":"pptx"}
+
 ## Rules
 - Title slide first; a closing/CTA slide last; every slide carries a title/message.
 - Decks over 4 slides need ≥2 visual slides (cards/timeline/metrics/comparison).

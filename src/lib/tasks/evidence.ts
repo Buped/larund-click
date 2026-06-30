@@ -46,6 +46,7 @@ export function evidenceKindForStep(step: StepLike): EvidenceKind | null {
 
 function classifyResult(step: StepLike): EvidenceKind {
   const tool = step.tool ?? '';
+  if (tool === 'screen.verify') return 'visual_verification';
   if (/^connection\./.test(tool) || tool === 'connection.call') return 'connection_output';
   if (/read|list|tree|exists|get_state|assert|metadata|to_json/.test(tool)) return 'read_back';
   if (/write|mkdir|move|copy|append|export|download|upload|paste/.test(tool)) return 'file_output';
@@ -97,6 +98,8 @@ function titleFor(kind: EvidenceKind, step: StepLike): string {
       return `Connection${tool}`;
     case 'verification':
       return step.error ? 'Verification failed' : 'Verification passed';
+    case 'visual_verification':
+      return step.error ? 'Visual check failed' : 'Visual check';
     case 'approval':
       return `Approval${tool}`;
     case 'manual_handoff':

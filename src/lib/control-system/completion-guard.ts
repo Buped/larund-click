@@ -5,6 +5,8 @@
 
 import type { ActiveTaskState, RecentAction } from '../agent-state/types';
 import { verifyCompletion } from './goal-verifier';
+import { parseVisualVerdict } from './vision-verifier';
+import { isVisualIntent } from '../agent-state/goal-state';
 import { evidenceFromRecentActions, isExplicitWebLookup } from '../web-search/quality';
 
 export interface GuardResult {
@@ -22,7 +24,7 @@ const READBACK_ACTIONS = new Set([
   'artifact.pdf_metadata', 'artifact.pdf_page_count',
   'browser.read', 'browser.get_state', 'browser.assert_text', 'browser.assert_url', 'browser.extract_table',
   'web.search', 'web.batch_search', 'web.extract_page', 'web.extract_contact_info', 'web.verify_source',
-  'connection.call', 'email.compose',
+  'connection.call', 'email.compose', 'screen.verify',
 ]);
 
 function looksLikeArtifactRequest(text: string): boolean {
@@ -262,6 +264,190 @@ function professionalSpreadsheetPrecheck(state: ActiveTaskState, recent: RecentA
   };
 }
 
+// Browser actions that change page state — a visual check after one of these is
+// the meaningful confirmation (a check before the last change is stale).
+function hasActiveSkill(state: ActiveTaskState, name: string): boolean {
+  return (state.activeSkills ?? []).some((skill) => skill.name.toLowerCase() === name);
+}
+
+function connectionTool(action: RecentAction, pattern: RegExp): boolean {
+  return action.success && action.action === 'connection.call' && pattern.test(`${action.argsSummary ?? ''}\n${action.output ?? ''}`);
+}
+
+function resultPackPrecheck(state: ActiveTaskState, recent: RecentAction[]): GuardResult | null {
+  const goal = `${state.originalUserGoal}\n${state.currentGoal}\n${state.expectedOutcome ?? ''}`;
+  const plain = goal.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  const crmWrite = recent.find((a) =>
+    connectionTool(a, /hubspot\.(create_|update_|batch_upsert|associate_records)/i),
+  );
+  if (crmWrite) {
+    const verifiedByWrite = /read-back:\s*(verified|meger|✓)|"verified"\s*:\s*true/i.test(crmWrite.output ?? '');
+    const verifiedByRead = recent.some((a) => connectionTool(a, /hubspot\.(get_|search_|list_)/i));
+    if (!verifiedByWrite && !verifiedByRead) {
+      return {
+        ok: false,
+        reason: 'A CRM write ran, but no HubSpot read-back evidence confirms the changed record.',
+        nextStepHint: 'Read the contact/deal/task/note back with HubSpot get/search before completing.',
+      };
+    }
+  }
+
+  const dataTransferIntent =
+    hasActiveSkill(state, 'data-transfer-ops') ||
+    /\b(copy|transfer|sync|migrate|masol|masold|atmasol|atmasold|adatmasolas)\b/.test(plain) ||
+    /\b(hubspot|notion|gmail|drive|sheets|crm)\b.*\b(to|into|sheet|crm|notion|hubspot)\b/.test(plain);
+  if (dataTransferIntent) {
+    const wroteTarget = recent.some((a) =>
+      a.success &&
+      (['sheet.write', 'sheet.append', 'sheet.update_cells'].includes(a.action) ||
+        connectionTool(a, /\.(write|append|update|create|upsert|batch_upsert|modify|copy|move|associate)/i)),
+    );
+    if (wroteTarget) {
+      const lastWriteIndex = recent.reduce((idx, a, i) =>
+        a.success &&
+        (['sheet.write', 'sheet.append', 'sheet.update_cells'].includes(a.action) ||
+          connectionTool(a, /\.(write|append|update|create|upsert|batch_upsert|modify|copy|move|associate)/i))
+          ? i
+          : idx, -1);
+      const readSource = recent.some((a) =>
+        a.success &&
+        (['sheet.read', 'sheet.profile', 'sheet.to_json', 'document.read', 'document.read_many', 'folder.scan', 'folder.read_relevant'].includes(a.action) ||
+          connectionTool(a, /\.(search|read|query|get|list|batch_get)/i)),
+      );
+      if (!readSource) {
+        return {
+          ok: false,
+          reason: 'A system-to-system data transfer wrote target data without source read/schema evidence.',
+          nextStepHint: 'Read the source rows/records and source schema first, then compare the target read-back before completing.',
+        };
+      }
+      const writeItselfVerified = lastWriteIndex >= 0 && /read-back:\s*(verified|meger|✓)|"verified"\s*:\s*true/i.test(recent[lastWriteIndex].output ?? '');
+      const targetReadBack = writeItselfVerified || recent.slice(lastWriteIndex + 1).some((a) =>
+        a.success &&
+        (['sheet.read', 'sheet.to_json'].includes(a.action) ||
+          connectionTool(a, /\.(read|get|query|search|batch_get)/i)),
+      );
+      if (!targetReadBack) {
+        return {
+          ok: false,
+          reason: 'A system-to-system data transfer changed the target but did not read target rows/records back.',
+          nextStepHint: 'Read the affected target range/records and compare row count plus key fields before task.complete.',
+        };
+      }
+    }
+  }
+
+  const meetingIntent =
+    hasActiveSkill(state, 'meeting-to-actions') ||
+    /\b(meeting|call|megbeszeles|jegyzet|follow-up|crm update)\b/.test(plain);
+  if (meetingIntent && /\b(action item|task|follow-up|crm|hatarido|deadline|owner)\b/.test(plain)) {
+    const noteRead = recent.some((a) => a.success && ['document.read', 'document.read_many', 'file.read'].includes(a.action));
+    if (!noteRead) {
+      return {
+        ok: false,
+        reason: 'The meeting workflow has no evidence that the meeting notes/transcript were read.',
+        nextStepHint: 'Read the meeting notes first, then extract decisions, action items, owners and due dates.',
+      };
+    }
+    const producedActions = recent.some((a) =>
+      a.success &&
+      (connectionTool(a, /hubspot\.(create_task|create_note|update_)/i) ||
+        a.action === 'email.compose' ||
+        ['doc.write_txt', 'doc.write_docx', 'file.write'].includes(a.action)) &&
+      /(owner|due|deadline|hatarido|action|task|next step|kovetkezo)/i.test(a.output ?? ''),
+    );
+    if (!producedActions) {
+      return {
+        ok: false,
+        reason: 'The meeting workflow has no evidence of action items with owner/due-date/next-step content.',
+        nextStepHint: 'Create or write the action list and make owner/due date explicit, using "unknown" when missing.',
+      };
+    }
+  }
+
+  const workspaceMaintenanceWrite = recent.find((a) =>
+    hasActiveSkill(state, 'workspace-maintenance') &&
+    a.success &&
+    (connectionTool(a, /\.(modify|update|create|move|copy|delete|associate)/i) || ['file.move', 'file.copy', 'file.delete'].includes(a.action)),
+  );
+  if (workspaceMaintenanceWrite) {
+    const auditedFirst = recent.some((a) => a.success && (connectionTool(a, /\.(search|read|query|get|list)/i) || ['file.list', 'file.tree', 'folder.scan'].includes(a.action)));
+    if (!auditedFirst) {
+      return {
+        ok: false,
+        reason: 'Workspace maintenance made a change without a preceding read-only inventory/audit.',
+        nextStepHint: 'Run a read-only inventory first, then apply approved changes and read them back.',
+      };
+    }
+  }
+
+  return null;
+}
+
+const STATE_CHANGING_BROWSER = new Set([
+  'browser.click', 'browser.type', 'browser.key', 'browser.paste',
+  'browser.shortcut', 'browser.upload', 'browser.download',
+]);
+
+/**
+ * Mandatory visual gate for visual surfaces (browser webapp / desktop app). Per
+ * product decision, a browser/app task may not complete until a screenshot-based
+ * screen.verify has confirmed the outcome (done:true, no blockers) AFTER the last
+ * state-changing action. Non-visual tasks (files, sheets, email, web lookup) are
+ * unaffected — their structured read-back remains authoritative.
+ */
+function visualVerificationPrecheck(state: ActiveTaskState, recent: RecentAction[]): GuardResult | null {
+  // Mandatory only for tasks where pixels are the real proof: a browser task that
+  // CHANGES the page (same mutation signal the goal-verifier uses) or a desktop
+  // app task. Open-only browser tasks keep their lighter DOM read-back.
+  const mutatingBrowser =
+    isVisualIntent(state.intent) &&
+    !!state.expectedOutcome &&
+    /opening the page alone is not enough|reflects the requested change/i.test(state.expectedOutcome);
+  const desktopApp = state.targetSurface === 'app';
+  if (!mutatingBrowser && !desktopApp) return null;
+
+  let lastVerifyIdx = -1;
+  let lastChangeIdx = -1;
+  for (let i = 0; i < recent.length; i++) {
+    const a = recent[i];
+    if (a.action === 'screen.verify' && a.success) lastVerifyIdx = i;
+    if (a.success && STATE_CHANGING_BROWSER.has(a.action)) lastChangeIdx = i;
+  }
+
+  if (lastVerifyIdx < 0) {
+    return {
+      ok: false,
+      reason: 'This is a visual (browser/app) task, but no screen.verify visual confirmation was captured.',
+      nextStepHint: 'Call screen.verify (surface "browser" or "desktop") and confirm the screen visibly shows the requested outcome before completing.',
+    };
+  }
+  if (lastChangeIdx > lastVerifyIdx) {
+    return {
+      ok: false,
+      reason: 'The screen changed after the last visual check, so the confirmation is stale.',
+      nextStepHint: 'Run screen.verify again to confirm the latest screen state before completing.',
+    };
+  }
+  const verdict = parseVisualVerdict(recent[lastVerifyIdx].output ?? '');
+  if (verdict.blockers.length) {
+    return {
+      ok: false,
+      reason: `The last visual check shows a blocker: ${verdict.blockers.join('; ')}.`,
+      nextStepHint: 'Resolve the blocker (ask_user for login/CAPTCHA/permission), then re-run screen.verify.',
+    };
+  }
+  if (!verdict.done) {
+    return {
+      ok: false,
+      reason: `The last visual check did not confirm completion (progress ${verdict.progress}%). Unmet: ${verdict.unmetCriteria.join('; ') || 'unspecified'}.`,
+      nextStepHint: verdict.nextStepHint || 'Finish the remaining work and re-run screen.verify until the verdict is done:true.',
+    };
+  }
+  return null; // visual confirmation present and current → defer to the rest of the chain
+}
+
 export function verifyBeforeComplete(
   state: ActiveTaskState,
   recent: RecentAction[],
@@ -277,6 +463,12 @@ export function verifyBeforeComplete(
 
   const webLookupCheck = webLookupPrecheck(state, recent);
   if (webLookupCheck) return webLookupCheck;
+
+  const resultPackCheck = resultPackPrecheck(state, recent);
+  if (resultPackCheck) return resultPackCheck;
+
+  const visualCheck = visualVerificationPrecheck(state, recent);
+  if (visualCheck) return visualCheck;
 
   // If the user previously corrected a false completion, a prior task.complete is
   // not acceptable as evidence; the verifier already ignores control actions, but

@@ -48,6 +48,18 @@ The code runs in a throwaway sandbox folder. It cannot read/write outside that f
 the input files you reference (they are copied in by file name). Network access is OFF unless
 explicitly enabled, and enabling it always requires approval.
 
+## Large spreadsheets — profile & query, don't dump raw rows
+- Never pull thousands of raw rows into context. If a file has more than ~200 rows, do NOT read it all.
+- FIRST call `sheet.profile` to learn the shape: per-column type, null ratio, unique count, numeric min/max/mean/sum, top text values, and a small representative sample.
+- For any "how much / how many / total / average / per X" question, use `sheet.query` with an aggregate (sum|avg|count|min|max|count_distinct), optional filter, and optional group_by — it returns the exact computed result, never an estimate.
+- Only fall back to `sheet.read` (small `max_rows`) when you genuinely need a few concrete raw rows, after profiling.
+
+## Action shapes (exact JSON)
+{"action":"sheet.profile","path":"<LOCAL .xlsx/.csv path>","sheet":"<optional>"}
+{"action":"sheet.query","path":"<LOCAL .xlsx/.csv path>","sheet":"<optional>","filter":{"match":"all","conditions":[{"column":"Quarter","op":"eq","value":"Q2"}]},"aggregate":[{"op":"sum","column":"Amount"}],"group_by":["Region"],"limit":<optional>}
+{"action":"code.execute","code":"<python source>","input_refs":["<ref id or file path>"],"timeout_secs":45,"allow_network":false,"label":"<short human label>"}
+{"action":"code.install_package","package":"<pip package>","reason":"<why this non-allowlisted package is needed>"}
+
 ## Verification
 - For a numeric/statistical answer, state the concrete computed value(s).
 - For a chart, confirm the PNG was generated (it appears inline in chat).

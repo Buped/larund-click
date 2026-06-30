@@ -8,6 +8,8 @@ const REMOTE_COLLECTIONS = new Set([
   'task_runs',
   'task_evidence',
   'builder_skills',
+  'skill_learning_events',
+  'skill_usage_events',
   'workflow_templates',
   'mcp_servers',
   'mcp_tool_snapshots',

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { listRichSkillManifests } from '../runner';
 import { routeSkills } from '../router';
 import { TOOL_CATALOG } from '../../tools/registry';
+import type { RichSkillManifest } from '../manifest';
 
 const tools = TOOL_CATALOG.map((tool) => tool.name);
 
@@ -77,9 +78,38 @@ describe('skill router v2', () => {
     expect(result.selectedSkills.map((s) => s.name)).toContain('data-analysis-and-code');
   });
 
+  it('routes office result pack tasks', () => {
+    expect(route('Nezd at az emailjeim es keszits valasz piszkozatot.', ['google-workspace']).primarySkill?.name).toBe('email-ops');
+    expect(route('Masold at a HubSpot kontaktokat Google Sheetsbe.', ['hubspot', 'google-workspace']).selectedSkills.map((s) => s.name)).toContain('data-transfer-ops');
+    expect(route('A meeting jegyzet alapjan frissitsd a CRM-et es irj follow-up draftot.', ['hubspot']).selectedSkills.map((s) => s.name)).toContain('meeting-to-actions');
+    expect(route('Frissitsd ezt a Google Sheets tablazatot es olvasd vissza.', ['google-workspace']).selectedSkills.map((s) => s.name)).toContain('spreadsheet-refresh');
+  });
+
   it('does NOT pull in code execution for a simple total (sheet.query territory)', () => {
     const result = route('Mennyi az osszesen ebben a tablazatban az Osszeg oszlopban?');
     expect(result.primarySkill?.name).not.toBe('data-analysis-and-code');
+  });
+
+  it('routes a web research / latest-news task to web-research-standard', () => {
+    const result = route('Keresd meg az interneten a legfrissebb híreket a magyar AI piacról és add meg a forrásokat.');
+    expect(result.selectedSkills.map((s) => s.name)).toContain('web-research-standard');
+  });
+
+  it('routes an email compose/draft task to an email skill', () => {
+    const result = route('Írj egy emailt az ügyfélnek és készíts piszkozatot.', ['google-workspace']);
+    expect(['email-ops', 'gmail-draft-and-send']).toContain(result.primarySkill?.name);
+  });
+
+  it('routes a PDF/PPTX generation task to an artifact skill', () => {
+    const pdf = route('Készíts egy szép letölthető PDF üzleti riportot a Q2 számokról.');
+    expect(pdf.selectedSkills.map((s) => s.name).some((n) => n.startsWith('artifact-') || n === 'artifact-pdf-document' || n === 'artifact-business-report')).toBe(true);
+    const pptx = route('Csinálj egy 8 diás pptx prezentációt a termékről.');
+    expect(pptx.selectedSkills.map((s) => s.name)).toContain('artifact-presentation');
+  });
+
+  it('routes a chat chart/diagram request to chat-visualization', () => {
+    const result = route('Rajzolj egy diagramot a chatbe a havi bevételek alakulásáról, ábra formában.');
+    expect(result.selectedSkills.map((s) => s.name)).toContain('chat-visualization');
   });
 
   it('explicit @skill wins', () => {
@@ -87,4 +117,72 @@ describe('skill router v2', () => {
     expect(result.primarySkill?.name).toBe('landing-page-copy');
     expect(result.confidence).toBeGreaterThanOrEqual(0.9);
   });
+
+  it('builds an app profile -> workflow -> verification skill chain', () => {
+    const manifests = [
+      manifest({
+        id: 'workspace:App Profile: acme.test',
+        name: 'App Profile: acme.test',
+        kind: 'app_profile',
+        description: 'Learned controls for acme.test',
+        target: { domain: 'acme.test', urlPatterns: ['*://acme.test/*'] },
+        allowedTools: ['browser.open', 'browser.read'],
+        risk: 'external_read',
+      }),
+      manifest({
+        id: 'workspace:Acme form workflow',
+        name: 'Acme form workflow',
+        description: 'Fill Acme forms',
+        trigger: ['acme', 'form'],
+        allowedTools: ['browser.open', 'browser.type', 'browser.read'],
+        risk: 'external_write',
+      }),
+      manifest({
+        id: 'bundled:task-verification',
+        name: 'task-verification',
+        description: 'Verify task output',
+        trigger: ['verify'],
+        allowedTools: ['browser.read'],
+        risk: 'read_only',
+      }),
+    ];
+    const result = routeSkills(manifests, {
+      task: 'Open https://acme.test/form and fill the Acme form',
+      userMessage: 'Open https://acme.test/form and fill the Acme form',
+      availableTools: tools,
+      availableConnections: [],
+      enabledSkillIds: [],
+      currentSurface: 'browser',
+    });
+    expect(result.selectedChain.map((s) => s.name)).toEqual([
+      'App Profile: acme.test',
+      'Acme form workflow',
+      'task-verification',
+    ]);
+  });
 });
+
+function manifest(overrides: Partial<RichSkillManifest>): RichSkillManifest {
+  return {
+    id: 'bundled:test',
+    name: 'test',
+    version: '1.0.0',
+    description: 'test',
+    trigger: [],
+    categories: ['test'],
+    allowedTools: [],
+    requiredConnections: [],
+    requiredMcpServers: [],
+    risk: 'read_only',
+    verificationChecklist: ['Read back result'],
+    whenToUse: [],
+    whenNotToUse: [],
+    enabledByDefault: true,
+    source: 'workspace',
+    tags: [],
+    supportsAutomation: true,
+    supportsManualRun: true,
+    kind: 'workflow',
+    ...overrides,
+  };
+}

@@ -499,7 +499,7 @@ export function SettingsScreen({ onClose, user, credits, onSignOut, activeProjec
             {area === "personal" && section === "assistant" && (
               <>
                 <SettingRow label="Structured execution" sub="CLI, files, browser pages, connections and skills"><span style={{ fontSize: 12.5, color: "var(--text-hint)" }}>Always on</span></SettingRow>
-                <SettingRow label="Autonomy mode" sub="Controls when the operator asks before tool calls"><Select value={autonomyMode} options={["Semi-automatic","Manual","Full autonomous"]} onChange={handleAutonomyChange} /></SettingRow>
+                <SettingRow label="Autonomy mode" sub="Manual: asks before every action · Semi-automatic: asks only for critical/irreversible actions · Full autonomous: never asks (except catastrophic commands)"><Select value={autonomyMode} options={["Manual","Semi-automatic","Full autonomous"]} onChange={handleAutonomyChange} /></SettingRow>
                 <SettingRow label="Code execution approval" sub="Python code runs always ask by default; local no-network analysis can auto-run only if you opt in"><Select value={codeApproval} options={["Always ask","Auto for local read-only"]} onChange={handleCodeApprovalChange} /></SettingRow>
                 <SettingRow label="External writes" sub="Semi asks before remote writes, sends and logins; full acts silently except genuinely destructive actions"><span style={{ fontSize: 12.5, color: "var(--text-hint)" }}>Policy enforced</span></SettingRow>
                 <SettingRow label="Max task duration" sub="Abort task if it runs longer than this"><Select value="15 minutes" options={["5 minutes","10 minutes","15 minutes","30 minutes","No limit"]} onChange={() => {}} /></SettingRow>
@@ -661,7 +661,7 @@ export function SettingsScreen({ onClose, user, credits, onSignOut, activeProjec
 
             {area === "personal" && section === "advanced" && (
               <>
-                <SettingRow label="Autonomy mode" sub="Controls when Larund asks before tool calls"><Select value={autonomyMode} options={["Semi-automatic","Manual","Full autonomous"]} onChange={handleAutonomyChange} /></SettingRow>
+                <SettingRow label="Autonomy mode" sub="Manual: asks before every action · Semi-automatic: asks only for critical/irreversible actions · Full autonomous: never asks (except catastrophic commands)"><Select value={autonomyMode} options={["Manual","Semi-automatic","Full autonomous"]} onChange={handleAutonomyChange} /></SettingRow>
                 <SettingRow label="Code execution approval" sub="Default is conservative: every Python run asks. Network and package installs always ask."><Select value={codeApproval} options={["Always ask","Auto for local read-only"]} onChange={handleCodeApprovalChange} /></SettingRow>
                 <SettingRow label="Structured tool safety" sub="Larund acts through verified tools and avoids unsafe desktop shortcuts"><span style={{ fontSize: 12.5, color: "var(--success)" }}>Enforced</span></SettingRow>
                 <div style={{ padding: "14px 0 8px", fontSize: 12.5, color: "var(--text-hint)" }}>Sandbox profiles constrain filesystem, network, risk, credential, process and send access.</div>

@@ -1,20 +1,24 @@
 import { emit } from '@tauri-apps/api/event';
 import { callOpenRouterWithTools, type MessageContent } from '../openrouter';
-import { CONTROL_SYSTEM_PROMPT } from './prompt';
+import { CONTROL_SYSTEM_PROMPT, autonomyModePrompt } from './prompt';
 import { parseControlAction, isLegacyVisualActionName } from './parser';
 import { extractNarration, isMeaningfulNarration, sanitizeUserVisibleNarration } from '../assistant/narration';
 import type { ControlAction } from './types';
 import { runControlAction } from '../tools/run';
 import { MemoryAuditLogger } from '../tools/audit';
-import { PromptApprovalService } from '../tools/approvals';
+import { PromptApprovalService, type ApprovalPromptResult } from '../tools/approvals';
 import { policyForAutonomyMode, type RiskPolicy } from '../tools/policy';
 import { toolCatalogSummary } from '../tools/registry';
 import type { AuditEntry, ConnectionRegistry, SkillRunner, WorkflowRunner } from '../tools/types';
 import { createConnectionRegistry } from '../connections/registry';
 import { createSkillRunner } from '../skills/runner';
+import { learnFromCompletedTask } from '../skills/learning';
+import { detectSkillGap } from '../skills/skill-gap';
+import { researchSkillGap, synthesizeSelfLearnedSkill, type SkillResearchSummary } from '../skills/self-learning';
+import { saveSkillForReview } from '../skills/shared-store';
 import { createWorkflowRunner } from '../workflows/runner';
 import { resolveActiveTask, setActiveTask } from '../agent-state/session-memory';
-import { renderTaskStatePrompt, recordFailedAttempt } from '../agent-state/task-state';
+import { renderTaskStatePrompt, recordFailedAttempt, applyCorrection } from '../agent-state/task-state';
 import type { RecentAction } from '../agent-state/types';
 import type { SkillRuntimeContext } from '../skills/types';
 import { verifyBeforeComplete, rejectionMessage } from './completion-guard';
@@ -55,8 +59,12 @@ export interface AgentLoopCallbacks {
   onAskUser: (question: string) => Promise<string>;
   onComplete: (summary: string) => void;
   onError: (error: string) => void;
-  /** Optional dedicated approval prompt. Falls back to onAskUser yes/no. */
-  onApproval?: (req: { action: string; risk: string; reason: string; argsSummary: string }) => Promise<'allow_once' | 'allow_always' | 'deny'>;
+  /**
+   * Optional dedicated approval prompt. The UI returns a structured decision:
+   * approve/deny, or `steer` with free-text `feedback` (the "Other" option) that
+   * the loop turns into a re-plan. Falls back to onAskUser yes/no.
+   */
+  onApproval?: (req: { action: string; risk: string; reason: string; argsSummary: string }) => Promise<ApprovalPromptResult>;
   onAudit?: (entry: AuditEntry) => void;
 }
 
@@ -66,6 +74,8 @@ export interface AgentAbortSignal {
 
 export interface RunOptions {
   policy?: RiskPolicy;
+  /** Raw autonomy mode for this run; drives the semi-mode hybrid gate + prompt. */
+  autonomyMode?: AutonomyMode;
   sessionId?: string;
   /** Active workspace for this run. Falls back to the user's default workspace. */
   workspaceId?: string;
@@ -152,6 +162,74 @@ function rememberExpectedSheetData(taskState: import('../agent-state/types').Act
       .slice(0, 8);
     if (parts.length) taskState.expectedData = { values: parts, source: action.action };
   }
+}
+
+function surfaceLabel(surface?: string): string {
+  switch (surface) {
+    case 'connection': return 'the configured connection/API';
+    case 'browser': return 'the browser page';
+    case 'local_files': return 'local files';
+    case 'cli': return 'command-line tools';
+    case 'app': return 'the desktop app';
+    default: return 'the most direct available tool';
+  }
+}
+
+function buildInitialPlanSummary(taskState: import('../agent-state/types').ActiveTaskState): string {
+  const target = taskState.targetDocument?.type
+    ? `${taskState.targetDocument.type.replace(/_/g, ' ')} target`
+    : taskState.targetApp
+      ? `${taskState.targetApp} task`
+      : 'requested outcome';
+  const verification = taskState.expectedOutcome
+    ? `I will verify it against: ${taskState.expectedOutcome}`
+    : 'I will verify the result with a read-back before finishing.';
+  return `I understand the goal as: ${taskState.currentGoal}. Primary route: ${surfaceLabel(taskState.targetSurface)} for the ${target}. ${verification}`;
+}
+
+function isGoogleWorkspaceBrowserUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const full = `${host}${parsed.pathname}`.toLowerCase();
+    return host === 'docs.new' ||
+      host === 'sheets.new' ||
+      full.includes('docs.google.com/document') ||
+      full.includes('docs.google.com/spreadsheets') ||
+      full.includes('drive.google.com') ||
+      full.includes('mail.google.com');
+  } catch {
+    return /\b(docs\.new|sheets\.new|docs\.google\.com\/document|docs\.google\.com\/spreadsheets|drive\.google\.com|mail\.google\.com)\b/i.test(url);
+  }
+}
+
+function googleConnectionFallbackAllowed(recentActions: RecentAction[]): boolean {
+  return recentActions.some((action) => {
+    if (action.action !== 'connection.call') return false;
+    if (!/google-workspace|google\.(docs|sheets|drive|gmail)\./i.test(action.argsSummary ?? '')) return false;
+    if (action.success) return false;
+    return /missing_auth|unavailable|unsupported|not_configured|needs_setup|expired|invalid_auth|connection/i.test(`${action.error ?? ''} ${action.output ?? ''}`);
+  });
+}
+
+export function shouldBlockBrowserBeforeConnection(args: {
+  action: ControlAction;
+  taskState: import('../agent-state/types').ActiveTaskState;
+  recentActions: RecentAction[];
+  connections?: ConnectionRegistry;
+}): string | null {
+  const { action, taskState, recentActions, connections } = args;
+  if (action.action !== 'browser.open') return null;
+  if (!isGoogleWorkspaceBrowserUrl(action.url)) return null;
+  const googleTask = taskState.intent === 'spreadsheet_cloud' ||
+    taskState.intent === 'document_cloud' ||
+    taskState.targetDocument?.type === 'google_sheet' ||
+    taskState.targetDocument?.type === 'google_doc' ||
+    /google\s*(workspace|docs?|sheets?|drive|gmail)|docs\.new|sheets\.new/i.test(taskState.currentGoal);
+  if (!googleTask) return null;
+  if (!connections?.isConfigured('google-workspace')) return null;
+  if (googleConnectionFallbackAllowed(recentActions)) return null;
+  return 'connection_first_required: Google Workspace tasks must try connection.call with google-workspace before opening Google Workspace in the browser.';
 }
 
 function isSpreadsheetEnrichmentRequest(task: string): boolean {
@@ -287,7 +365,8 @@ export async function runControlLoop(
   });
   // An explicit policy wins; otherwise derive it from the workspace autonomy mode
   // so automations/tasks honour manual/semi/full the same way chat does.
-  const policy: RiskPolicy = opts.policy ?? policyForAutonomyMode(coworker.workspace?.autonomyMode ?? 'semi');
+  const autonomyMode: AutonomyMode = opts.autonomyMode ?? coworker.workspace?.autonomyMode ?? 'semi';
+  const policy: RiskPolicy = opts.policy ?? policyForAutonomyMode(autonomyMode);
   const workspaceRoot = opts.workspaceRoot ?? coworker.workspaceRoot ?? '~';
   tracker = await startTaskTracker({
     userId,
@@ -306,8 +385,11 @@ export async function runControlLoop(
       return callbacks.onApproval({ action: req.action.action, risk: req.risk, reason: req.reason, argsSummary: req.argsSummary });
     }
     emitStep({ id: nowStepId('approval'), type: 'approval', tool: req.action.action, risk: req.risk, output: req.reason, timestamp: new Date().toISOString() });
-    const answer = await onAskUser(`Approval needed for ${req.action.action} (${req.risk}). ${req.reason}\nArgs: ${req.argsSummary}\nReply "yes" to allow.`);
-    return /^\s*(y|yes|allow|ok)/i.test(answer) ? 'allow_once' : 'deny';
+    const answer = await onAskUser(`Approval needed for ${req.action.action} (${req.risk}). ${req.reason}\nArgs: ${req.argsSummary}\nReply "yes" to allow, "no" to reject, or type a different instruction.`);
+    if (/^\s*(y|yes|allow|ok)\b/i.test(answer)) return { decision: 'allow_once' };
+    if (/^\s*(n|no|deny|reject|stop)\b/i.test(answer) || !answer.trim()) return { decision: 'deny' };
+    // Anything else is treated as steering feedback → re-plan.
+    return { decision: 'steer', feedback: answer.trim() };
   }, 'deny', {
     userId,
     workspaceId: coworker.workspace?.id ?? opts.workspaceId,
@@ -324,7 +406,7 @@ export async function runControlLoop(
   emitStep({
     id: nowStepId('mode'),
     type: 'plan',
-    output: 'Structured execution is ready. I can use files, browser pages, apps, connections and skills to work through the task.',
+    output: 'Preparing the task target, primary route, response language, and verification before acting.',
     timestamp: new Date().toISOString(),
   });
   await updateOverlay({ active: true, status: 'planning', task, steps });
@@ -335,6 +417,12 @@ export async function runControlLoop(
   const resolved = resolveActiveTask(sessionId, task);
   const taskState = resolved.state;
   taskState.status = 'running';
+  emitStep({
+    id: nowStepId('task-plan'),
+    type: 'plan',
+    output: buildInitialPlanSummary(taskState),
+    timestamp: new Date().toISOString(),
+  });
   const resolvedReferences = references.length
     ? await resolveReferencedContext({
         references,
@@ -353,7 +441,7 @@ export async function runControlLoop(
   }
 
   taskState.referencedInputs = resolvedReferences.documentReferences;
-  const ctx = { userId, sessionId, workspaceRoot, task, references: resolvedReferences.documentReferences, audit, approvals, connections, skills, workflows, onAskUser, activeSkills: taskState.activeSkills ?? [] as SkillRuntimeContext[], addCost: (usd: number) => { totalCostUsd += usd; } };
+  const ctx = { userId, sessionId, workspaceRoot, task, references: resolvedReferences.documentReferences, audit, approvals, connections, skills, workflows, onAskUser, activeSkills: taskState.activeSkills ?? [] as SkillRuntimeContext[], autonomyMode, addCost: (usd: number) => { totalCostUsd += usd; } };
   if (resolved.isCorrection) {
     emitStep({
       id: nowStepId('correction'),
@@ -370,16 +458,84 @@ export async function runControlLoop(
     if (recentActions.length > MAX_RECENT) recentActions.shift();
   };
 
+  let proactiveResearch: SkillResearchSummary | null = null;
+  if (coworker.skillRoute) {
+    const gap = detectSkillGap(coworker.skillRoute, {
+      task,
+      userMessage: task,
+      activeWorkspaceId: coworker.workspace?.id ?? opts.workspaceId,
+      references: resolvedReferences.documentReferences,
+      availableTools: [],
+      availableConnections: [],
+      enabledSkillIds: [],
+      currentSurface: taskState.targetSurface === 'local_files' || taskState.targetSurface === 'browser'
+        ? taskState.targetSurface
+        : 'unknown',
+    });
+    if (gap.kind === 'learnable') {
+      emitStep({
+        id: nowStepId('skill-gap'),
+        type: 'thinking',
+        output: `Potential reusable skill gap detected for ${gap.target?.label ?? 'this workflow'}: ${gap.reason}`,
+        timestamp: new Date().toISOString(),
+      });
+      emitStep({
+        id: nowStepId('skill-research-call'),
+        type: 'tool_call',
+        tool: 'web.search',
+        input: JSON.stringify({ query: `${gap.target?.label ?? ''} ${task}`.trim(), reason: 'skill_gap_research' }),
+        timestamp: new Date().toISOString(),
+      });
+      try {
+        proactiveResearch = await researchSkillGap(gap, { userId });
+        const output = JSON.stringify({
+          target: proactiveResearch.targetLabel,
+          query: proactiveResearch.query,
+          sources: proactiveResearch.sources.map((source) => ({ title: source.title, url: source.url })),
+          workflowSteps: proactiveResearch.workflowSteps,
+          apiFirstRecommendation: proactiveResearch.apiFirstRecommendation,
+          blockers: proactiveResearch.blockers,
+        }, null, 2);
+        emitStep({
+          id: nowStepId('skill-research-result'),
+          type: 'tool_result',
+          tool: 'web.search',
+          output,
+          timestamp: new Date().toISOString(),
+          details: { skillResearch: proactiveResearch },
+        });
+        recordAction({ action: 'web.search', argsSummary: proactiveResearch.query, success: true, output });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        emitStep({
+          id: nowStepId('skill-research-error'),
+          type: 'error',
+          tool: 'web.search',
+          error: message,
+          timestamp: new Date().toISOString(),
+        });
+        recordAction({ action: 'web.search', argsSummary: gap.target?.label, success: false, error: message });
+      }
+    }
+  }
+
   const preloadedSkillBlocks: string[] = [];
-  const autoSkillNames = new Set<string>();
+  const autoSkillNames: string[] = [];
+  const addAutoSkill = (name: string | undefined) => {
+    if (name && !autoSkillNames.includes(name)) autoSkillNames.push(name);
+  };
   const primaryRoute = coworker.skillRoute?.primarySkill;
   const autoPrimarySelected = Boolean(primaryRoute && primaryRoute.confidence >= 0.6);
-  if (primaryRoute && autoPrimarySelected) autoSkillNames.add(primaryRoute.name);
+  if (autoPrimarySelected && coworker.skillRoute?.selectedChain.length) {
+    for (const route of coworker.skillRoute.selectedChain) addAutoSkill(route.name);
+  } else if (primaryRoute && autoPrimarySelected) {
+    addAutoSkill(primaryRoute.name);
+  }
   for (const route of coworker.skillRoute?.selectedSkills ?? []) {
-    if (route.reason.includes('explicit @skill mention')) autoSkillNames.add(route.name);
+    if (route.reason.includes('explicit @skill mention')) addAutoSkill(route.name);
   }
   const primaryRisk = primaryRoute?.manifest.risk;
-  if (autoPrimarySelected && primaryRisk && primaryRisk !== 'read_only') autoSkillNames.add('task-verification');
+  if (autoPrimarySelected && primaryRisk && primaryRisk !== 'read_only') addAutoSkill('task-verification');
 
   for (const skillName of autoSkillNames) {
     const action: ControlAction = { action: 'skill.run', skill: skillName, input: { task, autoSelected: true } };
@@ -453,9 +609,12 @@ export async function runControlLoop(
   const coworkerBlock = [coworker.promptBlock, resolvedReferences.promptBlock].filter(Boolean).join('\n\n');
   const coworkerPromptBlock = coworkerBlock ? `\n\n${coworkerBlock}` : '';
   const activeSkillPromptBlock = preloadedSkillBlocks.length ? `\n\n${preloadedSkillBlocks.join('\n\n')}` : '';
+  const proactiveLearningBlock = proactiveResearch
+    ? `\n\n## Skill-gap research\nTarget: ${proactiveResearch.targetLabel}\nWorkflow hints: ${proactiveResearch.workflowSteps.join('; ') || 'none'}\nAPI-first note: ${proactiveResearch.apiFirstRecommendation ?? 'none'}\nKnown blockers: ${proactiveResearch.blockers.join('; ') || 'none'}\nUse this as background only. Execute through normal tools, approval gates, and verification.`
+    : '';
   const systemPrompt =
-    `${CONTROL_SYSTEM_PROMPT}\n\n## Tool catalog\n${toolCatalogSummary()}\n\n## Workspace\n${workspaceRoot}${coworkerPromptBlock}` +
-    `${activeSkillPromptBlock}${historyBlock}\n\n${renderTaskStatePrompt(taskState)}\n\n## Current message\n${task}`;
+    `${CONTROL_SYSTEM_PROMPT}\n\n${autonomyModePrompt(autonomyMode)}\n\n## Tool catalog\n${toolCatalogSummary()}\n\n## Workspace\n${workspaceRoot}${coworkerPromptBlock}` +
+    `${activeSkillPromptBlock}${proactiveLearningBlock}${historyBlock}\n\n${renderTaskStatePrompt(taskState)}\n\n## Current message\n${task}`;
 
   // Surfaced memory counts as used (drives recency boost), fire-and-forget.
   void recordMemoryUsage(coworker.usedMemoryIds);
@@ -531,6 +690,29 @@ export async function runControlLoop(
       emitStep({ id: nowStepId('narration'), type: 'narration', output: narration, timestamp: new Date().toISOString() });
     }
 
+    const connectionFirstBlock = shouldBlockBrowserBeforeConnection({
+      action: action as ControlAction,
+      taskState,
+      recentActions,
+      connections,
+    });
+    if (connectionFirstBlock) {
+      messages.push({ role: 'assistant', content: aiResponse });
+      messages.push({
+        role: 'user',
+        content: `${connectionFirstBlock}\nUse connection.call with connection "google-workspace" first. Only use browser.open for Google Workspace after the connection is missing, unavailable, unsupported, or blocked by auth.`,
+      });
+      emitStep({
+        id: nowStepId('connection-first-blocked'),
+        type: 'error',
+        tool: action.action,
+        error: 'connection_first_required',
+        output: connectionFirstBlock,
+        timestamp: new Date().toISOString(),
+      });
+      continue;
+    }
+
     const stepId = nowStepId('action');
     emitStep({ id: stepId, type: 'tool_call', tool: action.action, input: JSON.stringify(action, null, 2), timestamp: new Date().toISOString() });
 
@@ -588,6 +770,58 @@ export async function runControlLoop(
       taskState.pendingChecks = [];
       setActiveTask(sessionId, taskState);
       await tracker.setStatus('completed', { summary: action.summary });
+      if (proactiveResearch && tracker.taskRunId && (coworker.workspace?.id ?? opts.workspaceId)) {
+        const learned = await synthesizeSelfLearnedSkill({
+          userId,
+          workspaceId: coworker.workspace?.id ?? opts.workspaceId,
+          taskRunId: tracker.taskRunId,
+          task,
+          evidence: recentActions,
+          research: proactiveResearch,
+        }).catch((error) => {
+          console.warn('Self-learned skill synthesis failed:', error);
+          return null;
+        });
+        if (learned && learned.dryRun.ok) {
+          emitStep({
+            id: nowStepId('self-skill-review'),
+            type: 'handoff',
+            tool: 'ask_user',
+            output: `Learned skill draft ready: ${learned.skill.name}`,
+            timestamp: new Date().toISOString(),
+          });
+          await tracker.setStatus('needs_input');
+          const answer = await onAskUser(`I found a reusable pattern for "${learned.skill.name}". Save it as a private workspace skill draft for review? Reply yes or no.`);
+          await tracker.setStatus('completed', { summary: action.summary });
+          if (/^\s*(y|yes|ok|save|igen)\b/i.test(answer)) {
+            await saveSkillForReview({
+              skill: learned.skill,
+              source: 'self_learned',
+              userId,
+              workspaceId: coworker.workspace?.id ?? opts.workspaceId,
+              status: 'pending_review',
+              originTaskRunId: tracker.taskRunId,
+            });
+            emitStep({
+              id: nowStepId('self-skill-saved'),
+              type: 'tool_result',
+              tool: 'skill.run',
+              output: `Saved self-learned skill draft for review: ${learned.skill.name}`,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }
+      }
+      void learnFromCompletedTask({
+        userId,
+        workspaceId: coworker.workspace?.id ?? opts.workspaceId,
+        taskRunId: tracker.taskRunId,
+        title: taskState.currentGoal,
+        prompt: task,
+        activeSkillIds: (taskState.activeSkills ?? []).map((skill) => skill.skillId),
+        recentActions,
+        autoLearnLowRisk: coworker.workspace?.skillLearningConfig?.autoLearnLowRisk ?? true,
+      }).catch((error) => console.warn('Skill learning failed:', error));
       await finalDeduct(userId, totalCostUsd);
       emitStep({ id: nowStepId('complete'), type: 'complete', output: action.summary, timestamp: new Date().toISOString() });
       await updateOverlay({ active: false, status: 'complete', task, steps });
@@ -600,6 +834,45 @@ export async function runControlLoop(
     if (signal?.aborted) {
       await completeStopped(onStatus, onComplete, tracker);
       return;
+    }
+
+    // Human-in-the-loop: the user reviewed this action at the approval gate and
+    // did NOT approve it. Either they steered (typed an instruction via "Other")
+    // or rejected it. Both feed back into the loop as a re-plan rather than
+    // executing the proposed action.
+    if (result.approvalRequired) {
+      const steer = result.approvalFeedback?.trim();
+      if (steer) {
+        applyCorrection(taskState, steer, 'User redirected the agent at the approval gate', []);
+        setActiveTask(sessionId, taskState);
+        emitStep({
+          id: `${stepId}-steer`,
+          type: 'approval',
+          tool: action.action,
+          output: `User redirected instead of approving: ${steer}`,
+          timestamp: new Date().toISOString(),
+        });
+        messages.push({ role: 'assistant', content: aiResponse });
+        messages.push({
+          role: 'user',
+          content: `I did NOT approve the proposed "${action.action}" action. Instead, do this: ${steer}\nRe-plan your next actions accordingly and continue the SAME task.`,
+        });
+      } else {
+        emitStep({
+          id: `${stepId}-rejected`,
+          type: 'approval',
+          tool: action.action,
+          error: 'approval_denied',
+          output: `User rejected the "${action.action}" action.`,
+          timestamp: new Date().toISOString(),
+        });
+        messages.push({ role: 'assistant', content: aiResponse });
+        messages.push({
+          role: 'user',
+          content: `I rejected the proposed "${action.action}" action. Do not retry it; choose a safer alternative for the SAME task, or ask me what to do instead.`,
+        });
+      }
+      continue;
     }
 
     emitStep({
@@ -650,13 +923,56 @@ export async function runControlLoop(
       setActiveTask(sessionId, taskState);
     }
 
+    // Visual self-check: fold the screenshot verdict into task state, steer on
+    // visible blockers, and surface the screenshot to the acting model so it SEES
+    // the page next turn (perception only — never pixel control).
+    let visualNote = '';
+    let verdictImages: string[] = [];
+    if (result.success && action.action === 'screen.verify') {
+      const verdict = result.details?.visualVerdict as import('./vision-verifier').VisualVerdict | undefined;
+      if (verdict) {
+        taskState.lastVisualVerdict = verdict;
+        if (taskState.successCriteria?.length) {
+          const met = new Set(verdict.metCriteria.map((c) => c.toLowerCase().trim()));
+          for (const crit of taskState.successCriteria) {
+            if (crit.method === 'structured') continue;
+            crit.status = met.has(crit.text.toLowerCase().trim()) || verdict.done ? 'met' : 'unmet';
+          }
+        }
+        if (verdict.blockers.length) {
+          taskState.status = 'blocked';
+          await tracker.setStatus('blocked');
+          visualNote = `\nVISUAL BLOCKER: ${verdict.blockers.join('; ')}. Do NOT complete — ask_user to resolve it, then resume the same task.`;
+        } else if (!verdict.done) {
+          visualNote = `\nVisual check: NOT done (${verdict.progress}%). Unmet: ${verdict.unmetCriteria.join('; ') || '—'}. Next: ${verdict.nextStepHint || 'continue with structured tools and re-verify'}.`;
+        } else {
+          visualNote = `\nVisual check: DONE (${verdict.progress}%). The screen confirms the outcome.`;
+        }
+        await updateOverlay({ active: true, status: 'executing', task, steps, progress: verdict.progress });
+        verdictImages = (result.details?.imageDataUrls as string[] | undefined) ?? [];
+        setActiveTask(sessionId, taskState);
+      }
+    }
+
     messages.push({ role: 'assistant', content: aiResponse });
     messages.push({
       role: 'user',
       content: result.success
-        ? `Action result: ${result.output}${blockerNote}\nComplete with task.complete only when the result is verified by a read-back and proves the requested outcome.`
+        ? `Action result: ${result.output}${blockerNote}${visualNote}\nComplete with task.complete only when the result is verified by a read-back and proves the requested outcome.`
         : `Action error: ${result.error ?? result.output}\nPick a different structured tool. If only a manual GUI path exists, ask_user for a manual step or an API/export alternative.`,
     });
+
+    // Surface the captured screenshot to the acting model so it can see the real,
+    // rendered screen (not just the DOM text) on the next turn.
+    if (verdictImages.length) {
+      messages.push({
+        role: 'user',
+        content: [
+          { type: 'text', text: `Screenshot(s) from the visual self-check just performed — look at the actual rendered screen and judge whether the task outcome is really present. Do not invent contents.` },
+          ...verdictImages.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+        ],
+      });
+    }
 
     // Scanned documents read mid-task (e.g. an image-only PDF via document.read) carry
     // page images. Surface them as a vision message so the model can actually read them

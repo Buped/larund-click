@@ -1,4 +1,4 @@
-import type { ApprovalRequest, ApprovalService } from './types';
+import type { ApprovalOutcome, ApprovalRequest, ApprovalService } from './types';
 import { createApprovalRequest, resolveApprovalRequest } from '../approvals/store';
 
 let approvalCounter = 0;
@@ -7,7 +7,16 @@ function newApprovalId(): string {
   return `appr-${Date.now()}-${approvalCounter}`;
 }
 
-export type ApprovalPrompt = (req: ApprovalRequest) => Promise<'allow_once' | 'allow_always' | 'deny'>;
+/**
+ * Result of the UI approval prompt. `steer` means the user picked "Other" and
+ * typed an instruction (`feedback`) for what to do instead — the loop re-plans.
+ */
+export interface ApprovalPromptResult {
+  decision: 'allow_once' | 'allow_always' | 'deny' | 'steer';
+  feedback?: string;
+}
+
+export type ApprovalPrompt = (req: ApprovalRequest) => Promise<ApprovalPromptResult>;
 
 export interface PersistentApprovalContext {
   userId: string;
@@ -33,8 +42,8 @@ export class PromptApprovalService implements ApprovalService {
     this.alwaysAllowed.add(actionName);
   }
 
-  async request(partial: Omit<ApprovalRequest, 'id' | 'createdAt'>): Promise<boolean> {
-    if (this.alwaysAllowed.has(partial.action.action)) return true;
+  async request(partial: Omit<ApprovalRequest, 'id' | 'createdAt'>): Promise<ApprovalOutcome> {
+    if (this.alwaysAllowed.has(partial.action.action)) return { approved: true };
     const req: ApprovalRequest = { ...partial, id: newApprovalId(), createdAt: Date.now() };
     let persistedId: string | undefined;
     if (this.persistentContext) {
@@ -52,12 +61,19 @@ export class PromptApprovalService implements ApprovalService {
         /* approval inbox is best-effort; inline prompt remains source of truth */
       }
     }
-    const decision = this.prompt ? await this.prompt(req) : this.defaultDecision;
+    const result: ApprovalPromptResult = this.prompt
+      ? await this.prompt(req)
+      : { decision: this.defaultDecision };
+    const { decision } = result;
     if (persistedId) {
       try {
         await resolveApprovalRequest(
           persistedId,
-          decision === 'allow_always' ? 'approved_always' : decision === 'deny' ? 'denied' : 'approved_once',
+          decision === 'allow_always'
+            ? 'approved_always'
+            : decision === 'deny' || decision === 'steer'
+            ? 'denied'
+            : 'approved_once',
         );
       } catch {
         /* best-effort */
@@ -65,16 +81,17 @@ export class PromptApprovalService implements ApprovalService {
     }
     if (decision === 'allow_always') {
       this.alwaysAllowed.add(partial.action.action);
-      return true;
+      return { approved: true };
     }
-    return decision === 'allow_once';
+    if (decision === 'steer') return { approved: false, feedback: result.feedback };
+    return { approved: decision === 'allow_once' };
   }
 }
 
 /** Auto-approving service for fully-trusted / test contexts. */
 export class AutoApprovalService implements ApprovalService {
   grantAlways(): void {}
-  async request(): Promise<boolean> {
-    return true;
+  async request(): Promise<ApprovalOutcome> {
+    return { approved: true };
   }
 }

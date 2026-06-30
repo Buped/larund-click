@@ -284,6 +284,74 @@ describe('completion guard — browser open-only', () => {
   });
 });
 
+describe('completion guard — mandatory visual check (browser/app)', () => {
+  const MUTATION_OUTCOME = 'The web app reflects the requested change, confirmed by reading the page after acting. Opening the page alone is not enough.';
+  const verdict = (o: Record<string, unknown>): RecentAction => ({ action: 'screen.verify', success: true, output: JSON.stringify({ done: false, progress: 0, metCriteria: [], unmetCriteria: [], blockers: [], ...o }) });
+
+  function mutatingBrowserState() {
+    const s = stateFor('Kattints a Mentés gombra a megnyitott weboldalon.');
+    s.intent = 'browser_webapp';
+    s.expectedOutcome = MUTATION_OUTCOME;
+    return s;
+  }
+
+  it('rejects a mutating browser task with no visual confirmation', () => {
+    const s = mutatingBrowserState();
+    const recent = [ok('browser.open'), ok('browser.click'), ok('browser.read', 'URL: https://app.example\nrow added')];
+    const r = verifyBeforeComplete(s, recent);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/no screen\.verify visual confirmation/i);
+  });
+
+  it('rejects when the visual check did not confirm done', () => {
+    const s = mutatingBrowserState();
+    const recent = [ok('browser.open'), ok('browser.click'), ok('browser.read', 'row added'), verdict({ done: false, progress: 40, unmetCriteria: ['row not visible yet'] })];
+    const r = verifyBeforeComplete(s, recent);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/did not confirm completion/i);
+  });
+
+  it('rejects when the screen changed after the last visual check (stale)', () => {
+    const s = mutatingBrowserState();
+    const recent = [ok('browser.open'), verdict({ done: true, progress: 100 }), ok('browser.click')];
+    const r = verifyBeforeComplete(s, recent);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/stale/i);
+  });
+
+  it('rejects when the visual check reports a blocker', () => {
+    const s = mutatingBrowserState();
+    const recent = [ok('browser.open'), ok('browser.click'), ok('browser.read'), verdict({ done: false, blockers: ['login wall'] })];
+    const r = verifyBeforeComplete(s, recent);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/blocker/i);
+  });
+
+  it('accepts a mutating browser task confirmed by a done visual check after the change', () => {
+    const s = mutatingBrowserState();
+    const recent = [
+      ok('browser.open'),
+      ok('browser.click'),
+      ok('browser.read', 'URL: https://app.example\nrow added'),
+      verdict({ done: true, progress: 100, metCriteria: ['row visible'] }),
+    ];
+    const r = verifyBeforeComplete(s, recent);
+    expect(r.ok).toBe(true);
+  });
+
+  it('does NOT require a visual check for open-only browser tasks', () => {
+    const s = stateFor('Nyisd meg a YouTube-ot.');
+    const recent = [ok('browser.open'), ok('browser.read', 'URL: https://www.youtube.com\nTITLE: YouTube')];
+    expect(verifyBeforeComplete(s, recent).ok).toBe(true);
+  });
+
+  it('does NOT require a visual check for non-visual (local file) tasks', () => {
+    const s = stateFor('Készíts egy Excel fájlt 5 sor adattal.');
+    const recent = [ok('sheet.write', 'saved adatok.xlsx'), ok('sheet.read', 'rows...')];
+    expect(verifyBeforeComplete(s, recent).ok).toBe(true);
+  });
+});
+
 describe('completion guard — after a correction', () => {
   it('rejects an immediate re-complete with no fresh work', () => {
     const goal = 'Készíts egy új Google táblázatot és töltsd fel minimum 5 adattal.';
@@ -411,5 +479,45 @@ describe('completion guard - web lookup evidence', () => {
     });
     const result = verifyBeforeComplete(s, [{ action: 'web.search', success: true, argsSummary: '{"query":"SpaceX latest news"}', output }]);
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('completion guard - office result packs', () => {
+  it('rejects system-to-system copy without source read/schema evidence', () => {
+    const s = stateFor('Masold at a HubSpot kontaktokat Google Sheetsbe.');
+    const r = verifyBeforeComplete(s, [
+      conn('google.sheets.append_or_update_rows', 'Read-back: verified.'),
+    ]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/source read\/schema/i);
+  });
+
+  it('rejects system-to-system copy without target read-back', () => {
+    const s = stateFor('Masold at a HubSpot kontaktokat Google Sheetsbe.');
+    const r = verifyBeforeComplete(s, [
+      conn('hubspot.search_contacts', JSON.stringify({ results: [{ id: '1' }] })),
+      conn('google.sheets.append_or_update_rows', 'Appended 1 row'),
+    ]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/did not read target/i);
+  });
+
+  it('rejects HubSpot CRM writes without record read-back', () => {
+    const s = stateFor('Frissitsd a HubSpot CRM rekordot a meeting alapjan.');
+    const r = verifyBeforeComplete(s, [
+      ok('document.read', 'Meeting notes'),
+      conn('hubspot.update_contact', 'Contact updated'),
+    ]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/CRM write/i);
+  });
+
+  it('rejects meeting actions when notes were not read', () => {
+    const s = stateFor('Meeting jegyzet alapjan keszits follow-up taskokat owner es hatarido mezokkel.');
+    const r = verifyBeforeComplete(s, [
+      ok('doc.write_txt', 'Action: Follow up. Owner: Peter. Due: tomorrow.'),
+    ]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/meeting notes/i);
   });
 });

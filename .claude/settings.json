@@ -65,7 +65,18 @@
       "Bash(echo \"tsc exit: $?\")",
       "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\); console.log\\('vitest:', \\(p.devDependencies||{}\\).vitest || \\(p.dependencies||{}\\).vitest\\)\")",
       "Bash(exit)",
-      "mcp__claude_ai_Supabase__get_advisors"
+      "mcp__claude_ai_Supabase__get_advisors",
+      "PowerShell(if \\($?\\) { \"TSC_EXIT_OK\" })",
+      "PowerShell(cargo check --manifest-path src-tauri/Cargo.toml --quiet 2>&1 | Select-Object -Last 40; \"CARGO_DONE exit=$LASTEXITCODE\")",
+      "PowerShell(npx tsc --noEmit 2>&1 | Select-Object -First 20; \"TSC exit=$LASTEXITCODE\"; npm test 2>&1 | Select-Object -Last 6)",
+      "PowerShell(npm run build 2>&1 | Select-Object -Last 18; \"BUILD exit=$LASTEXITCODE\")",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,1\\)\\)\")",
+      "Bash(npx eslint *)",
+      "Bash(node -e \"const fs=require\\('fs'\\); const c=fs.readFileSync\\('vitest.config.ts','utf8'\\); console.log\\(c\\)\")",
+      "Bash(node -e \"const fs=require\\('fs'\\); console.log\\(fs.readFileSync\\('vite.config.ts','utf8'\\)\\)\")",
+      "PowerShell(npx vitest run src/lib/__tests__/credit-engine.test.ts)",
+      "Bash(python -c ' *)",
+      "Bash(echo \"TSC_EXIT=$?\")"
     ],
     "additionalDirectories": [
       "D:\\Larund-click\\src-tauri\\.cargo"

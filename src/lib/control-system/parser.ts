@@ -34,6 +34,8 @@ export const ALLOWED_ACTIONS: ReadonlySet<ControlActionName> = new Set<ControlAc
   'web.extract_contact_info', 'web.verify_source',
   // email composer
   'email.compose',
+  // visual self-check (read-only perception, never control)
+  'screen.verify',
   // connections / skills / workflows
   'connection.call', 'skill.run', 'workflow.start', 'workflow.status', 'workflow.cancel',
   // control flow

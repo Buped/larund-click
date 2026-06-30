@@ -6,7 +6,28 @@
 
 import type { ToolRisk } from '../../control-system/types';
 
-export type SkillBuilderSource = 'user' | 'workspace' | 'suggested' | 'imported';
+export type SkillBuilderSource = 'admin_authored' | 'self_learned' | 'user' | 'workspace' | 'suggested' | 'imported';
+export type SkillReviewStatus = 'draft' | 'pending_review' | 'validated_local' | 'approved' | 'deprecated' | 'blocked';
+export type SkillBuilderKind = 'workflow' | 'app_profile';
+
+export interface SkillTarget {
+  appName?: string;
+  domain?: string;
+  urlPatterns?: string[];
+  windowTitlePatterns?: string[];
+  preferredBrowserProfileId?: string;
+}
+
+export interface SkillLearningMetadata {
+  originTaskRunIds: string[];
+  autoLearned: boolean;
+  confidence: number;
+  promotedAt?: string;
+  lastUsedAt?: string;
+  usageCount: number;
+  successCount: number;
+  failureCount: number;
+}
 
 export interface SkillStep {
   id: string;
@@ -43,6 +64,15 @@ export interface SkillBuilderSkill {
   userId: string;
   workspaceId?: string;
   source: SkillBuilderSource;
+  status?: SkillReviewStatus;
+  checksum?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  originTaskRunId?: string;
+  originAutomationId?: string;
+  kind?: SkillBuilderKind;
+  target?: SkillTarget;
+  learning?: SkillLearningMetadata;
   /** Long-form markdown instructions the agent loads in full via skill.run. */
   instructionBody?: string;
   triggerPhrases: string[];
@@ -71,6 +101,15 @@ export interface CreateSkillBuilderInput {
   name: string;
   description: string;
   source?: SkillBuilderSource;
+  status?: SkillReviewStatus;
+  checksum?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  originTaskRunId?: string;
+  originAutomationId?: string;
+  kind?: SkillBuilderKind;
+  target?: SkillTarget;
+  learning?: Partial<SkillLearningMetadata>;
   instructionBody?: string;
   triggerPhrases?: string[];
   categories?: string[];

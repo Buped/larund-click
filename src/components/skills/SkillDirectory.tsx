@@ -7,8 +7,9 @@ import { NewSkillWizard } from './NewSkillWizard';
 import type { SkillPackage } from '../../lib/skills/packages/types';
 import { listSkillPackages, setSkillPackageEnabled } from '../../lib/skills/packages/store';
 
-const FILTERS = ['All', 'Built-in', 'Created by you', 'Suggested', 'Documents', 'Development', 'Marketing', 'Data', 'Operations', 'Creative'] as const;
+const FILTERS = ['All', 'Documents', 'Development', 'Marketing', 'Data', 'Operations', 'Creative'] as const;
 type Filter = typeof FILTERS[number];
+const VIEWS = ['Built-in', 'Learned', 'Suggestions'] as const;
 const SOURCE_FILTERS = ['Any source', 'Built-in', 'User/workspace', 'Imported/suggested'] as const;
 const RISK_FILTERS = ['Any risk', 'read_only', 'local_write', 'external_read', 'external_write', 'external_send', 'destructive', 'credential_access', 'process_exec'] as const;
 
@@ -16,6 +17,7 @@ export function SkillDirectory({ userId, projectId }: { userId: string; projectI
   const workspaceId = projectId ?? undefined;
   const skills = useAsyncList<SkillPackage>(() => listSkillPackages({ userId, workspaceId, includeSuggested: true }), [userId, workspaceId]);
   const [query, setQuery] = useState('');
+  const [view, setView] = useState<typeof VIEWS[number]>('Built-in');
   const [filter, setFilter] = useState<Filter>('All');
   const [sourceFilter, setSourceFilter] = useState<typeof SOURCE_FILTERS[number]>('Any source');
   const [riskFilter, setRiskFilter] = useState<typeof RISK_FILTERS[number]>('Any risk');
@@ -27,11 +29,12 @@ export function SkillDirectory({ userId, projectId }: { userId: string; projectI
     const q = query.trim().toLowerCase();
     return skills.items.filter((skill) => {
       const hay = `${skill.name} ${skill.description} ${skill.categories.join(' ')} ${skill.triggerPhrases.join(' ')}`.toLowerCase();
+      const viewOk =
+        (view === 'Built-in' && skill.source === 'built_in')
+        || (view === 'Learned' && skill.source !== 'built_in' && skill.source !== 'suggested')
+        || (view === 'Suggestions' && skill.source === 'suggested');
       const sourceOk =
         filter === 'All'
-        || (filter === 'Built-in' && skill.source === 'built_in')
-        || (filter === 'Created by you' && (skill.source === 'user' || skill.source === 'workspace'))
-        || (filter === 'Suggested' && skill.source === 'suggested')
         || skill.categories.some((c) => c.toLowerCase() === filter.toLowerCase() || (filter === 'Documents' && /doc|file|office|productivity/.test(c.toLowerCase())));
       const explicitSourceOk =
         sourceFilter === 'Any source'
@@ -43,15 +46,29 @@ export function SkillDirectory({ userId, projectId }: { userId: string; projectI
         connectionFilter === 'any'
         || (connectionFilter === 'requires' && skill.requiredConnections.length > 0)
         || (connectionFilter === 'none' && skill.requiredConnections.length === 0);
-      return sourceOk && explicitSourceOk && riskOk && connectionOk && (!q || hay.includes(q));
+      return viewOk && sourceOk && explicitSourceOk && riskOk && connectionOk && (!q || hay.includes(q));
     });
-  }, [skills.items, query, filter, sourceFilter, riskFilter, connectionFilter]);
+  }, [skills.items, query, view, filter, sourceFilter, riskFilter, connectionFilter]);
 
   return (
     <>
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 12 }}>
         <div style={{ flex: 1 }}><SearchInput value={query} onChange={setQuery} placeholder="Search skills..." /></div>
         <button style={{ ...btn, height: 36 }} onClick={() => setCreating(true)}><Icon name="plus" size={13} stroke={2} /> New skill</button>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+        {VIEWS.map((v) => {
+          const count = skills.items.filter((skill) =>
+            (v === 'Built-in' && skill.source === 'built_in')
+            || (v === 'Learned' && skill.source !== 'built_in' && skill.source !== 'suggested')
+            || (v === 'Suggestions' && skill.source === 'suggested')
+          ).length;
+          return (
+            <button key={v} style={{ ...ghostBtn, ...(view === v ? { background: 'var(--accent)', color: 'var(--on-accent)', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }} onClick={() => setView(v)}>
+              {v} ({count})
+            </button>
+          );
+        })}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
         {FILTERS.map((f) => <button key={f} style={{ ...ghostBtn, ...(filter === f ? { background: 'var(--accent)', color: 'var(--on-accent)', borderColor: 'var(--accent)', fontWeight: 650 } : {}) }} onClick={() => setFilter(f)}>{f}</button>)}

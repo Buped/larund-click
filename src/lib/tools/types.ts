@@ -1,6 +1,7 @@
 import type { ControlAction, ControlActionName, ControlToolResult, ToolRisk } from '../control-system/types';
 import type { DocumentReference } from '../references/types';
 import type { SkillRuntimeContext } from '../skills/types';
+import type { AutonomyMode } from './policy';
 
 export type { ToolRisk } from '../control-system/types';
 
@@ -59,11 +60,21 @@ export interface ApprovalRequest {
   createdAt: number;
 }
 
-export type ApprovalDecision = 'allow_once' | 'allow_always' | 'deny';
+export type ApprovalDecision = 'allow_once' | 'allow_always' | 'deny' | 'steer';
+
+/**
+ * Outcome of an approval request. `approved` gates execution; `feedback` carries
+ * the free-text the user typed via the approval card's "Other" option, which the
+ * loop turns into a steering correction (re-plan) instead of running the action.
+ */
+export interface ApprovalOutcome {
+  approved: boolean;
+  feedback?: string;
+}
 
 export interface ApprovalService {
-  /** Returns true when the action may proceed. */
-  request(req: Omit<ApprovalRequest, 'id' | 'createdAt'>): Promise<boolean>;
+  /** Resolves whether the action may proceed, plus optional steering feedback. */
+  request(req: Omit<ApprovalRequest, 'id' | 'createdAt'>): Promise<ApprovalOutcome>;
   /** Pre-grant a tool/skill so future matching actions auto-approve. */
   grantAlways(actionName: string): void;
 }
@@ -104,6 +115,11 @@ export interface ToolContext {
   workflows?: WorkflowRunner;
   onAskUser?: (question: string) => Promise<string>;
   activeSkills?: SkillRuntimeContext[];
+  /**
+   * Active autonomy mode for this run. Lets the gate apply the semi-mode hybrid
+   * criticality logic (AI-judged `critical` + safety floor). Defaults to 'semi'.
+   */
+  autonomyMode?: AutonomyMode;
 }
 
 export interface ToolDefinition<TArgs extends ControlAction = ControlAction> {

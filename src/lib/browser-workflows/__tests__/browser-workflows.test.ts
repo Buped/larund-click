@@ -17,6 +17,12 @@ describe('detect-page-state', () => {
     const st = detectPageState(out);
     expect(st.isManualBlocker).toBe(false);
   });
+
+  it('recognises the current browser_read INPUTS/BUTTONS output as interactive', () => {
+    const out = 'URL: https://app.test\nTITLE: App\nSTATE_HINTS: none\nINPUTS:\ninput[text]: Search\nBUTTONS/LINKS:\nSave | Cancel';
+    const st = detectPageState(out);
+    expect(st.kind).toBe('webapp_ready');
+  });
 });
 
 describe('manual-blockers', () => {

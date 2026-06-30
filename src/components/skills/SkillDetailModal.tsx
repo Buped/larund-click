@@ -35,6 +35,9 @@ export function SkillDetailModal({ skill, userId, workspaceId, onClose, onChange
         requiredMcpServers: draft.requiredMcpServers,
         allowedTools: draft.allowedTools,
         riskLevel: draft.riskLevel,
+        kind: draft.kind,
+        target: draft.target,
+        learning: draft.learning,
         instructionBody: draft.instructionBody,
         steps: draft.steps.map((s) => ({ id: s.id, title: s.title, instruction: s.instruction, preferredTools: s.preferredTools, required: s.required })),
         verificationChecklist: draft.verificationChecklist.map((v) => ({
@@ -70,6 +73,9 @@ export function SkillDetailModal({ skill, userId, workspaceId, onClose, onChange
         requiredMcpServers: skill.requiredMcpServers,
         allowedTools: skill.allowedTools,
         riskLevel: skill.riskLevel,
+        kind: skill.kind,
+        target: skill.target,
+        learning: skill.learning,
         steps: skill.steps.map((s) => ({ id: s.id, title: s.title, instruction: s.instruction, preferredTools: s.preferredTools, required: s.required })),
         verificationChecklist: skill.verificationChecklist.map((v) => ({ id: v.id, title: v.title, description: v.description ?? v.title, kind: 'read_back', required: v.required })),
         examplePrompts: skill.examples.map((e) => e.userPrompt),
@@ -109,6 +115,8 @@ export function SkillDetailModal({ skill, userId, workspaceId, onClose, onChange
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
               <Badge text={skill.source === 'built_in' ? 'Built-in' : skill.source} color={skill.source === 'built_in' ? 'var(--accent)' : 'var(--success)'} />
               <Badge text={`v${skill.version}`} />
+              <Badge text={skill.kind === 'app_profile' ? 'App profile' : 'Workflow'} color={skill.kind === 'app_profile' ? 'var(--accent)' : undefined} />
+              {skill.learning?.autoLearned && <Badge text="Auto-learned" color="var(--success)" />}
               <Badge text={skill.riskLevel} color={statusColor(skill.riskLevel)} />
               <Badge text={skill.enabled ? 'Enabled' : 'Disabled'} color={statusColor(skill.enabled ? 'enabled' : 'disabled')} />
             </div>
@@ -140,6 +148,18 @@ export function SkillDetailModal({ skill, userId, workspaceId, onClose, onChange
               <EditableList title="Required connections" editable={editable} value={draft.requiredConnections.join('\n')} onChange={(v) => setDraft({ ...draft, requiredConnections: lines(v) })} />
               <EditableList title="Required MCP servers" editable={editable} value={draft.requiredMcpServers.join('\n')} onChange={(v) => setDraft({ ...draft, requiredMcpServers: lines(v) })} />
               <EditableList title="Allowed tools" editable={editable} value={draft.allowedTools.join('\n')} onChange={(v) => setDraft({ ...draft, allowedTools: lines(v) })} />
+              {draft.kind === 'app_profile' && <InfoList title="App/site target" items={[
+                draft.target?.appName ? `App: ${draft.target.appName}` : '',
+                draft.target?.domain ? `Domain: ${draft.target.domain}` : '',
+                ...(draft.target?.urlPatterns ?? []).map((p) => `URL: ${p}`),
+                ...(draft.target?.windowTitlePatterns ?? []).map((p) => `Window: ${p}`),
+              ].filter(Boolean)} />}
+              {draft.learning && <InfoList title="Learning" items={[
+                `Source tasks: ${draft.learning.originTaskRunIds.length}`,
+                `Confidence: ${Math.round(draft.learning.confidence * 100)}%`,
+                `Usage: ${draft.learning.usageCount} (${draft.learning.successCount} success / ${draft.learning.failureCount} failed)`,
+                draft.learning.promotedAt ? `Promoted: ${draft.learning.promotedAt}` : '',
+              ].filter(Boolean)} />}
               <InfoList title="Related automations" items={['No related automations recorded yet.']} />
               <InfoList title="Last used" items={[skill.lastUsedAt ?? 'Not used yet']} />
             </div>

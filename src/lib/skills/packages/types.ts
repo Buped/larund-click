@@ -1,7 +1,10 @@
 import type { ToolRisk } from '../../control-system/types';
 import type { ReferencedContext } from '../../mentions/types';
+import type { SkillBuilderKind, SkillLearningMetadata, SkillTarget } from '../builder/types';
 
-export type SkillPackageSource = 'built_in' | 'user' | 'workspace' | 'suggested' | 'imported';
+import type { SkillReviewStatus } from '../builder/types';
+
+export type SkillPackageSource = 'built_in' | 'admin_authored' | 'self_learned' | 'user' | 'workspace' | 'suggested' | 'imported';
 
 export interface SkillStep {
   id: string;
@@ -54,6 +57,15 @@ export interface SkillPackage {
   description: string;
   source: SkillPackageSource;
   workspaceId?: string;
+  status?: SkillReviewStatus;
+  checksum?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  originTaskRunId?: string;
+  originAutomationId?: string;
+  kind: SkillBuilderKind;
+  target?: SkillTarget;
+  learning?: SkillLearningMetadata;
   categories: string[];
   triggerPhrases: string[];
   whenToUse: string[];

@@ -77,6 +77,45 @@ describe('admin automation builder', () => {
     expect(await getAutomation(result.automation.id)).toBeTruthy();
   });
 
+  it('creates reviewable skill drafts next to the automation draft', async () => {
+    callOpenRouterJsonMock
+      .mockResolvedValueOnce({ content: JSON.stringify({
+        name: 'Lead Capture Flow',
+        description: 'Capture leads from a form.',
+        prompt: 'Read a lead source and save a local lead report.',
+        trigger: { kind: 'manual' },
+        steps: [{ title: 'Read source', instruction: 'Read the lead source.' }],
+        verificationChecklist: [{ title: 'Report was read back', kind: 'file_read_back', required: true }],
+      }), usage: { inputTokens: 1, outputTokens: 1, costUsd: 0, model: 'google/gemini-3.1-flash-lite' } })
+      .mockResolvedValueOnce({ content: JSON.stringify({
+        skills: [{
+          name: 'Lead Capture Reusable Flow',
+          description: 'Reusable lead capture workflow.',
+          triggerPhrases: ['lead capture'],
+          categories: ['crm'],
+          allowedTools: ['file.read', 'file.write'],
+          riskLevel: 'local_write',
+          steps: [{ title: 'Read leads', instruction: 'Read the lead input.', preferredTools: ['file.read'] }],
+          verificationChecklist: [{ title: 'Output was read back', kind: 'read_back', required: true }],
+          fallbackStrategy: 'Ask the user if the source is missing.',
+          examplePrompts: ['Capture leads'],
+          proposedScope: 'workspace',
+        }],
+      }), usage: { inputTokens: 1, outputTokens: 1, costUsd: 0, model: 'google/gemini-3.1-flash-lite' } });
+
+    const result = await buildAutomationFromAdminText({
+      userId: 'u1',
+      projectId: 'p1',
+      isAdmin: true,
+      text: 'Create a reusable lead capture automation.',
+    });
+
+    expect(result.skillDrafts).toHaveLength(1);
+    expect(result.skillDrafts[0].skill.source).toBe('admin_authored');
+    expect(result.skillDrafts[0].skill.status).toBe('pending_review');
+    expect(result.skillDrafts[0].dryRun.ok).toBe(true);
+  });
+
   it('falls back to manual trigger, generated name, heuristic steps, and verification', async () => {
     callOpenRouterJsonMock.mockRejectedValue(new Error('offline'));
 

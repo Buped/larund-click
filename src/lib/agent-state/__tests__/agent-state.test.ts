@@ -24,7 +24,8 @@ describe('preflight classification', () => {
   it('classifies a Google Sheet task as spreadsheet_cloud and forbids local sheet.write', () => {
     const pf = preflight('Készíts egy új Google táblázatot és töltsd fel minimum 5 adattal.');
     expect(pf.intent).toBe('spreadsheet_cloud');
-    expect(pf.targetSurface).toBe('browser');
+    expect(pf.targetSurface).toBe('connection');
+    expect(pf.recommendedTools[0]).toBe('connection.call');
     expect(pf.forbiddenTools).toContain('sheet.write');
   });
 

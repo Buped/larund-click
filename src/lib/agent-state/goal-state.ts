@@ -3,7 +3,7 @@
 // guard checks reality against this, instead of trusting the model's say-so.
 
 import type { TaskPreflight } from '../control-system/preflight';
-import type { ExpectedArtifact, TargetDocument } from './types';
+import type { ExpectedArtifact, SuccessCriterion, TargetDocument } from './types';
 
 export function deriveTargetDocument(pf: TaskPreflight): TargetDocument | undefined {
   if (pf.targetDocumentType === 'google_sheet') {
@@ -42,6 +42,38 @@ export function deriveExpectedArtifacts(pf: TaskPreflight): ExpectedArtifact[] {
     default:
       return [{ type: 'text', description: pf.expectedOutcome }];
   }
+}
+
+/** True for surfaces where a rendered screenshot is the most reliable proof. */
+export function isVisualIntent(intent: string | undefined): boolean {
+  return intent === 'browser_webapp';
+}
+
+/**
+ * Explicit, checkable acceptance conditions ("definition of done"). Visual
+ * surfaces (browser/desktop apps) get a `visual` criterion so the screenshot
+ * judge has a concrete target; everything else stays `structured` (read-back).
+ */
+export function deriveSuccessCriteria(pf: TaskPreflight): SuccessCriterion[] {
+  const make = (text: string, method: SuccessCriterion['method']): SuccessCriterion => ({
+    id: `crit-${Math.random().toString(36).slice(2, 8)}`,
+    text,
+    method,
+    status: 'pending',
+  });
+  const checks = derivePendingChecks(pf).map((text) => make(text, 'structured'));
+  if (isVisualIntent(pf.intent)) {
+    checks.push(
+      make(
+        pf.mutates
+          ? `The requested change is visibly reflected on the page/app screen: ${pf.expectedOutcome}`
+          : `The requested page/app is visibly open and shows: ${pf.expectedOutcome}`,
+        'visual',
+      ),
+    );
+    checks.push(make('No login wall, CAPTCHA, permission prompt or error dialog is visible', 'visual'));
+  }
+  return checks;
 }
 
 /** Default verification checklist the loop seeds and the guard ticks off. */

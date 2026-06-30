@@ -15,8 +15,22 @@ beforeEach(() => {
 
 describe('workflow templates', () => {
   it('ships built-in templates', () => {
-    expect(BUILT_IN_WORKFLOW_TEMPLATES.length).toBeGreaterThanOrEqual(8);
+    expect(BUILT_IN_WORKFLOW_TEMPLATES.length).toBeGreaterThanOrEqual(17);
     expect(getBuiltInTemplate('github-bugfix')?.requiredConnections).toContain('github');
+    for (const id of [
+      'office-email-triage-reply',
+      'office-document-prep',
+      'office-system-to-system-copy',
+      'office-client-materials-pack',
+      'office-recurring-admin-run',
+      'office-spreadsheet-refresh',
+      'office-meeting-to-actions',
+      'office-workspace-maintenance',
+      'office-microtask-capture',
+    ]) {
+      expect(getBuiltInTemplate(id), id).toBeTruthy();
+      expect(getBuiltInTemplate(id)?.verification.length).toBeGreaterThan(0);
+    }
   });
 
   it('lists built-in + custom templates for a workspace', async () => {

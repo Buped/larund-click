@@ -48,6 +48,83 @@ export const googleDriveTools: ConnectionToolDefinition[] = [
     },
   },
   {
+    name: 'google.drive.resolve_reference',
+    description: 'Resolve a Drive file by id, URL, name or query into metadata.',
+    risk: 'external_read',
+    async run(args, secrets) {
+      const id = String(args.fileId ?? args.file_id ?? '').trim();
+      const url = String(args.url ?? '').trim();
+      const query = String(args.q ?? args.query ?? args.name ?? '').trim();
+      const urlId = url.match(/\/d\/([^/]+)/)?.[1] ?? url.match(/[?&]id=([^&]+)/)?.[1] ?? '';
+      const fileId = id || urlId;
+      if (args.mock === true) {
+        return { success: true, output: JSON.stringify({ id: fileId || 'mock-file', name: query || 'Mock file', mimeType: 'text/plain', webViewLink: url || 'https://drive.mock/file' }), details: { id: fileId || 'mock-file', name: query || 'Mock file' } };
+      }
+      const auth = googleAuthFromSecrets(secrets);
+      if (!auth.accessToken) return missingGoogleAuth();
+      return googleResult(async () => {
+        if (fileId) {
+          const data = await driveFetch(`/drive/v3/files/${fileId}?fields=id,name,mimeType,webViewLink,size,modifiedTime,parents`, auth.accessToken!);
+          return { success: true, output: JSON.stringify(data), details: data as Record<string, unknown> };
+        }
+        const q = query
+          ? `name contains '${query.replace(/'/g, "\\'")}' and trashed=false`
+          : 'trashed=false';
+        const data = await driveFetch(`/drive/v3/files?q=${encodeURIComponent(q)}&pageSize=10&fields=files(id,name,mimeType,webViewLink,size,modifiedTime)`, auth.accessToken!);
+        return { success: true, output: JSON.stringify(data), details: data as Record<string, unknown> };
+      });
+    },
+  },
+  {
+    name: 'google.drive.search_and_read',
+    description: 'Search Drive files and return compact readable metadata for matching items.',
+    risk: 'external_read',
+    async run(args, secrets) {
+      const query = String(args.q ?? args.query ?? 'trashed=false');
+      const maxResults = Math.min(Number(args.maxResults ?? args.max_results ?? 10) || 10, 25);
+      if (args.mock === true) {
+        const files = [{ id: 'mock-file-1', name: query || 'Mock file', mimeType: 'application/vnd.google-apps.document', webViewLink: 'https://drive.mock/mock-file-1' }];
+        return { success: true, output: JSON.stringify({ files, count: files.length }), details: { files } };
+      }
+      const auth = googleAuthFromSecrets(secrets);
+      if (!auth.accessToken) return missingGoogleAuth();
+      return googleResult(async () => {
+        const data = await driveFetch(`/drive/v3/files?q=${encodeURIComponent(query)}&pageSize=${maxResults}&fields=files(id,name,mimeType,webViewLink,size,modifiedTime)`, auth.accessToken!) as { files?: unknown[] };
+        return { success: true, output: JSON.stringify({ files: data.files ?? [], count: data.files?.length ?? 0 }), details: { files: data.files ?? [], count: data.files?.length ?? 0 } };
+      });
+    },
+  },
+  {
+    name: 'google.drive.ensure_folder',
+    description: 'Find or create a Drive folder by name, then read it back.',
+    risk: 'external_write',
+    async run(args, secrets) {
+      const name = String(args.name ?? '').trim();
+      const parentId = String(args.parentId ?? args.parent_id ?? '');
+      if (!name) return { success: false, output: '', error: 'missing_folder_name' };
+      if (args.mock === true) return { success: true, output: `Mock ensured Drive folder: ${name}`, details: { folderId: `folder-${name.replace(/\W+/g, '-')}`, name, verified: true, created: false } };
+      const auth = googleAuthFromSecrets(secrets);
+      if (!auth.accessToken) return missingGoogleAuth();
+      return googleResult(async () => {
+        const parentClause = parentId ? ` and '${parentId}' in parents` : '';
+        const q = `name='${name.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false${parentClause}`;
+        const found = await driveFetch(`/drive/v3/files?q=${encodeURIComponent(q)}&pageSize=1&fields=files(id,name,webViewLink)`, auth.accessToken!) as { files?: Array<{ id?: string; name?: string; webViewLink?: string }> };
+        const existing = found.files?.[0];
+        if (existing?.id) {
+          return { success: true, output: `Drive folder exists: ${existing.name}. Read-back: verified.`, details: { ...existing, folderId: existing.id, verified: true, created: false } };
+        }
+        const metadata: Record<string, unknown> = { name, mimeType: 'application/vnd.google-apps.folder' };
+        if (parentId) metadata.parents = [parentId];
+        const created = await driveFetch('/drive/v3/files?fields=id,name,webViewLink', auth.accessToken!, {
+          method: 'POST',
+          body: JSON.stringify(metadata),
+        }) as { id?: string; name?: string; webViewLink?: string };
+        const verified = created.id ? await driveFetch(`/drive/v3/files/${created.id}?fields=id,mimeType`, auth.accessToken!).then(() => true).catch(() => false) : false;
+        return { success: true, output: `Drive folder created: ${created.name}. Read-back: ${verified ? 'verified' : 'not verified'}.`, details: { ...created, folderId: created.id, verified, created: true } };
+      });
+    },
+  },
+  {
     name: 'google.drive.create_folder',
     description: 'Create a Drive folder.',
     risk: 'external_write',
@@ -70,6 +147,33 @@ export const googleDriveTools: ConnectionToolDefinition[] = [
           ? await driveFetch(`/drive/v3/files/${data.id}?fields=id,mimeType`, auth.accessToken!).then(() => true).catch(() => false)
           : false;
         return { success: true, output: `Drive mappa létrehozva: ${data.name}. Read-back: ${verified ? '✓' : '⚠'}.`, details: { ...data, folderId: data.id, verified } };
+      });
+    },
+  },
+  {
+    name: 'google.drive.copy_file',
+    description: 'Copy a Drive file, optionally into a target folder, then read copied metadata back.',
+    risk: 'external_write',
+    async run(args, secrets) {
+      const fileId = String(args.fileId ?? args.file_id ?? '');
+      const name = String(args.name ?? '');
+      const parentId = String(args.parentId ?? args.parent_id ?? args.folderId ?? args.folder_id ?? '');
+      if (!fileId) return { success: false, output: '', error: 'missing_file_id' };
+      if (args.mock === true) return { success: true, output: `Mock copied Drive file ${fileId}`, details: { fileId: `copy-${fileId}`, sourceFileId: fileId, name: name || 'Mock copy', verified: true } };
+      const auth = googleAuthFromSecrets(secrets);
+      if (!auth.accessToken) return missingGoogleAuth();
+      return googleResult(async () => {
+        const metadata: Record<string, unknown> = {};
+        if (name) metadata.name = name;
+        if (parentId) metadata.parents = [parentId];
+        const copied = await driveFetch(`/drive/v3/files/${fileId}/copy?fields=id,name,webViewLink,mimeType`, auth.accessToken!, {
+          method: 'POST',
+          body: JSON.stringify(metadata),
+        }) as { id?: string; name?: string; webViewLink?: string; mimeType?: string };
+        const verified = copied.id
+          ? await driveFetch(`/drive/v3/files/${copied.id}?fields=id,name,webViewLink,mimeType`, auth.accessToken!).then(() => true).catch(() => false)
+          : false;
+        return { success: true, output: `Drive file copied: ${copied.name}. Read-back: ${verified ? 'verified' : 'not verified'}.`, details: { ...copied, fileId: copied.id, sourceFileId: fileId, verified } };
       });
     },
   },

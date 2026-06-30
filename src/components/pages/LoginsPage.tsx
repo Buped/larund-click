@@ -13,6 +13,7 @@ import {
   listBrowserProfiles, createBrowserProfile, deleteBrowserProfile, validateBrowserProfile,
   DEFAULT_BROWSER_PROFILE, type BrowserProfile, type BrowserKind,
 } from '../../lib/browser/profiles';
+import { getNativeAutofillSettings, setNativeAutofillEnabled, type NativeAutofillSettings } from '../../lib/browser/native-autofill';
 import { performControlAction } from '../../lib/control-system/executor';
 import { AutoApprovalService } from '../../lib/tools/approvals';
 import { MemoryAuditLogger } from '../../lib/tools/audit';
@@ -207,9 +208,25 @@ export function LoginsPage() {
   const [showBrowsers, setShowBrowsers] = useState(false);
   const [testing, setTesting] = useState('');
   const [testMsg, setTestMsg] = useState<Record<string, string>>({});
+  const [autofill, setAutofill] = useState<NativeAutofillSettings>(() => getNativeAutofillSettings());
+  const [autofillMsg, setAutofillMsg] = useState('');
 
-  function refresh() { setApps(listApps()); setBrowsers(listBrowserProfiles()); }
+  function refresh() { setApps(listApps()); setBrowsers(listBrowserProfiles()); setAutofill(getNativeAutofillSettings()); }
   useEffect(() => { refresh(); }, []);
+
+  function toggleNativeAutofill(enabled: boolean) {
+    setAutofill(setNativeAutofillEnabled(enabled));
+  }
+
+  async function openChromeSyncSetup() {
+    setAutofillMsg('Opening Agent Chrome settings. Sign in and enable password sync there.');
+    const ctx = {
+      userId: 'local', sessionId: `browser-sync-${Date.now()}`, workspaceRoot: '~', task: 'open Agent Chrome sync setup',
+      audit: new MemoryAuditLogger(() => {}), approvals: new AutoApprovalService(),
+    };
+    const res = await performControlAction({ action: 'browser.open', url: 'chrome://settings/people', browser_profile_id: DEFAULT_BROWSER_PROFILE.id }, ctx);
+    setAutofillMsg(res.success ? 'Agent Chrome settings opened. Complete sign-in manually in the browser.' : `Could not open Agent Chrome settings: ${res.error}`);
+  }
 
   async function runTest(app: AppProfile) {
     setTesting(app.id); setTestMsg((m) => ({ ...m, [app.id]: '' }));
@@ -267,6 +284,37 @@ export function LoginsPage() {
           })}
         </div>
       )}
+
+      <div style={{ ...card, marginTop: 22, marginBottom: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          <Icon name="lock" size={16} stroke={1.7} style={{ color: 'var(--accent)', marginTop: 2 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>Browser native autofill</div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-hint)', lineHeight: 1.5, marginTop: 3 }}>
+              Let Larund try Agent Chrome's own saved-password autofill before falling back to the Larund vault. Password values stay inside Chrome.
+            </div>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={autofill.enabled} onChange={(e) => toggleNativeAutofill(e.target.checked)} />
+            Enabled
+          </label>
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+          <button style={ghostBtn} onClick={openChromeSyncSetup}>Open Agent Chrome sync setup</button>
+          <span style={{ fontSize: 11.5, color: 'var(--text-hint)', alignSelf: 'center' }}>
+            Setup is manual so Google sign-in, 2FA and Sync consent stay in Chrome.
+          </span>
+        </div>
+        {autofillMsg && <div style={{ fontSize: 11.5, color: 'var(--text-hint)', marginTop: 8 }}>{autofillMsg}</div>}
+        {autofill.successfulDomains.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 11.5, color: 'var(--text-hint)', marginBottom: 6 }}>Previously succeeded via native autofill</div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {autofill.successfulDomains.map((domain) => <Badge key={domain} text={domain} color="var(--accent)" />)}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Browser profiles */}
       <div style={{ marginTop: 22 }}>

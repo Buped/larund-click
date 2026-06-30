@@ -6,6 +6,7 @@ import { readDocument, readManyDocuments, summarizeReadResults, scanFolder, read
 import { getCredentialForDomain, getCredential, resolveCredentialPassword, markCredentialUsed, normalizeDomain } from '../credentials/store';
 import { getApp, markAppUsed } from '../apps/store';
 import { getBrowserProfile, DEFAULT_BROWSER_PROFILE } from '../browser/profiles';
+import { getNativeAutofillSettings, markNativeAutofillSuccess } from '../browser/native-autofill';
 import { planArtifact } from '../artifacts/planner';
 import { executeCode, installPackageAction } from '../code-exec/execute';
 import { lintPresentation } from '../artifacts/presentation/quality-lint';
@@ -13,6 +14,7 @@ import type { EmailDraft } from '../email/types';
 import { newEmailDraftId, gmailDraftUrl, toSourceChips } from '../email/compose';
 import type { SectionSummarizer } from '../document-reader';
 import { callOpenRouterJson } from '../openrouter';
+import { runVisualVerification } from './vision-verifier';
 import { MODELS } from '../../constants/models';
 import { extractContactInfo, extractPage, webBatchSearch, webSearch } from '../web-search/provider';
 import { isSearchEngineUrl } from '../web-search/quality';
@@ -579,6 +581,14 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
       const r = await tryInvoke<string>('browser_open', { url: action.url, browserProfile: browserProfileArg(action.browser_profile_id) });
       return r.ok ? { success: true, output: r.value } : ERR(r.error);
     }
+    case 'browser.list_tabs': {
+      const r = await tryInvoke<Array<{ id: string; title: string; url: string; active: boolean }>>('browser_list_tabs');
+      return r.ok ? { success: true, output: JSON.stringify(r.value, null, 2) } : ERR(r.error);
+    }
+    case 'browser.switch_tab': {
+      const r = await tryInvoke<string>('browser_switch_tab', { targetId: action.target_id });
+      return r.ok ? { success: true, output: r.value } : ERR(r.error);
+    }
     case 'browser.read': {
       const r = await tryInvoke<string>('browser_read', { selector: action.selector ?? null });
       return r.ok ? { success: true, output: r.value } : ERR(r.error);
@@ -662,13 +672,11 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
         if (read.ok) domain = normalizeDomain(read.value.match(/^URL:\s*(.+)$/im)?.[1] ?? '');
       }
       // Credential resolution: explicit id → app's linked credential → domain match.
+      const explicitVaultCredential = Boolean(action.credential_id || app?.credentialId);
       const cred = action.credential_id ? getCredential(action.credential_id)
         : app?.credentialId ? getCredential(app.credentialId)
         : domain ? getCredentialForDomain(domain) : undefined;
-      if (!cred) return ERR(`no_saved_login_for:${domain || action.app_id || 'unknown'}`);
-      const password = await resolveCredentialPassword(cred.id);
-      if (!password) return ERR('login_password_unavailable');
-      const loginUrl = action.url ?? app?.loginUrl ?? cred.loginUrl ?? undefined;
+      const loginUrl = action.url ?? app?.loginUrl ?? cred?.loginUrl ?? app?.homeUrl ?? undefined;
       const browserProfileId = action.browser_profile_id ?? app?.preferredBrowserId ?? null;
 
       const typeFirst = async (targets: string[], text: string): Promise<boolean> => {
@@ -695,6 +703,43 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
         if (!open.ok) return ERR(open.error);
         await tryInvoke<string>('browser_wait', { text: null, selector: null, seconds: 2 });
       }
+
+      const nativeAutofill = getNativeAutofillSettings();
+      if (nativeAutofill.enabled && !explicitVaultCredential) {
+        const auto = await tryInvoke<string>('browser_autofill_login', {
+          usernameFieldTarget: userTargets[0],
+          passwordFieldTarget: passTargets[0] ?? null,
+        });
+        if (auto.ok) {
+          let filled = false;
+          let autoDomain = domain;
+          try {
+            const parsed = JSON.parse(auto.value) as { status?: string; usernameFilled?: boolean; passwordNonEmpty?: boolean; domain?: string; url?: string };
+            filled = parsed.status === 'filled' || parsed.usernameFilled === true || parsed.passwordNonEmpty === true;
+            autoDomain = normalizeDomain(parsed.domain ?? parsed.url ?? domain);
+          } catch {
+            filled = auto.value.includes('"status":"filled"');
+          }
+          if (filled) {
+            if (!(await clickFirst(submitTargets))) {
+              await tryInvoke<string>('browser_key', { key: 'Enter' });
+            }
+            await tryInvoke<string>('browser_wait', { text: null, selector: null, seconds: 3 });
+            if (autoDomain) markNativeAutofillSuccess(autoDomain);
+            if (app) markAppUsed(app.id);
+            const verify = await tryInvoke<string>('browser_read', { selector: null });
+            const onLoginPage = verify.ok && /password|sign in|log in/i.test(verify.value) && /input/i.test(verify.value);
+            return {
+              success: true,
+              output: `Signed in to ${autoDomain || domain || 'site'} using the browser's native saved-password autofill${onLoginPage ? ' (verify: page may still show a login form - check for 2FA).' : '.'}`,
+            };
+          }
+        }
+      }
+
+      if (!cred) return ERR(`no_saved_login_for:${domain || action.app_id || 'unknown'}`);
+      const password = await resolveCredentialPassword(cred.id);
+      if (!password) return ERR('login_password_unavailable');
 
       const typedUser = await typeFirst(userTargets, cred.username);
       if (!typedUser) return ERR('login_username_field_not_found');
@@ -799,6 +844,51 @@ export async function performControlAction(action: ControlAction, ctx: ToolConte
     case 'workflow.cancel': {
       if (!ctx.workflows) return ERR('workflows_unavailable');
       return ctx.workflows.cancel(action.workflow_id);
+    }
+
+    // ── visual self-check (read-only perception, NEVER control) ─────────────
+    case 'screen.verify': {
+      const surface = action.surface ?? 'browser';
+      const imageDataUrls: string[] = [];
+
+      if (surface === 'browser') {
+        const shot = await tryInvoke<{ base64: string; width: number; height: number }>('browser_screenshot');
+        if (!shot.ok) return ERR(`screen_capture_failed (browser): ${shot.error}`);
+        if (shot.value.base64) imageDataUrls.push(`data:image/jpeg;base64,${shot.value.base64}`);
+      } else if (surface === 'desktop') {
+        const shot = await tryInvoke<{ base64: string; width: number; height: number }>('desktop_capture_screen');
+        if (!shot.ok) return ERR(`screen_capture_failed (desktop): ${shot.error}`);
+        if (shot.value.base64) imageDataUrls.push(`data:image/jpeg;base64,${shot.value.base64}`);
+      } else {
+        // artifact: render the document's preview image(s) and read them as data URLs.
+        if (!action.path) return ERR('screen.verify surface "artifact" requires a path.');
+        const preview = await tryInvoke<string>('artifact_preview', { path: action.path, pages: action.pages ?? null });
+        if (!preview.ok) return ERR(`artifact_preview_failed: ${preview.error}`);
+        let previewPaths: string[] = [];
+        try { previewPaths = JSON.parse(preview.value) as string[]; } catch { previewPaths = []; }
+        for (const previewPath of previewPaths.slice(0, 4)) {
+          const ref = refFromAction(ctx, { path: previewPath }, 'file');
+          const read = await readDocument(ref);
+          const url = (read as { imageDataUrl?: string }).imageDataUrl;
+          if (url) imageDataUrls.push(url);
+        }
+      }
+
+      if (!imageDataUrls.length) return ERR('screen.verify captured no usable image.');
+
+      const verdict = await runVisualVerification({
+        imageDataUrls,
+        criteria: Array.isArray(action.criteria) ? action.criteria : [],
+        goal: ctx.task,
+        userId: ctx.userId,
+        question: action.question,
+        addCost: ctx.addCost,
+      });
+      return {
+        success: true,
+        output: JSON.stringify(verdict, null, 2),
+        details: { visualVerdict: verdict, imageDataUrls },
+      };
     }
 
     // ── control flow ───────────────────────────────────────────────────────

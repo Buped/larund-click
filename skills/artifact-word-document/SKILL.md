@@ -16,5 +16,10 @@ Use this skill when the user asks for editable Word/DOCX output, contracts, proj
 3. Render with `artifact.render_docx`.
 4. Export PDF only when the user asks for it too, using `artifact.convert` if LibreOffice is available.
 
+## Action shapes (exact JSON)
+{"action":"artifact.render_docx","title":"<title>","template_id":"<optional>","output_name":"<optional.docx>","model":{"title":"<title>","language":"hu","format":"docx","page":{"size":"A4","orientation":"portrait"},"sections":[]}}
+{"action":"artifact.convert","from_path":"<path>","to":"pdf","output_name":"<optional>"}
+{"action":"artifact.verify","path":"<path>","expected_text":["<text>"],"expected_kind":"docx"}
+
 ## Verification
 - Run `artifact.verify` and confirm expected text is extractable.

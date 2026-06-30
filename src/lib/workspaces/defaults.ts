@@ -22,6 +22,7 @@ export function makeDefaultWorkspace(userId: string, now = new Date().toISOStrin
     enabledSkillIds: [],
     memoryScope: 'workspace',
     autonomyMode: 'semi',
+    skillLearningConfig: { autoLearnLowRisk: true },
     createdAt: now,
     updatedAt: now,
   };
@@ -53,6 +54,7 @@ export function normalizeCreateInput(input: CreateWorkspaceInput, now: string): 
     enabledSkillIds: input.enabledSkillIds ?? [],
     memoryScope: 'workspace',
     autonomyMode: input.autonomyMode ?? 'semi',
+    skillLearningConfig: { autoLearnLowRisk: true },
     defaultModelId: input.defaultModelId,
     createdAt: now,
     updatedAt: now,

@@ -12,6 +12,7 @@ import { runAutomation } from '../../lib/automations/runner';
 import { cancelAutomationRun, ensureAutomationQueueProcessor, isAutomationQueueProcessorInstalled } from '../../lib/automations/agent-processor';
 import { getLinkedChatTitle } from '../../lib/automations/chat-bridge';
 import { normalizeAutomation } from '../../lib/automations/migrate';
+import { ensureBuiltInAutomations } from '../../lib/automations/builtins';
 import { AUTOMATION_TEMPLATES, type AutomationTemplate } from '../../lib/automations/templates';
 import type { Automation, AutomationRun } from '../../lib/automations/types';
 import { resourceToReference } from '../../lib/mentions/types';
@@ -134,7 +135,10 @@ function AutomationCard({ a, run, linkedChatTitle, onOpen, onRun, onToggle, onWa
 }
 
 export function AutomationsPage({ userId, workspaceId, refreshKey, onOpenChat }: { userId: string; workspaceId?: string; refreshKey?: number; onOpenChat?: (sessionId: string) => void }) {
-  const { items, loading, reload } = useAsyncList<Automation>(() => listAutomations({ userId, workspaceId, includeDisabled: true }), [userId, workspaceId, refreshKey]);
+  const { items, loading, reload } = useAsyncList<Automation>(async () => {
+    await ensureBuiltInAutomations({ userId, workspaceId });
+    return listAutomations({ userId, workspaceId, includeDisabled: true });
+  }, [userId, workspaceId, refreshKey]);
   const [tab, setTab] = useState<Tab>('All');
   const [query, setQuery] = useState('');
   const [wizard, setWizard] = useState<{ open: boolean; initial?: WizardInitial; editId?: string }>({ open: false });
@@ -231,6 +235,14 @@ export function AutomationsPage({ userId, workspaceId, refreshKey, onOpenChat }:
           <strong style={{ color: 'var(--warning)' }}>Automation runner is not connected.</strong> Manual runs will only be queued until the agent queue processor is registered.
         </div>
       )}
+
+      <div style={{ ...card, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'space-between', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Built-in automations</div>
+          <div style={{ fontSize: 11.5, color: 'var(--text-hint)', marginTop: 2 }}>Nine local starter automations are ready to edit, test, enable, pause, or run.</div>
+        </div>
+        <Badge text="9 included" color="var(--accent)" />
+      </div>
 
       {items.length > 0 && (
         <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>

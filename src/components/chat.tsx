@@ -19,6 +19,11 @@ import {
 import { buildChatSystemPrompt } from '../lib/assistant/persona';
 import { parseLarundEnvelope, parseThinking, serializeThinking, type VisibleThinking } from '../lib/assistant/thinking';
 import { collectAgentVisualizations, type ChatVisualization } from '../lib/assistant/visualizations';
+import {
+  cloudPreviewsFromAgentSteps,
+  thinkingFromAgentSteps,
+  type CloudPreviewAttachment,
+} from '../lib/assistant/agent-display';
 import { generateChatTitle } from '../lib/assistant/title';
 import { runMemoryExtraction } from '../lib/memory/pipeline';
 import { runAgentLoop, AgentStatus, AgentStep, AgentAbortSignal } from '../lib/agent-loop';
@@ -44,6 +49,7 @@ import { documentReferenceToMention, mentionToDocumentReference } from './mentio
 import { EmailComposerCard } from './email/EmailComposerCard';
 import type { EmailDraft } from '../lib/email/types';
 import { policyForAutonomyMode, type AutonomyMode as PolicyAutonomyMode } from '../lib/tools/policy';
+import type { ApprovalPromptResult } from '../lib/tools/approvals';
 import { classifyIntent } from '../lib/intent/classify';
 import { ArtifactCard } from './artifacts/ArtifactCard';
 import { AggregateResultCard, parseAggregateResult } from './artifacts/AggregateResultCard';
@@ -451,6 +457,8 @@ const TOOL_ICONS: Record<string, string> = {
   'window.focus':      'monitor',
   'window.list':       'monitor',
   'browser.open':      'externalLink',
+  'browser.list_tabs': 'monitor',
+  'browser.switch_tab': 'externalLink',
   'browser.read':      'fileText',
   'browser.get_state': 'monitor',
   'browser.click':     'command',
@@ -518,6 +526,8 @@ const TOOL_LABELS: Record<string, string> = {
   'app.open': 'Opening app',
   'window.focus': 'Focusing window',
   'browser.open': 'Opening page',
+  'browser.list_tabs': 'Listing browser tabs',
+  'browser.switch_tab': 'Switching browser tab',
   'browser.read': 'Reading page',
   'browser.get_state': 'Reading page',
   'browser.click': 'Clicking',
@@ -618,6 +628,98 @@ function ArtifactResultCard({ manifest }: { manifest: ArtifactCardManifest }) {
       {manifest.verification?.errors?.length ? (
         <div style={{ fontSize: 11, color: 'var(--danger)' }}>{manifest.verification.errors.join(', ')}</div>
       ) : null}
+    </div>
+  );
+}
+
+function CloudPreviewCard({ preview }: { preview: CloudPreviewAttachment }) {
+  const isSheet = preview.kind === 'google_sheet';
+  const rows = preview.rowsPreview ?? [];
+  const text = preview.textPreview?.trim();
+  return (
+    <div style={{
+      border: '1px solid var(--border-md)',
+      borderRadius: 8,
+      padding: 12,
+      background: 'rgba(var(--ov-color),0.045)',
+      display: 'grid',
+      gap: 10,
+      minWidth: 0,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
+        <span style={{
+          width: 32, height: 32, borderRadius: 7, flex: 'none',
+          display: 'grid', placeItems: 'center',
+          background: isSheet ? 'rgba(62,207,142,0.12)' : 'rgba(110,168,254,0.13)',
+          color: isSheet ? 'var(--success)' : '#6EA8FE',
+        }}>
+          <Icon name={isSheet ? 'fileSpreadsheet' : 'fileText'} size={16} stroke={1.8} />
+        </span>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 750, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {preview.title}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', fontSize: 11, color: 'var(--text-hint)' }}>
+            <span>{isSheet ? 'Google Sheet' : 'Google Document'}</span>
+            {preview.verified && (
+              <span style={{ color: 'var(--success)', fontWeight: 700 }}>
+                verified
+              </span>
+            )}
+            {isSheet && typeof preview.rowCount === 'number' && <span>{preview.rowCount} row(s)</span>}
+          </div>
+        </div>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => window.open(preview.url, '_blank', 'noopener,noreferrer')}
+          style={{ height: 30, padding: '0 9px', fontSize: 12, flex: 'none' }}
+        >
+          <Icon name="externalLink" size={12} stroke={1.8} />
+          Open
+        </button>
+      </div>
+
+      {text && (
+        <div style={{
+          fontSize: 12.5,
+          lineHeight: 1.55,
+          color: 'var(--text-muted)',
+          maxHeight: 116,
+          overflow: 'hidden',
+          whiteSpace: 'pre-wrap',
+        }}>
+          {text}
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 7 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
+            <tbody>
+              {rows.map((row, rIdx) => (
+                <tr key={rIdx}>
+                  {row.map((cell, cIdx) => (
+                    <td key={cIdx} style={{
+                      padding: '6px 8px',
+                      color: rIdx === 0 ? 'var(--text-primary)' : 'var(--text-muted)',
+                      fontWeight: rIdx === 0 ? 700 : 500,
+                      borderTop: rIdx === 0 ? 'none' : '1px solid var(--border)',
+                      borderLeft: cIdx === 0 ? 'none' : '1px solid var(--border)',
+                      whiteSpace: 'nowrap',
+                      maxWidth: 180,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}>
+                      {cell}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -834,12 +936,14 @@ function toolTile(icon: string): { fg: string; bg: string; border: string } {
 function AgentStepItem({ step }: { step: AgentStep }) {
   const [open, setOpen] = useState(false);
 
-  if (['thinking', 'plan', 'checklist', 'verification', 'handoff', 'blocked'].includes(step.type)) {
-    const tone = step.type === 'verification'
+  if (['thinking', 'plan', 'checklist', 'verification', 'handoff', 'blocked', 'narration'].includes(step.type)) {
+    const tone = step.type === 'verification' && !step.error
       ? 'var(--success)'
-      : step.type === 'blocked' || step.type === 'handoff'
+      : step.type === 'verification' || step.type === 'blocked' || step.type === 'handoff'
         ? 'var(--danger)'
-        : 'var(--accent)';
+        : step.type === 'narration'
+          ? 'var(--text-hint)'
+          : 'var(--accent)';
     return (
       <div className="agent-step-item" style={{ display: 'flex', alignItems: 'flex-start', gap: 6, padding: '3px 0 3px 0' }}>
         <span style={{
@@ -848,10 +952,10 @@ function AgentStepItem({ step }: { step: AgentStep }) {
           background: 'rgba(var(--accent-rgb),0.12)',
           color: tone,
         }}>
-          <Icon name={step.type === 'verification' ? 'check' : step.type === 'checklist' ? 'fileText' : 'sparkle'} size={9} stroke={1.8} />
+          <Icon name={step.type === 'verification' ? 'check' : step.type === 'checklist' ? 'fileText' : step.type === 'narration' ? 'circle' : 'sparkle'} size={9} stroke={1.8} />
         </span>
         <span style={{ fontSize: 11.5, color: 'var(--text-hint)', lineHeight: 1.5 }}>
-          {step.output || 'Thinking...'}
+          {step.output || (step.type === 'narration' ? 'Progress update...' : 'Thinking...')}
         </span>
       </div>
     );
@@ -980,16 +1084,122 @@ function AgentStepItem({ step }: { step: AgentStep }) {
   return null;
 }
 
+// ─── Approval gate (manual / semi mode) ───────────────────────────────────────
+
+/** A pending action surfaced to the user for approval before it runs. */
+export interface ApprovalUiRequest {
+  action: string;
+  risk: string;
+  reason: string;
+  argsSummary: string;
+}
+
+/**
+ * Three-choice approval card shown before a gated action runs:
+ *  - Approve  → run the action as planned
+ *  - Reject   → drop the action; the agent picks a safer alternative
+ *  - Other    → reveals a text box; the typed instruction re-plans the next steps
+ */
+function ApprovalCard({
+  request,
+  onDecision,
+}: {
+  request: ApprovalUiRequest;
+  onDecision: (decision: 'allow_once' | 'deny' | 'steer', feedback?: string) => void;
+}) {
+  const [otherOpen, setOtherOpen] = useState(false);
+  const [feedback, setFeedback] = useState('');
+
+  return (
+    <div style={{
+      marginTop: 4, marginBottom: 10,
+      padding: '12px 14px', borderRadius: 10,
+      border: '1px solid rgba(var(--accent-rgb),.30)',
+      background: 'rgba(var(--accent-rgb),.06)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
+        <Icon name="shield" size={13} stroke={2} />
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>
+          Jóváhagyás szükséges
+        </span>
+        <span style={{
+          fontSize: 10.5, fontWeight: 600, padding: '1px 6px', borderRadius: 5,
+          background: 'rgba(var(--accent-rgb),.14)', color: 'var(--accent)',
+        }}>
+          {request.action} · {request.risk}
+        </span>
+      </div>
+      <div style={{ fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.5, marginBottom: 4 }}>
+        {request.reason}
+      </div>
+      {request.argsSummary && (
+        <pre style={{
+          fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.45,
+          whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: '0 0 10px',
+          fontFamily: 'var(--font-mono, monospace)',
+        }}>
+          {request.argsSummary}
+        </pre>
+      )}
+
+      {!otherOpen ? (
+        <div style={{ display: 'flex', gap: 7 }}>
+          <button className="btn btn-primary" onClick={() => onDecision('allow_once')} style={{ fontSize: 12.5, height: 34 }}>
+            Jóváhagyás
+          </button>
+          <button className="btn btn-ghost" onClick={() => onDecision('deny')} style={{ fontSize: 12.5, height: 34, color: 'var(--danger)' }}>
+            Elutasítás
+          </button>
+          <button className="btn btn-ghost" onClick={() => setOtherOpen(true)} style={{ fontSize: 12.5, height: 34 }}>
+            Egyéb
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+          <textarea
+            autoFocus
+            value={feedback}
+            onChange={e => setFeedback(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && feedback.trim()) onDecision('steer', feedback.trim()); }}
+            placeholder="Mit csináljon helyette? Írd le, és az AI újratervezi a következő lépéseket…"
+            rows={3}
+            style={{
+              width: '100%', padding: '8px 11px', borderRadius: 7,
+              border: '1px solid var(--border-md)', background: 'rgba(0,0,0,.35)',
+              color: 'var(--text-primary)', fontSize: 13, fontFamily: 'inherit',
+              outline: 'none', resize: 'vertical', boxSizing: 'border-box',
+            }}
+          />
+          <div style={{ display: 'flex', gap: 7 }}>
+            <button
+              className="btn btn-primary"
+              onClick={() => onDecision('steer', feedback.trim())}
+              disabled={!feedback.trim()}
+              style={{ opacity: feedback.trim() ? 1 : 0.38, fontSize: 12.5, height: 34 }}
+            >
+              Küldés
+            </button>
+            <button className="btn btn-ghost" onClick={() => { setOtherOpen(false); setFeedback(''); }} style={{ fontSize: 12.5, height: 34 }}>
+              Mégse
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Agent message content ────────────────────────────────────────────────────
 
 interface AgentMsgContentProps {
   steps: AgentStep[];
   status: AgentStatus;
   askQuestion?: string | null;
+  approvalRequest?: ApprovalUiRequest | null;
+  onApprovalDecision: (decision: 'allow_once' | 'deny' | 'steer', feedback?: string) => void;
   askAnswer: string;
   onAskAnswerChange: (v: string) => void;
   onAskSubmit: () => void;
-  onAskQuickAnswer: (answer: string) => void;
   onStop: () => void;
   finalText?: string;
   isError?: boolean;
@@ -1007,21 +1217,19 @@ interface AgentMsgContentProps {
 
 function AgentMsgContent({
   steps, status,
-  askQuestion, askAnswer, onAskAnswerChange, onAskSubmit,
-  onAskQuickAnswer, onStop, finalText, isError, artifacts = [], onPreviewArtifact, onArtifactsChanged, selectedArtifactId, userId,
+  askQuestion, approvalRequest, onApprovalDecision, askAnswer, onAskAnswerChange, onAskSubmit,
+  onStop, finalText, isError, artifacts = [], onPreviewArtifact, onArtifactsChanged, selectedArtifactId, userId,
   emailDraft, onEmailDraftChange, sources = [], modelMetadata, thinking,
 }: AgentMsgContentProps) {
-  // Collapsed by default: the action timeline is evidence, not the headline. The
-  // human-readable narration carries the story; details expand on demand.
+  // Collapsed by default: the action timeline is evidence, not the headline.
+  // Progress narration and verification details stay inside this disclosure.
   const [stepsOpen, setStepsOpen] = useState(false);
   const isRunning = status !== 'complete' && status !== 'error';
-  // Narration = Larund explaining what it's doing; rendered as plain text.
-  // Everything else (tool calls/results/checks) lives in the collapsible timeline.
-  const narrationSteps = steps.filter(s => s.type === 'narration');
-  const timelineSteps = steps.filter(s => s.type !== 'narration');
+  const narrationSteps: AgentStep[] = [];
+  const timelineSteps = steps;
   const visualizations = collectAgentVisualizations(steps);
+  const cloudPreviews = cloudPreviewsFromAgentSteps(steps);
   const callCount = timelineSteps.filter(s => s.type === 'tool_call').length;
-  const isApprovalPrompt = Boolean(askQuestion && /Approval needed|Approve action/i.test(askQuestion));
 
   const headerLabel = isRunning
     ? ({ idle: 'Starting…', planning: 'Planning…', executing: 'Executing…', waiting_user: 'Waiting for input…' }[status] ?? 'Working…')
@@ -1125,8 +1333,13 @@ function AgentMsgContent({
         </div>
       )}
 
-      {/* ── Ask user input ── */}
-      {askQuestion && (
+      {/* ── Approval gate (manual / semi mode): approve · reject · other ── */}
+      {approvalRequest && (
+        <ApprovalCard request={approvalRequest} onDecision={onApprovalDecision} />
+      )}
+
+      {/* ── Ask user input (free-text question from the agent) ── */}
+      {askQuestion && !approvalRequest && (
         <div style={{
           marginTop: 4, marginBottom: 10,
           padding: '11px 13px',
@@ -1141,40 +1354,30 @@ function AgentMsgContent({
             {askQuestion}
           </div>
           <div style={{ display: 'flex', gap: 7 }}>
-            {isApprovalPrompt ? (
-              <>
-                <button className="btn btn-primary" onClick={() => onAskQuickAnswer('allow_once')} style={{ fontSize: 12.5, height: 34 }}>Allow once</button>
-                <button className="btn btn-ghost" onClick={() => onAskQuickAnswer('allow_always')} style={{ fontSize: 12.5, height: 34 }}>Always</button>
-                <button className="btn btn-ghost" onClick={() => onAskQuickAnswer('deny')} style={{ fontSize: 12.5, height: 34, color: 'var(--danger)' }}>Deny</button>
-              </>
-            ) : (
-              <>
-                <input
-                  autoFocus
-                  value={askAnswer}
-                  onChange={e => onAskAnswerChange(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter' && askAnswer.trim()) onAskSubmit(); }}
-                  placeholder="Your answer..."
-                  style={{
-                    flex: 1, padding: '7px 11px', borderRadius: 7,
-                    border: '1px solid var(--border-md)',
-                    background: 'rgba(0,0,0,.35)',
-                    color: 'var(--text-primary)',
-                    fontSize: 13, fontFamily: 'inherit', outline: 'none',
-                  }}
-                  onFocus={e => { (e.currentTarget as HTMLElement).style.borderColor = 'rgba(var(--accent-rgb),.4)'; }}
-                  onBlur={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-md)'; }}
-                />
-                <button
-                  className="btn btn-primary"
-                  onClick={onAskSubmit}
-                  disabled={!askAnswer.trim()}
-                  style={{ opacity: askAnswer.trim() ? 1 : 0.38, fontSize: 12.5, height: 34 }}
-                >
-                  Send
-                </button>
-              </>
-            )}
+            <input
+              autoFocus
+              value={askAnswer}
+              onChange={e => onAskAnswerChange(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && askAnswer.trim()) onAskSubmit(); }}
+              placeholder="Your answer..."
+              style={{
+                flex: 1, padding: '7px 11px', borderRadius: 7,
+                border: '1px solid var(--border-md)',
+                background: 'rgba(0,0,0,.35)',
+                color: 'var(--text-primary)',
+                fontSize: 13, fontFamily: 'inherit', outline: 'none',
+              }}
+              onFocus={e => { (e.currentTarget as HTMLElement).style.borderColor = 'rgba(var(--accent-rgb),.4)'; }}
+              onBlur={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-md)'; }}
+            />
+            <button
+              className="btn btn-primary"
+              onClick={onAskSubmit}
+              disabled={!askAnswer.trim()}
+              style={{ opacity: askAnswer.trim() ? 1 : 0.38, fontSize: 12.5, height: 34 }}
+            >
+              Send
+            </button>
           </div>
         </div>
       )}
@@ -1190,6 +1393,14 @@ function AgentMsgContent({
             ? <span style={{ color: 'var(--danger)', fontSize: 13.5, lineHeight: 1.65 }}>{finalText}</span>
             : <RichMessage content={finalText} userId={userId} sources={sources} modelMetadata={modelMetadata} />
           }
+        </div>
+      )}
+
+      {cloudPreviews.length > 0 && (
+        <div style={{ display: 'grid', gap: 10, marginTop: finalText ? 12 : 8 }}>
+          {cloudPreviews.map((preview) => (
+            <CloudPreviewCard key={`${preview.kind}:${preview.providerId}`} preview={preview} />
+          ))}
         </div>
       )}
 
@@ -1262,6 +1473,8 @@ type Message = {
   _agentStatus?: AgentStatus;
   _agentSteps?: AgentStep[];
   _agentAskQuestion?: string | null;
+  /** Pending action awaiting the user's approve / reject / redirect decision. */
+  _approvalRequest?: ApprovalUiRequest | null;
   _references?: ReferencedContext[];
   _artifacts?: ChatArtifactAttachment[];
   _emailDraft?: EmailDraft;
@@ -1283,8 +1496,13 @@ type RunningTask = {
   sessionId: string;
 };
 
-// No-mouse core no longer produces screenshots; persist steps as-is.
+// screen.verify carries base64 screenshots in details.imageDataUrls for the live
+// run; drop them before persisting (keep the lightweight visual verdict summary).
 function stripScreenshotFromStep(step: AgentStep): AgentStep {
+  if (step.details && 'imageDataUrls' in step.details) {
+    const { imageDataUrls: _drop, ...rest } = step.details as Record<string, unknown>;
+    return { ...step, details: rest };
+  }
   return step;
 }
 
@@ -1316,15 +1534,6 @@ function parseChatArtifacts(raw?: string | null): ChatArtifactAttachment[] {
   } catch {
     return [];
   }
-}
-
-function thinkingFromAgentSteps(steps: AgentStep[]): VisibleThinking | undefined {
-  const parts = steps
-    .filter((step) => ['thinking', 'plan', 'checklist', 'verification'].includes(step.type))
-    .map((step) => step.output?.trim())
-    .filter((value): value is string => Boolean(value));
-  if (parts.length === 0) return undefined;
-  return { content: parts.join('\n\n') };
 }
 
 /** The latest step carrying an email draft (email.compose OR a Gmail connection
@@ -1473,6 +1682,7 @@ export function ChatScreen({
   const abortRef      = useRef<AgentAbortSignal>({ aborted: false });
   const chatAbortRef  = useRef<AbortController | null>(null);
   const askResolveRef = useRef<((answer: string) => void) | null>(null);
+  const approvalResolveRef = useRef<((result: ApprovalPromptResult) => void) | null>(null);
 
   useEffect(() => {
     activeChatRef.current = activeChat;
@@ -1701,10 +1911,14 @@ export function ChatScreen({
       askResolveRef.current = null;
       setAgentAskAnswer('');
     }
+    if (approvalResolveRef.current) {
+      approvalResolveRef.current({ decision: 'deny' });
+      approvalResolveRef.current = null;
+    }
 
     setMessages(prev => prev.map(m =>
       m.id === runningTask.assistantMessageId
-        ? { ...m, content: 'Stopped.', _agentStatus: 'complete', _agentAskQuestion: null }
+        ? { ...m, content: 'Stopped.', _agentStatus: 'complete', _agentAskQuestion: null, _approvalRequest: null }
         : m,
     ));
     updateMessage(runningTask.assistantMessageId, {
@@ -1726,11 +1940,10 @@ export function ChatScreen({
     setAgentAskAnswer('');
   }
 
-  function handleAskQuickAnswer(answer: string) {
-    if (!askResolveRef.current) return;
-    askResolveRef.current(answer);
-    askResolveRef.current = null;
-    setAgentAskAnswer('');
+  function handleApprovalDecision(decision: 'allow_once' | 'deny' | 'steer', feedback?: string) {
+    if (!approvalResolveRef.current) return;
+    approvalResolveRef.current({ decision, feedback });
+    approvalResolveRef.current = null;
   }
 
   async function handleAgentRun(
@@ -1889,7 +2102,7 @@ export function ChatScreen({
           };
         }),
 
-        onApproval: (req) => new Promise<'allow_once' | 'allow_always' | 'deny'>(resolve => {
+        onApproval: (req) => new Promise<ApprovalPromptResult>(resolve => {
           appendStep({
             id: `approval-${Date.now()}`,
             type: 'approval',
@@ -1898,12 +2111,10 @@ export function ChatScreen({
             output: req.reason,
             timestamp: new Date().toISOString(),
           });
-          const question = `Approve action: ${req.action} (${req.risk})\n${req.reason}\nArgs: ${req.argsSummary}`;
-          syncAgentState({ askQuestion: question, status: 'waiting_user' }, { _agentAskQuestion: question, _agentStatus: 'waiting_user' });
-          askResolveRef.current = (answer: string) => {
-            syncAgentState({ askQuestion: null, status: 'executing' }, { _agentAskQuestion: null, _agentStatus: 'executing' });
-            const normalized = answer === 'allow_always' || answer === 'deny' ? answer : 'allow_once';
-            resolve(normalized);
+          syncAgentState({ status: 'waiting_user' }, { _agentStatus: 'waiting_user', _approvalRequest: req });
+          approvalResolveRef.current = (result: ApprovalPromptResult) => {
+            syncAgentState({ status: 'executing' }, { _agentStatus: 'executing', _approvalRequest: null });
+            resolve(result);
           };
         }),
 
@@ -2002,6 +2213,7 @@ export function ChatScreen({
         sessionId,
         history,
         references: taskReferences,
+        autonomyMode,
         policy: policyForAutonomyMode(autonomyMode),
         // Active workspace/role/workflow chosen on the Coworker pages. All fall
         // back gracefully inside the loop when unset. A workflow template is
@@ -2546,10 +2758,11 @@ export function ChatScreen({
                               steps={msg._agentSteps ?? []}
                               status={msg._agentStatus ?? 'idle'}
                               askQuestion={msg._agentAskQuestion}
+                              approvalRequest={msg._approvalRequest}
+                              onApprovalDecision={handleApprovalDecision}
                               askAnswer={agentAskAnswer}
                               onAskAnswerChange={setAgentAskAnswer}
                               onAskSubmit={handleAskSubmit}
-                              onAskQuickAnswer={handleAskQuickAnswer}
                               onStop={handleAgentStop}
                               finalText={msg.content || undefined}
                               isError={msg._error}

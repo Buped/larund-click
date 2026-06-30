@@ -3,6 +3,7 @@ import { ChatScreen }      from './components/chat';
 import { SettingsScreen }  from './components/settings';
 import { NavRail, type Route } from './components/nav-rail';
 import { TasksPage }       from './components/pages/TasksPage';
+import { EmailPage }       from './components/pages/EmailPage';
 import { AutomationsPage } from './components/pages/AutomationsPage';
 import { ConnectionsPage } from './components/pages/ConnectionsPage';
 import { LoginsPage }      from './components/pages/LoginsPage';
@@ -280,6 +281,7 @@ export default function App() {
       <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {route === 'chat'        && <ChatScreen model={model} setModel={setModel} userEmail={user?.email ?? null} userId={user?.id ?? null} projectId={activeProjectId} credits={credits} onCreditsRefresh={refreshCredits} openSessionId={openChatSessionId} onSessionOpened={() => setOpenChatSessionId(null)} />}
         {route === 'tasks'       && <TasksPage userId={uid} />}
+        {route === 'email'       && <EmailPage userId={uid} projectId={activeProjectId} />}
         {route === 'automations' && <AutomationsPage userId={uid} projectId={activeProjectId} isAdmin={user?.isAdmin ?? false} refreshKey={automationRefreshKey} onOpenChat={openChatSession} />}
         {route === 'artifacts'   && <ArtifactsPage />}
         {route === 'skills'      && <SkillsPage userId={uid} projectId={activeProjectId} />}
