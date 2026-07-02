@@ -51,5 +51,5 @@ Expected evidence:
 
 - DOCX/PDF/PPTX native text extraction is metadata-only in this build; text extraction is scaffolded for a native reader.
 - `doc.write_docx` preserves content as a scaffold file, but full OOXML packaging is not implemented yet.
-- Google Drive upload/export/move are scaffolded; Sheets and Docs create/write/read have mockable API paths and live API paths when an OAuth access token is configured.
+- Google Drive upload/export/move are scaffolded; Sheets and Docs create/write/read have mockable API paths and live API paths when the user has a Google ConnectedAccount.
 - The local reference picker uses the Tauri dialog plugin if present; otherwise it falls back to path/URL prompts.

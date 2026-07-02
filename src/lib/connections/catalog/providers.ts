@@ -88,9 +88,9 @@ const remoteMcp = (defaultServerUrl?: string): ConnectionImplementation => ({ ki
 export const CATALOG: CatalogProvider[] = [
   // ── Working native integrations (real tools in the registry) ────────────────
   p('github', 'GitHub', 'development', 'Read repos, manage issues, create branches and open PRs.', 'working',
-    [nativePat('github'), remoteMcp()], { nativeToolCount: 7, setupInstructions: 'Add a GitHub personal access token (repo scope).', docsUrl: 'https://github.com/settings/tokens' }),
+    [nativeOauth('github'), remoteMcp()], { nativeToolCount: 7, setupInstructions: 'Connect with GitHub OAuth. Larund stores the connected user token per account.', docsUrl: 'https://docs.github.com/en/apps/oauth-apps' }),
   p('notion', 'Notion', 'productivity', 'Search, read and write Notion pages and databases.', 'working',
-    [nativePat('notion'), remoteMcp()], { nativeToolCount: 7, setupInstructions: 'Create an internal integration token and share pages with it.', docsUrl: 'https://www.notion.so/my-integrations' }),
+    [nativeOauth('notion'), remoteMcp()], { nativeToolCount: 7, setupInstructions: 'Connect with Notion OAuth and share the workspace/pages you want Larund to use.', docsUrl: 'https://developers.notion.com/docs/authorization' }),
   p('google-workspace', 'Google', 'productivity', 'One Google connection — Drive, Gmail, Docs, Sheets, Calendar and more, via a single sign-in.', 'working',
     [nativeToken('google-workspace')], { nativeToolCount: 25, setupInstructions: 'Connect once with Google. Drive, Gmail, Docs, Sheets and Calendar all share this one sign-in; Ads/GA4/Search Console may need extra IDs/tokens.' }),
 

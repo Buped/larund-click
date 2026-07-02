@@ -4,7 +4,7 @@ import { defineConfig } from 'vitest/config';
 // matching, plan schema). Node environment — no DOM/Tauri needed for these.
 export default defineConfig({
   test: {
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     environment: 'node',
   },
 });

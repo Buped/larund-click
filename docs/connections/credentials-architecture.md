@@ -100,3 +100,12 @@ For a provider call by the current user (`src/lib/connections/runtimeCredentials
 
 The agent never uses an app-level client secret as a user token, and never treats
 a provider as connected just because client id/secret exist.
+
+## UI surfaces
+
+Both the main Connections page and Settings -> Connections render the shared
+`ConnectionsHub`. Normal users no longer enter raw Google access tokens in
+Settings. Google, GitHub, Notion, X, and other OAuth providers use the OAuth
+connect flow; API-key/PAT providers store user-entered fields through the secure
+user secret store; MCP providers store server configuration through the MCP
+provider helpers.

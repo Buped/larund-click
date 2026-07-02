@@ -110,6 +110,7 @@ async function initSchema(db: Database): Promise<void> {
   await ensureColumn(db, 'messages', 'model_metadata_json', 'TEXT DEFAULT NULL');
   await ensureColumn(db, 'messages', 'search_evidence_json', 'TEXT DEFAULT NULL');
   await ensureColumn(db, 'messages', 'thinking_json', 'TEXT DEFAULT NULL');
+  await ensureColumn(db, 'messages', 'project_context_json', 'TEXT DEFAULT NULL');
 
   await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_messages_session
@@ -378,6 +379,7 @@ const MESSAGE_COLUMNS = new Set([
   'model_metadata_json',
   'search_evidence_json',
   'thinking_json',
+  'project_context_json',
 ]);
 
 export async function addMessage(

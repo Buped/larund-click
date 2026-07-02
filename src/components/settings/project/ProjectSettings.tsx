@@ -21,8 +21,9 @@ import {
   requestProjectOwnershipTransfer,
   cancelProjectOwnershipTransfer,
 } from '../../../lib/projects/collaboration';
+import { ProjectContextPanel } from '../../project-context/ProjectContextPanel';
 
-export type ProjectSection = 'overview' | 'members' | 'automations' | 'skills' | 'requirements' | 'danger';
+export type ProjectSection = 'overview' | 'context' | 'members' | 'automations' | 'skills' | 'requirements' | 'danger';
 
 const card: React.CSSProperties = { background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' };
 const input: React.CSSProperties = { width: '100%', background: 'var(--bg-elevated)', border: '1px solid var(--border-md)', borderRadius: 8, padding: '8px 11px', fontSize: 13, color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' };
@@ -46,6 +47,7 @@ export function ProjectSettings({
   const isOwner = project.role === 'owner';
 
   if (section === 'overview') return <Overview project={project} isOwner={isOwner} onProjectsChanged={onProjectsChanged} />;
+  if (section === 'context') return <ProjectContextPanel project={project} userId={userId} />;
   if (section === 'members') return <Members project={project} userId={userId} isOwner={isOwner} onProjectsChanged={onProjectsChanged} />;
   if (section === 'danger') return <DangerZone project={project} isOwner={isOwner} onProjectsChanged={onProjectsChanged} />;
   if (section === 'automations') {

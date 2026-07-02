@@ -47,6 +47,14 @@ describe('connection catalog', () => {
     }
   });
 
+  it('aligns GitHub and Notion catalog UI with OAuth provider auth', () => {
+    for (const id of ['github', 'notion']) {
+      const provider = getCatalogProvider(id)!;
+      expect(provider.implementations.some((impl) => impl.kind === 'native_api' && impl.authType === 'oauth2')).toBe(true);
+      expect(provider.implementations.some((impl) => impl.kind === 'native_api' && impl.authType === 'personal_access_token')).toBe(false);
+    }
+  });
+
   it('exposes a single unified Google connection (no per-app sub-cards)', () => {
     expect(getCatalogProvider('google-workspace')?.name).toBe('Google');
     for (const id of ['google-drive', 'google-docs', 'google-sheets', 'gmail', 'google-calendar']) {

@@ -41,8 +41,8 @@ function toolStatus(t: McpToolSnapshot): { text: string; color: string } {
   return { text: 'pending review', color: 'var(--text-hint)' };
 }
 
-export function HiggsfieldDetail({ projectId, onBack }: { projectId?: string | null; onBack: () => void }) {
-  const ctx = { userId: 'local', workspaceId: projectId ?? undefined };
+export function HiggsfieldDetail({ projectId, userId = 'local', onBack, framed = true }: { projectId?: string | null; userId?: string; onBack: () => void; framed?: boolean }) {
+  const ctx = { userId, workspaceId: projectId ?? undefined };
   const [state, setState] = useState<HiggsfieldState>('not_configured');
   const [server, setServer] = useState<McpServerConfig | undefined>();
   const [tools, setTools] = useState<McpToolSnapshot[]>([]);
@@ -89,8 +89,8 @@ export function HiggsfieldDetail({ projectId, onBack }: { projectId?: string | n
   const st = STATE_LABEL[state];
   const pendingCount = tools.filter((t) => !(t.approved && t.enabled)).length;
 
-  return (
-    <PageFrame>
+  const body = (
+    <>
       <button style={{ ...ghostBtn, marginBottom: 14 }} onClick={onBack}><Icon name="arrowLeft" size={13} stroke={1.8} /> Connections</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
         <BrandIcon providerId="higgsfield" size={52} />
@@ -209,6 +209,7 @@ export function HiggsfieldDetail({ projectId, onBack }: { projectId?: string | n
           <strong>Remote MCP needs sign-in:</strong> complete the server’s OAuth, or use the CLI path.
         </div>
       </div>
-    </PageFrame>
+    </>
   );
+  return framed ? <PageFrame>{body}</PageFrame> : <div>{body}</div>;
 }

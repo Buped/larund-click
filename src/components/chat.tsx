@@ -82,6 +82,14 @@ import {
 } from '../lib/web-search/metadata';
 import { explicitWebRequested, routeWebSearch, type WebSearchRouteDecision } from '../lib/web-search/web-search-router';
 import { evaluateSearchEvidence, type SearchEvidence } from '../lib/web-search/quality';
+import { compileProjectContext } from '../lib/project-context/compile';
+import { retrieveProjectContext } from '../lib/project-context/retrieve';
+import {
+  renderProjectContextPrompt,
+  renderRetrievedProjectSources,
+  usageMetadataFromRetrieved,
+} from '../lib/project-context/prompt';
+import type { ProjectContextUsageMetadata } from '../lib/project-context/types';
 
 /** Read and clear the one-shot workflow template armed on the Workflows page. */
 function consumeActiveWorkflowTemplate(): string | undefined {
@@ -199,7 +207,6 @@ function InlineModelPicker({ model, setModel }: { model: string; setModel: (m: s
               </span>
               <span className="model-option-desc">{m.desc}</span>
             </span>
-            <span className="model-option-cost">{m.cost}</span>
           </button>
         );
       })}
@@ -227,55 +234,6 @@ function InlineModelPicker({ model, setModel }: { model: string; setModel: (m: s
       </button>
 
       {pickerPopover}
-
-      {false && open && (
-        <div
-          className="fade-up"
-          style={{
-            position: 'absolute', bottom: 'calc(100% + 10px)', left: 0,
-            width: 250, background: 'var(--bg-elevated)',
-            border: '1px solid var(--border-md)', borderRadius: 12, padding: 6,
-            boxShadow: '0 -24px 60px -10px rgba(0,0,0,.75)', zIndex: 30,
-          }}
-        >
-          <div className="sec-label" style={{ padding: '5px 10px 8px' }}>Model</div>
-          {MODELS.map(m => {
-            const active = m.id === model;
-            return (
-              <button
-                key={m.id}
-                onClick={() => { setModel(m.id); setOpen(false); }}
-                style={{
-                  width: '100%', display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '10px 10px', borderRadius: 8, border: 'none', textAlign: 'left',
-                  cursor: 'pointer', fontFamily: 'inherit',
-                  background: active ? 'var(--bg-blue-row)' : 'transparent',
-                  transition: 'background .1s',
-                }}
-                onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = active ? 'var(--bg-blue-row)' : 'transparent'; }}
-              >
-                <span style={{
-                  width: 30, height: 30, borderRadius: 8, flex: 'none',
-                  display: 'grid', placeItems: 'center',
-                  background: active ? 'var(--accent)' : 'rgba(var(--ov-color),0.06)',
-                  color: active ? 'var(--on-accent)' : 'var(--text-muted)',
-                }}>
-                  <Icon name={m.icon} size={14} stroke={1.5} />
-                </span>
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{m.name}</span>
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>· {m.tag}</span>
-                  </span>
-                  <span style={{ fontSize: 11, color: 'var(--text-hint)', display: 'block', marginTop: 1 }}>{m.desc}</span>
-                </span>
-                <span style={{ fontSize: 10.5, color: 'var(--text-hint)', fontFamily: 'var(--font-mono)', flex: 'none' }}>{m.cost}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }
@@ -354,6 +312,23 @@ function AgentMsg({ children, rich, thinking, streaming, userId, citations = [],
           </>
         ) : children}
       </div>
+    </div>
+  );
+}
+
+function ProjectSourcesUsed({ usage }: { usage?: ProjectContextUsageMetadata }) {
+  if (!usage?.project_context_used) return null;
+  const used = usage.project_sources_used;
+  return (
+    <div style={{ marginTop: 8, paddingLeft: 44, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+      <span style={{ fontSize: 10.5, color: 'var(--text-hint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+        {used.length ? 'Sources used' : `Searched ${usage.searched_project_sources} project sources`}
+      </span>
+      {used.map((source) => (
+        <span key={source.sourceId} className="pill" style={{ fontSize: 10.5 }}>
+          {source.title}
+        </span>
+      ))}
     </div>
   );
 }
@@ -1464,6 +1439,7 @@ type Message = {
   model_metadata_json?: string | null;
   search_evidence_json?: string | null;
   thinking_json?: string | null;
+  project_context_json?: string | null;
   _loading?: boolean;
   _usage?: string;
   _error?: boolean;
@@ -1486,6 +1462,7 @@ type Message = {
   _modelMetadata?: AnswerModelMetadata;
   _searchEvidence?: SearchEvidence;
   _thinking?: VisibleThinking;
+  _projectContext?: ProjectContextUsageMetadata;
   // Subtle routing label shown after send ("Answering" / "Needs confirmation").
   _intentLabel?: string;
 };
@@ -1584,6 +1561,7 @@ function hydrateMessage(row: any): Message {
     _modelMetadata: parseJsonObject(row.model_metadata_json, isAnswerModelMetadata),
     _searchEvidence: parseJsonObject(row.search_evidence_json, isSearchEvidence),
     _thinking: parseThinking(row.thinking_json),
+    _projectContext: parseJsonObject(row.project_context_json, isProjectContextUsageMetadata),
   };
 }
 
@@ -1597,6 +1575,14 @@ function modelTierFor(tag?: string): AnswerModelMetadata['tier'] {
 
 function isSearchEvidence(item: unknown): item is SearchEvidence {
   return Boolean(item && typeof item === 'object' && typeof (item as SearchEvidence).mode === 'string');
+}
+
+function isProjectContextUsageMetadata(item: unknown): item is ProjectContextUsageMetadata {
+  return Boolean(
+    item && typeof item === 'object' &&
+    typeof (item as ProjectContextUsageMetadata).project_id === 'string' &&
+    Array.isArray((item as ProjectContextUsageMetadata).project_sources_used),
+  );
 }
 
 function buildChatSearchEvidence(input: {
@@ -1966,6 +1952,7 @@ export function ChatScreen({
       webCitations: WebCitation[];
       modelMetadata?: AnswerModelMetadata;
       searchEvidence?: SearchEvidence;
+      projectContext?: ProjectContextUsageMetadata;
     };
 
     let agentState: AgentPersistState = {
@@ -1996,6 +1983,7 @@ export function ChatScreen({
         webCitations: [...nextState.webCitations],
         modelMetadata: nextState.modelMetadata,
         searchEvidence: nextState.searchEvidence,
+        projectContext: nextState.projectContext,
       };
       const payload = {
         content: snapshot.content,
@@ -2009,6 +1997,7 @@ export function ChatScreen({
         web_citations_json: JSON.stringify(snapshot.webCitations),
         model_metadata_json: snapshot.modelMetadata ? JSON.stringify(snapshot.modelMetadata) : null,
         search_evidence_json: snapshot.searchEvidence ? JSON.stringify(snapshot.searchEvidence) : null,
+        project_context_json: snapshot.projectContext ? JSON.stringify(snapshot.projectContext) : null,
       };
 
       persistQueue = persistQueue
@@ -2085,6 +2074,18 @@ export function ChatScreen({
     const settings = await getSettings().catch(() => null);
     const autonomyMode = ((settings?.autonomy_mode as PolicyAutonomyMode | undefined) ?? 'semi');
     const agentStartedAt = Date.now();
+    let projectContextUsage: ProjectContextUsageMetadata | undefined;
+    if (projectId) {
+      try {
+        const bundle = await compileProjectContext(projectId);
+        const retrieved = await retrieveProjectContext({ projectId, query: task });
+        if (bundle) {
+          projectContextUsage = usageMetadataFromRetrieved(projectId, retrieved, bundle.sourceInventory.filter((source) => source.isEnabled && source.status === 'ready').length);
+        }
+      } catch (err) {
+        console.warn('Project Context usage metadata unavailable for agent run:', err);
+      }
+    }
 
     await runAgentLoop(
       task,
@@ -2173,6 +2174,7 @@ export function ChatScreen({
               webCitations: [],
               modelMetadata,
               searchEvidence: agentSearchEvidence,
+              projectContext: projectContextUsage,
             },
             {
               content: summary,
@@ -2183,6 +2185,7 @@ export function ChatScreen({
               _webCitations: [],
               _modelMetadata: modelMetadata,
               _searchEvidence: agentSearchEvidence,
+              _projectContext: projectContextUsage,
             },
           );
           setSending(false);
@@ -2449,6 +2452,22 @@ export function ChatScreen({
     // Give Larund its conversational identity + custom instructions. Without this
     // the chat path had no system prompt at all (generic model voice).
     const chatSettings = await getSettings().catch(() => null);
+    let projectContextUsage: ProjectContextUsageMetadata | undefined;
+    if (projectId) {
+      try {
+        const bundle = await compileProjectContext(projectId);
+        const contextPrompt = renderProjectContextPrompt(bundle);
+        if (contextPrompt) history.unshift({ role: 'system', content: contextPrompt });
+        const retrieved = await retrieveProjectContext({ projectId, query: messageText });
+        const retrievedPrompt = renderRetrievedProjectSources(retrieved);
+        if (retrievedPrompt) history.unshift({ role: 'system', content: retrievedPrompt });
+        if (bundle) {
+          projectContextUsage = usageMetadataFromRetrieved(projectId, retrieved, bundle.sourceInventory.filter((source) => source.isEnabled && source.status === 'ready').length);
+        }
+      } catch (err) {
+        console.warn('Project Context unavailable for this chat turn:', err);
+      }
+    }
     history.unshift({
       role: 'system',
       content: buildChatSystemPrompt({
@@ -2579,6 +2598,7 @@ export function ChatScreen({
             _modelMetadata: modelMetadata,
             _searchEvidence: searchEvidence,
             _thinking: parsed.thinking,
+            _projectContext: projectContextUsage,
           } : m,
         ));
         await addMessage(asstMsgId, sessionId!, 'assistant', citedContent, {
@@ -2590,6 +2610,7 @@ export function ChatScreen({
           model_metadata_json: JSON.stringify(modelMetadata),
           search_evidence_json: JSON.stringify(searchEvidence),
           thinking_json: serializeThinking(parsed.thinking),
+          project_context_json: projectContextUsage ? JSON.stringify(projectContextUsage) : null,
         }).catch(err =>
           console.warn('Failed to save assistant message:', err),
         );
@@ -2805,6 +2826,7 @@ export function ChatScreen({
                           <span style={{ color: 'var(--danger)', fontSize: 13.5 }}>{msg.content}</span>
                         )}
                       </AgentMsg>
+                      <ProjectSourcesUsed usage={msg._projectContext} />
 
                       {!msg.streaming && (
                         <div style={{

@@ -37,6 +37,9 @@ import {
 } from '../coworker/run-context';
 import { blockedStatusFor } from '../tasks/evidence';
 import { deductCredits } from '../credit-engine';
+import { compileProjectContext } from '../project-context/compile';
+import { retrieveProjectContext } from '../project-context/retrieve';
+import { renderProjectContextPrompt, renderRetrievedProjectSources } from '../project-context/prompt';
 
 export type AgentStatus = 'idle' | 'planning' | 'executing' | 'waiting_user' | 'complete' | 'error';
 export type AutonomyMode = 'full' | 'semi' | 'manual';
@@ -251,6 +254,10 @@ function inferCompanyRequiredColumns(task: string, header: string[]): string[] {
   if (/forr[aĂˇ]s|source|keresd|internet|web/i.test(lower)) add('Forras URL');
   if (/bizonyoss[aĂˇ]g|confidence|biztos/i.test(lower)) add('Bizonyossag');
   return [...wanted];
+}
+
+function looksLikeUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function inferSpreadsheetScopeFromIngest(
@@ -608,13 +615,26 @@ export async function runControlLoop(
 
   const coworkerBlock = [coworker.promptBlock, resolvedReferences.promptBlock].filter(Boolean).join('\n\n');
   const coworkerPromptBlock = coworkerBlock ? `\n\n${coworkerBlock}` : '';
+  let projectPromptBlock = '';
+  if (opts.workspaceId && looksLikeUuid(opts.workspaceId)) {
+    try {
+      const bundle = await compileProjectContext(opts.workspaceId);
+      const contextPrompt = renderProjectContextPrompt(bundle);
+      const retrieved = await retrieveProjectContext({ projectId: opts.workspaceId, query: task });
+      const retrievedPrompt = renderRetrievedProjectSources(retrieved);
+      projectPromptBlock = [contextPrompt, retrievedPrompt].filter(Boolean).join('\n\n');
+    } catch (error) {
+      console.warn('Project Context unavailable for agent run:', error);
+    }
+  }
+  const projectContextPromptBlock = projectPromptBlock ? `\n\n${projectPromptBlock}` : '';
   const activeSkillPromptBlock = preloadedSkillBlocks.length ? `\n\n${preloadedSkillBlocks.join('\n\n')}` : '';
   const proactiveLearningBlock = proactiveResearch
     ? `\n\n## Skill-gap research\nTarget: ${proactiveResearch.targetLabel}\nWorkflow hints: ${proactiveResearch.workflowSteps.join('; ') || 'none'}\nAPI-first note: ${proactiveResearch.apiFirstRecommendation ?? 'none'}\nKnown blockers: ${proactiveResearch.blockers.join('; ') || 'none'}\nUse this as background only. Execute through normal tools, approval gates, and verification.`
     : '';
   const systemPrompt =
     `${CONTROL_SYSTEM_PROMPT}\n\n${autonomyModePrompt(autonomyMode)}\n\n## Tool catalog\n${toolCatalogSummary()}\n\n## Workspace\n${workspaceRoot}${coworkerPromptBlock}` +
-    `${activeSkillPromptBlock}${proactiveLearningBlock}${historyBlock}\n\n${renderTaskStatePrompt(taskState)}\n\n## Current message\n${task}`;
+    `${projectContextPromptBlock}${activeSkillPromptBlock}${proactiveLearningBlock}${historyBlock}\n\n${renderTaskStatePrompt(taskState)}\n\n## Current message\n${task}`;
 
   // Surfaced memory counts as used (drives recency boost), fire-and-forget.
   void recordMemoryUsage(coworker.usedMemoryIds);

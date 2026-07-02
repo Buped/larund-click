@@ -31,7 +31,10 @@ Drive, Docs, Sheets, Gmail, and Calendar subcards route back to the Google Works
 
 Start with read/write file scopes, then request send/publish scopes only when the user asks for tools such as Gmail send or Calendar event creation.
 
-Current native probes/tools use `GOOGLE_WORKSPACE_ACCESS_TOKEN` and `GOOGLE_WORKSPACE_ACCOUNT_EMAIL`.
+Native probes/tools receive Google access tokens from the current user's
+`ConnectedAccount` at runtime. The old `GOOGLE_WORKSPACE_ACCESS_TOKEN` and
+`GOOGLE_WORKSPACE_ACCOUNT_EMAIL` keys are legacy user-token keys and should not
+be used for normal setup.
 
 ## X / Twitter
 

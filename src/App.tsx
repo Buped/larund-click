@@ -27,6 +27,7 @@ import { adoptLegacyLocalConnectedAccounts } from './lib/connections/connectedAc
 import type { AuthUser } from './lib/auth';
 import type { UserCredits } from './lib/supabase';
 import type { Project } from './lib/projects/types';
+import { MODELS } from './constants/models';
 
 declare global {
   interface Window { __TAURI__?: unknown }
@@ -83,6 +84,19 @@ async function loadProjectState(userId: string): Promise<ProjectState> {
   }
 }
 
+const PREFERRED_MODEL_KEY = 'preferred_model';
+const DEFAULT_MODEL = 'core';
+
+/** The model the user last picked, restored across app launches. Falls back to
+ *  the balanced Core model when nothing valid is stored. */
+function getPreferredModel(): string {
+  try {
+    const saved = localStorage.getItem(PREFERRED_MODEL_KEY);
+    if (saved && MODELS.some(m => m.id === saved)) return saved;
+  } catch { /* ignore */ }
+  return DEFAULT_MODEL;
+}
+
 async function getOnboardingComplete(): Promise<boolean> {
   if (localStorage.getItem('onboarding_complete') === 'true') return true;
   try {
@@ -104,7 +118,7 @@ export default function App() {
   // we switch to the chat route and hand the session id to ChatScreen, which
   // selects it. Single source of truth — no localStorage/reload hacks.
   const [openChatSessionId, setOpenChatSessionId] = useState<string | null>(null);
-  const [model,        setModel       ] = useState('core');
+  const [model,        setModel       ] = useState(getPreferredModel);
   const [showSettings, setShowSettings] = useState(false);
   const [projects,     setProjects    ] = useState<Project[]>([]);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
@@ -117,6 +131,12 @@ export default function App() {
       setRoute('chat');
     }
   }, [route, user]);
+
+  // Remember the model the user picks so the composer reopens on their last
+  // choice instead of always resetting to Core.
+  useEffect(() => {
+    try { localStorage.setItem(PREFERRED_MODEL_KEY, model); } catch { /* ignore */ }
+  }, [model]);
 
   // Unify legacy workspace-scoped plumbing (coworker records, automations, skills,
   // gateway) onto the active project: these internal modules scope data by the
